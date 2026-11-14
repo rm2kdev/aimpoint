@@ -9,7 +9,21 @@ import { Button } from "@/components/ui/button";
 import type { Member } from "@/lib/types";
 
 const TOKEN = /<@([a-f0-9]{24})>/g;
-const QUERY = /(?:^|\s)@([\p{L}\p{N}._'-]*)$/u;
+
+/** Does a member match what's been typed after "@"? Multi-word queries match the full name's prefix. */
+function matches(m: Member, q: string) {
+  const name = m.name.toLowerCase();
+  if (!q) return true;
+  if (name.startsWith(q)) return true;
+  return !/\s/.test(q) && name.split(/\s+/).some((w) => w.startsWith(q));
+}
+
+/** The @token being typed or edited: from the "@" to the caret, then on to the end of that word. */
+interface Token {
+  query: string;
+  start: number;
+  end: number;
+}
 
 /* ---------- Rendering: <@id> tokens become chips ---------- */
 
@@ -59,7 +73,8 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
   const { members, me } = useOrg();
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Member[]>([]);
-  const [query, setQuery] = useState<string | null>(null);
+  const [token, setToken] = useState<Token | null>(null);
+  const query = token?.query ?? null;
   const [active, setActive] = useState(0);
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -70,7 +85,7 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
   const options = useMemo(() => {
     if (query === null) return [];
     const q = query.toLowerCase();
-    const match = (m: Member) => !q || m.name.toLowerCase().split(/\s+/).some((w) => w.startsWith(q)) || m.name.toLowerCase().startsWith(q);
+    const match = (m: Member) => matches(m, q);
     const people = members.filter((m) => m.kind === "user" && match(m)).sort((a, b) => (a.id === me.id ? 1 : b.id === me.id ? -1 : 0));
     const bots = members.filter((m) => m.kind === "bot" && match(m));
     return [...people.slice(0, 6), ...bots.slice(0, 5)];
@@ -120,22 +135,64 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
     el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
   };
 
-  const detect = (el: HTMLTextAreaElement | null = ref.current) => {
+  /**
+   * Find the @token at the caret. Works for a fresh "@mi", and for editing or backspacing into an
+   * existing mention ("@Mia Kowalsk", "@Mia Kxowalski"): the query is everything from "@" to the
+   * caret, shortened word by word until someone matches. `editing` is true when the text just
+   * changed; moving the caret onto an intact, already-picked mention doesn't reopen the list.
+   */
+  const detect = (el: HTMLTextAreaElement | null = ref.current, editing = false) => {
     if (!el) return;
-    const m = QUERY.exec(el.value.slice(0, el.selectionStart));
-    setQuery(m ? m[1] : null);
+    const value = el.value;
+    const caret = el.selectionStart;
+    if (caret !== el.selectionEnd) return setToken(null);
+    const before = value.slice(0, caret);
+    const at = before.lastIndexOf("@");
+    const raw = at >= 0 ? before.slice(at + 1) : "";
+    const valid =
+      at >= 0 &&
+      (at === 0 || /\s/.test(value[at - 1])) &&
+      raw.length <= 60 &&
+      !raw.includes("\n") &&
+      !raw.includes("@") &&
+      !/\s$/.test(raw); // a trailing space means the token is finished
+    if (!valid) return setToken(null);
+
+    const end = caret + (/^[^\s@]*/.exec(value.slice(caret))?.[0].length ?? 0);
+    if (!editing) {
+      // Caret parked inside/at the end of an intact picked mention: leave it alone.
+      if (picked.some((m) => value.startsWith(`@${m.name}`, at) && caret <= at + 1 + m.name.length)) return setToken(null);
+    }
+
+    const words = raw.split(/\s+/);
+    let q: string | null = null;
+    for (let n = words.length; n >= 1; n--) {
+      const cand = words.slice(0, n).join(" ").toLowerCase();
+      if (members.some((m) => matches(m, cand))) {
+        q = cand;
+        break;
+      }
+      if (n === 1 && !raw.includes(" ")) q = cand; // single word with no match: keep it (list stays hidden)
+    }
+    setToken(q === null ? null : { query: q, start: at, end });
     setActive(0);
   };
 
   const pick = (m: Member) => {
     const el = ref.current;
     if (!el) return;
-    const caret = el.selectionStart;
-    const before = el.value.slice(0, caret).replace(/@([\p{L}\p{N}._'-]*)$/u, `@${m.name} `);
-    const next = before + el.value.slice(caret);
+    const value = el.value;
+    const t = token ?? { start: value.lastIndexOf("@", el.selectionStart), end: el.selectionStart, query: "" };
+    // Swallow leftover words of the old mention ("@Mxia| Kowalski" -> "@Mia Kowalski", not "... Kowalski Kowalski").
+    let rest = value.slice(t.end);
+    for (const w of m.name.split(/\s+/).slice(1)) {
+      if (rest.startsWith(` ${w}`)) rest = rest.slice(w.length + 1);
+    }
+    const before = value.slice(0, t.start) + `@${m.name}` + (/^\s/.test(rest) ? "" : " ");
+    const next = before + rest;
     setText(next);
     setPicked((p) => (p.some((x) => x.id === m.id) ? p : [...p, m]));
-    setQuery(null);
+    setToken(null);
     setTimeout(() => {
       el.focus();
       el.setSelectionRange(before.length, before.length);
@@ -233,16 +290,16 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           onChange={(e) => {
             setText(e.target.value);
             autosize();
-            detect(e.target);
+            detect(e.target, true);
           }}
           onClick={() => detect()}
-          onBlur={() => setTimeout(() => setQuery(null), 120)}
+          onBlur={() => setTimeout(() => setToken(null), 120)}
           onKeyDown={(e) => {
             if (open) {
               if (e.key === "ArrowDown") return (e.preventDefault(), setActive((a) => (a + 1) % options.length));
               if (e.key === "ArrowUp") return (e.preventDefault(), setActive((a) => (a - 1 + options.length) % options.length));
               if (e.key === "Enter" || e.key === "Tab") return (e.preventDefault(), pick(options[active]));
-              if (e.key === "Escape") return (e.preventDefault(), e.stopPropagation(), setQuery(null));
+              if (e.key === "Escape") return (e.preventDefault(), e.stopPropagation(), setToken(null));
             }
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
