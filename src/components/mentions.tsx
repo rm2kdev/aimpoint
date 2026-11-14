@@ -163,6 +163,9 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
   const people = options.filter((o) => o.kind === "user");
   const bots = options.filter((o) => o.kind === "bot");
 
+  const backdrop = useRef<HTMLDivElement>(null);
+  const segments = useMemo(() => highlightSegments(text, picked), [text, picked]);
+
   return (
     <div className="relative mt-4">
       {open &&
@@ -188,6 +191,34 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           document.body,
         )}
       <div ref={boxRef} className="rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+        {/* The textarea's own text is transparent; this mirror draws the same text underneath with the
+            picked @mentions highlighted. Both share font, padding, line height and wrapping exactly. */}
+        <div className="relative">
+          <div
+            ref={backdrop}
+            aria-hidden
+            className={cn(MIRROR, "pointer-events-none absolute inset-0 overflow-hidden text-foreground")}
+          >
+            {segments.map((seg, i) =>
+              seg.member ? (
+                <span
+                  key={i}
+                  className={cn(
+                    "rounded-[4px]",
+                    seg.member.kind === "bot"
+                      ? "bg-chip shadow-[inset_0_0_0_1px_var(--input)]"
+                      : "bg-selected text-selected-foreground",
+                  )}
+                >
+                  {seg.text}
+                </span>
+              ) : (
+                <Fragment key={i}>{seg.text}</Fragment>
+              ),
+            )}
+            {/* keeps a trailing newline's height */}
+            {"\u200b"}
+          </div>
         <textarea
           ref={ref}
           value={text}
@@ -219,8 +250,15 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
             }
           }}
           onKeyUp={(e) => ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key) && detect()}
-          className="block min-h-[40px] w-full resize-none bg-transparent px-3 pt-2.5 text-[13.5px] outline-none placeholder:text-faint"
+          onScroll={(e) => backdrop.current && (backdrop.current.scrollTop = e.currentTarget.scrollTop)}
+          className={cn(
+            MIRROR,
+            "relative block min-h-[40px] w-full resize-none bg-transparent text-transparent caret-foreground outline-none placeholder:text-faint",
+            // a translucent selection so the mirrored text stays readable while selected
+            "selection:bg-[color-mix(in_srgb,var(--brand)_28%,transparent)] selection:text-transparent",
+          )}
         />
+        </div>
         <div className={cn("flex items-center justify-end gap-2 px-2 pb-2", !text.trim() && "hidden")}>
           <Kbd>⌘↵</Kbd>
           <Button size="sm" onClick={send} disabled={sending}>
@@ -230,6 +268,29 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
       </div>
     </div>
   );
+}
+
+/** Typography shared by the textarea and its highlight mirror; any drift misaligns the highlight. */
+const MIRROR = "px-3 pt-2.5 pb-2.5 font-sans text-[13.5px] leading-[20px] tracking-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
+
+function highlightSegments(text: string, picked: Member[]) {
+  const names = [...picked].sort((a, b) => b.name.length - a.name.length);
+  const out: { text: string; member?: Member }[] = [];
+  let i = 0;
+  let plain = "";
+  while (i < text.length) {
+    const m = text[i] === "@" ? names.find((n) => text.startsWith(`@${n.name}`, i)) : undefined;
+    if (m) {
+      if (plain) out.push({ text: plain });
+      plain = "";
+      out.push({ text: `@${m.name}`, member: m });
+      i += m.name.length + 1;
+    } else {
+      plain += text[i++];
+    }
+  }
+  if (plain) out.push({ text: plain });
+  return out;
 }
 
 function GroupLabel({ children, className }: { children: React.ReactNode; className?: string }) {
