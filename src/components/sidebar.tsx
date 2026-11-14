@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import {
+  ArchiveIcon,
   BotIcon,
   CheckIcon,
   ChevronsUpDownIcon,
@@ -74,6 +75,12 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
           );
         })}
 
+        <div className="mt-3">
+          <NavItem href={`${base}/archived`} active={pathname === `${base}/archived`} icon={<ArchiveIcon />} count={counts.archived} quiet onNavigate={onNavigate}>
+            Archive
+          </NavItem>
+        </div>
+
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
         <NavItem href={`${base}/settings?tab=members`} active={false} icon={<UsersIcon />} onNavigate={onNavigate}>
           Members
@@ -103,6 +110,7 @@ function NavItem({
   active,
   icon,
   count,
+  quiet,
   children,
   onNavigate,
 }: {
@@ -110,6 +118,8 @@ function NavItem({
   active: boolean;
   icon: React.ReactNode;
   count?: number;
+  /** count is informational, not "to do": render it fainter */
+  quiet?: boolean;
   children: React.ReactNode;
   onNavigate?: () => void;
 }) {
@@ -126,7 +136,7 @@ function NavItem({
       <span className={cn("flex", active ? "text-selected-foreground" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{children}</span>
       {count !== undefined && count > 0 && (
-        <span className={cn("tabular ml-auto font-mono text-[11.5px]", active ? "text-selected-foreground/80" : "text-faint")}>{count}</span>
+        <span className={cn("tabular ml-auto font-mono text-[11.5px]", active ? "text-selected-foreground/80" : quiet ? "text-faint/70" : "text-faint")}>{count}</span>
       )}
     </Link>
   );

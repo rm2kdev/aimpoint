@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { LayersIcon, PlusIcon, SettingsIcon, UserIcon } from "lucide-react";
+import { ArchiveIcon, LayersIcon, PlusIcon, SettingsIcon, UserIcon } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -59,9 +59,10 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
               {results.length > 0 && (
                 <CommandGroup heading="Tasks">
                   {results.map((t) => (
-                    <CommandItem key={t.id} value={t.id} onSelect={() => go(`${pathname.startsWith(base) && !pathname.endsWith("/settings") ? pathname : `${base}/all`}?task=${t.key}`)} className="gap-2.5">
+                    <CommandItem key={t.id} value={t.id} onSelect={() => go(`${t.archivedAt ? `${base}/archived` : pathname.startsWith(base) && !pathname.endsWith("/settings") && !pathname.endsWith("/archived") ? pathname : `${base}/all`}?task=${t.key}`)} className="gap-2.5">
                       <StatusRing status={statusById.get(t.statusId)} statuses={statuses} size={15} />
                       <span className="truncate">{t.title}</span>
+                      {t.archivedAt && <span className="shrink-0 rounded-[4px] bg-chip px-1.5 text-[11.5px] text-muted-foreground">Archived</span>}
                       <span className="tabular ml-auto font-mono text-[11.5px] text-faint">{t.key}</span>
                     </CommandItem>
                   ))}
@@ -94,6 +95,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                     <span className="ml-auto font-mono text-[11px] text-faint">{p.key}</span>
                   </CommandItem>
                 ))}
+                <CommandItem onSelect={() => go(`${base}/archived`)} className="gap-2.5">
+                  <ArchiveIcon /> Archive
+                </CommandItem>
                 <CommandItem onSelect={() => go(`${base}/settings`)} className="gap-2.5">
                   <SettingsIcon /> Settings
                 </CommandItem>

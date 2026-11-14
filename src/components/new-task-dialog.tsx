@@ -16,6 +16,8 @@ import {
   useStatusOptions,
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
+import { DueBadge, DuePicker } from "@/components/due-date";
+import { CalendarIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS } from "@/lib/format";
 import type { Priority, Task, TaskType } from "@/lib/types";
@@ -48,6 +50,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [priority, setPriority] = useState<Priority>(0);
   const [type, setType] = useState<TaskType>("issue");
+  const [dueDate, setDueDate] = useState<string | null>(null);
   const [error, setError] = useState<string>();
   const [pending, start] = useTransition();
   const [editorKey, setEditorKey] = useState(0);
@@ -61,6 +64,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
     setAssigneeId(defaults.assigneeId ?? null);
     setPriority(0);
     setType(defaults.type ?? "issue");
+    setDueDate(null);
     setError(undefined);
     setEditorKey((k) => k + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,7 +80,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const submit = () => {
     if (!title.trim()) return setError("Give the task a title.");
     start(async () => {
-      const r = await createTask(org.slug, { title, description, projectId, statusId, assigneeId, priority, type });
+      const r = await createTask(org.slug, { title, description, projectId, statusId, assigneeId, priority, type, dueDate });
       if (!r.ok) return setError(r.error);
       const t = r.data!;
       emitLocalTask(t);
@@ -163,6 +167,17 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
               {project?.name ?? "Project"}
             </button>
           </Picker>
+          <DuePicker value={dueDate} onChange={setDueDate}>
+            <button className={chip}>
+              {dueDate ? (
+                <DueBadge due={dueDate} className="text-[12.5px]" />
+              ) : (
+                <>
+                  <CalendarIcon className="size-3.5" /> Due date
+                </>
+              )}
+            </button>
+          </DuePicker>
         </div>
         <div className="flex items-center gap-3 border-t border-border px-5 py-3">
           <p role="alert" aria-live="polite" className="min-w-0 flex-1 truncate text-[13px] text-destructive">

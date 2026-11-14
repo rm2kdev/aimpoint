@@ -44,6 +44,17 @@ export interface NewTaskInput {
   assigneeId?: string | null;
   priority?: Priority;
   description?: string;
+  dueDate?: string | null;
+}
+
+/** "YYYY-MM-DD" -> UTC-midnight Date; null clears; throws on anything else. */
+export function parseDueDate(v: unknown): Date | null {
+  if (v === null || v === "") return null;
+  const s = String(v);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(`${s}T00:00:00Z`))) {
+    throw new UserError("Due dates look like 2026-11-30.");
+  }
+  return new Date(`${s}T00:00:00Z`);
 }
 
 export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<Task> {
@@ -81,6 +92,9 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     statusId: status._id,
     assigneeId,
     priority: ([0, 1, 2, 3] as const).includes(priority) ? priority : 0,
+    dueDate: input.dueDate ? parseDueDate(input.dueDate) : null,
+    archivedAt: null,
+    archivedBy: null,
     createdBy: actor.id,
     createdAt: now,
     updatedAt: now,
@@ -100,6 +114,8 @@ export interface TaskPatch {
   assigneeId?: string | null;
   priority?: Priority;
   projectId?: string;
+  dueDate?: string | null;
+  archived?: boolean;
 }
 
 export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPatch): Promise<Task> {
@@ -143,6 +159,20 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
     }
     set.assigneeId = a;
     acts.push({ kind: "assignee", from: before.assigneeId?.toHexString() ?? null, to: a?.toHexString() ?? null });
+  }
+  if (patch.dueDate !== undefined) {
+    const d = parseDueDate(patch.dueDate);
+    const fromS = before.dueDate ? before.dueDate.toISOString().slice(0, 10) : null;
+    const toS = d ? d.toISOString().slice(0, 10) : null;
+    if (fromS !== toS) {
+      set.dueDate = d;
+      acts.push({ kind: "due", from: fromS, to: toS });
+    }
+  }
+  if (patch.archived !== undefined && patch.archived !== !!before.archivedAt) {
+    set.archivedAt = patch.archived ? new Date() : null;
+    set.archivedBy = patch.archived ? actor.id : null;
+    acts.push({ kind: patch.archived ? "archived" : "restored" });
   }
   let projectKey: string | undefined;
   if (patch.projectId && patch.projectId !== before.projectId.toHexString()) {

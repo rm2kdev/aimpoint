@@ -14,10 +14,10 @@ import { toTask } from "@/lib/data";
 import { createTaskAs } from "@/lib/task-service";
 import type { TaskDoc } from "@/lib/types";
 
-/** GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&limit=50 */
+/** GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&archived=true&limit=50  (archived tasks are excluded unless archived=true) */
 export const GET = botRoute(async (req, ctx) => {
   const q = new URL(req.url).searchParams;
-  const filter: Filter<TaskDoc> = { orgId: ctx.org._id };
+  const filter: Filter<TaskDoc> = { orgId: ctx.org._id, archivedAt: q.get("archived") === "true" ? { $ne: null } : null };
   if (q.get("project")) filter.projectId = (await resolveProject(ctx.org._id, q.get("project")))._id;
   const status = await resolveStatus(ctx.org._id, q.get("status"));
   if (status) filter.statusId = new ObjectId(status);
@@ -33,7 +33,7 @@ export const GET = botRoute(async (req, ctx) => {
   return { tasks: docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?")) };
 });
 
-/** POST /api/v1/tasks  { title, project, type?, description?, status?, assignee?, priority? } */
+/** POST /api/v1/tasks  { title, project, type?, description?, status?, assignee?, priority?, dueDate? } */
 export const POST = botRoute(async (req, ctx) => {
   const b = await readJson(req);
   const project = await resolveProject(ctx.org._id, b.project);
@@ -45,6 +45,7 @@ export const POST = botRoute(async (req, ctx) => {
     assigneeId: (await resolveAssignee(ctx, b.assignee)) ?? null,
     priority: parsePriority(b.priority),
     description: toDescriptionHtml(b.description),
+    dueDate: b.dueDate == null ? null : String(b.dueDate),
   });
   return Response.json({ task }, { status: 201 });
 });

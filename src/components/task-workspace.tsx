@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ChevronDownIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, PlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
@@ -11,6 +11,8 @@ import { MobileNavButton, useShell } from "@/components/app-shell";
 import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
 import { Picker, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
+import { DueBadge } from "@/components/due-date";
+import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { timeAgo } from "@/lib/format";
@@ -20,12 +22,13 @@ import type { Status, Task, TaskType } from "@/lib/types";
 export interface Scope {
   projectId?: string;
   mine?: boolean;
+  archived?: boolean;
 }
 
 type TypeFilter = "all" | TaskType;
 
-const byPriorityThenNewest = (a: Task, b: Task) =>
-  b.priority - a.priority || b.createdAt.localeCompare(a.createdAt) || b.number - a.number;
+const SORTS: SortKey[] = ["priority", "due", "created", "created-asc", "updated", "title"];
+const ARCHIVE_SORTS: SortKey[] = ["archived", "due", "created", "updated", "title"];
 
 export function TaskWorkspace({
   title,
@@ -40,7 +43,7 @@ export function TaskWorkspace({
   showProject: boolean;
   emptyHint: string;
 }) {
-  const { org, me, statuses } = useOrg();
+  const { org, me, statuses, isAdmin } = useOrg();
   const { newTask, setViewDefaults } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -48,12 +51,15 @@ export function TaskWorkspace({
   const selectedKey = params.get("task");
 
   const [tasks, setTasks] = useState<Map<string, Task>>(() => new Map(initialTasks.map((t) => [t.id, t])));
-  useEffect(() => setTasks(new Map(initialTasks.map((t) => [t.id, t]))), [initialTasks]);
+  // Newest version of every task this view has seen (incl. ones that left it). A server refresh can be
+  // older than a change we already applied (e.g. archive, then navigate): never let it roll that back.
+  const latest = useRef(new Map<string, Task>());
 
   // Rows a teammate changed live: id -> actor id. Cleared once seen (hovered or opened).
   const [fresh, setFresh] = useState<Map<string, Fresh>>(new Map());
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [showClosed, setShowClosed] = useState(false);
+  const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : "priority");
 
   useEffect(() => {
     setViewDefaults({ projectId: scope.projectId, assigneeId: scope.mine ? me.id : undefined });
@@ -61,13 +67,32 @@ export function TaskWorkspace({
   }, [scope.projectId, scope.mine, me.id, setViewDefaults]);
 
   const matches = useCallback(
-    (t: Task) => (!scope.projectId || t.projectId === scope.projectId) && (!scope.mine || t.assigneeId === me.id),
-    [scope.projectId, scope.mine, me.id],
+    (t: Task) =>
+      !!t.archivedAt === !!scope.archived &&
+      (!scope.projectId || t.projectId === scope.projectId) &&
+      (!scope.mine || t.assigneeId === me.id),
+    [scope.projectId, scope.mine, scope.archived, me.id],
   );
+
+  useEffect(() => {
+    const next = new Map<string, Task>();
+    for (const t of initialTasks) {
+      const seen = latest.current.get(t.id);
+      next.set(t.id, seen && seen.updatedAt > t.updatedAt ? seen : t);
+    }
+    latest.current.forEach((t) => {
+      if (!next.has(t.id) && matches(t)) next.set(t.id, t);
+    });
+    next.forEach((t, id) => !matches(t) && next.delete(id));
+    setTasks(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTasks]);
 
   const upsert = useCallback(
     (t: Task) =>
       setTasks((prev) => {
+        const seen = latest.current.get(t.id);
+        if (!seen || seen.updatedAt <= t.updatedAt) latest.current.set(t.id, t);
         const next = new Map(prev);
         if (matches(t)) next.set(t.id, t);
         else next.delete(t.id);
@@ -97,6 +122,7 @@ export function TaskWorkspace({
       const t = tasks.get(e.taskId);
       if (t && t.key !== selectedKey) mark(t.id, e.actorId, e.item.mentions?.includes(me.id) ? "mentioned you" : "commented");
     } else if (e.type === "task.delete") {
+      latest.current.delete(e.taskId);
       setTasks((prev) => {
         if (!prev.has(e.taskId)) return prev;
         const next = new Map(prev);
@@ -121,12 +147,21 @@ export function TaskWorkspace({
     });
   }, []);
 
-  const visible = useMemo(() => [...tasks.values()].filter((t) => typeFilter === "all" || t.type === typeFilter), [tasks, typeFilter]);
+  const visible = useMemo(
+    () => applyFilters([...tasks.values()].filter((t) => typeFilter === "all" || t.type === typeFilter), view),
+    [tasks, typeFilter, view],
+  );
+  const filtering = typeFilter !== "all" || filterCount(view) > 0;
+  const clearFilters = () => {
+    setTypeFilter("all");
+    setView((v) => ({ ...v, assignees: [], priorities: [], due: [] }));
+  };
 
   const groups = useMemo(() => {
     const out: { status: Status; tasks: Task[] }[] = [];
+    const cmp = comparator(view.sort);
     for (const s of statuses) {
-      const list = visible.filter((t) => t.statusId === s.id).sort(byPriorityThenNewest);
+      const list = visible.filter((t) => t.statusId === s.id).sort(cmp);
       if (list.length) out.push({ status: s, tasks: list });
     }
     // Tasks whose status was deleted mid-session.
@@ -134,14 +169,15 @@ export function TaskWorkspace({
     const orphans = visible.filter((t) => !known.has(t.statusId));
     if (orphans.length && statuses[0]) out[0]?.tasks.push(...orphans);
     return out;
-  }, [visible, statuses]);
+  }, [visible, statuses, view.sort]);
+  const archivedList = useMemo(() => (scope.archived ? [...visible].sort(comparator(view.sort)) : []), [scope.archived, visible, view.sort]);
 
   const isClosed = (s: Status) => s.category === "done" || s.category === "cancelled";
   const openGroups = groups.filter((g) => !isClosed(g.status));
   const closedGroups = groups.filter((g) => isClosed(g.status));
   const closedCount = closedGroups.reduce((n, g) => n + g.tasks.length, 0);
   const openCount = openGroups.reduce((n, g) => n + g.tasks.length, 0);
-  const shown = showClosed ? groups : openGroups;
+  const shown = scope.archived ? [] : showClosed ? groups : openGroups;
 
   /* ----- glide rows to their new position (FLIP) ----- */
   const rowEls = useRef(new Map<string, HTMLElement>());
@@ -163,7 +199,7 @@ export function TaskWorkspace({
   });
 
   /* ----- selection & keyboard ----- */
-  const flat = useMemo(() => shown.flatMap((g) => g.tasks), [shown]);
+  const flat = useMemo(() => (scope.archived ? archivedList : shown.flatMap((g) => g.tasks)), [scope.archived, archivedList, shown]);
   const open = useCallback(
     (key: string | null) => {
       const q = new URLSearchParams(params.toString());
@@ -189,15 +225,43 @@ export function TaskWorkspace({
         open(nextTask.key);
         rowEls.current.get(nextTask.id)?.scrollIntoView({ block: "nearest" });
       }
+      if (e.key === "e" && selectedKey) {
+        const t = flat.find((x) => x.key === selectedKey);
+        if (t && (isAdmin || t.createdBy === me.id)) {
+          e.preventDefault();
+          const i = flat.indexOf(t);
+          const next = flat[i + 1] ?? flat[i - 1];
+          setArchived(t, !t.archivedAt);
+          open(next ? next.key : null);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flat, selectedKey, open]);
 
   useEffect(() => {
     const t = flat.find((x) => x.key === selectedKey);
     if (t) seen(t.id);
   }, [selectedKey, flat, seen]);
+
+  /** Archive or restore with an optimistic move and an Undo toast. */
+  const setArchived = async (task: Task, archived: boolean, undo = true) => {
+    upsert({ ...task, archivedAt: archived ? new Date().toISOString() : null });
+    const r = await updateTask(org.slug, task.id, { archived });
+    if (!r.ok) {
+      upsert(task);
+      return void toast.error(r.error);
+    }
+    if (r.data) window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: r.data }));
+    if (undo) {
+      toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
+        description: task.title,
+        action: { label: "Undo", onClick: () => setArchived(r.data ?? task, !archived, false) },
+      });
+    }
+  };
 
   const setStatus = async (task: Task, statusId: string) => {
     upsert({ ...task, statusId });
@@ -214,7 +278,8 @@ export function TaskWorkspace({
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
           <MobileNavButton />
           <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">{title}</h1>
-          <span className="tabular font-mono text-[12px] text-faint">{openCount}</span>
+          <span className="tabular font-mono text-[12px] text-faint">{scope.archived ? archivedList.length : openCount}</span>
+          {scope.archived ? null : (
           <div className="ml-3 hidden items-center rounded-full border border-input p-0.5 sm:flex" role="radiogroup" aria-label="Filter by type">
             {(
               [
@@ -237,26 +302,59 @@ export function TaskWorkspace({
               </button>
             ))}
           </div>
+          )}
           <div className="ml-auto flex items-center gap-3">
             <Presence />
             <LiveIndicator />
-            <Button onClick={() => newTask()} className="h-[30px] gap-2 rounded-lg px-3">
-              <PlusIcon className="size-3.5" />
-              <span className="max-sm:hidden">New task</span>
-              <Kbd className="border-transparent bg-white/15 text-current max-sm:hidden dark:bg-black/10">N</Kbd>
-            </Button>
+            <div className="flex items-center gap-0.5">
+              <FilterMenu value={view} onChange={setView} hideAssignee={scope.mine} />
+              <SortMenu value={view.sort} onChange={(sort) => setView((v) => ({ ...v, sort }))} options={scope.archived ? ARCHIVE_SORTS : SORTS} />
+            </div>
+            {!scope.archived && (
+              <Button onClick={() => newTask()} className="h-[30px] gap-2 rounded-lg px-3">
+                <PlusIcon className="size-3.5" />
+                <span className="max-sm:hidden">New task</span>
+                <Kbd className="border-transparent bg-white/15 text-current max-sm:hidden dark:bg-black/10">N</Kbd>
+              </Button>
+            )}
           </div>
         </header>
+        <FilterChips value={view} onChange={setView} />
 
         <div className="relative min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-16 sm:px-4">
           {tasks.size === 0 ? (
-            <EmptyState title={scope.mine ? "Nothing assigned to you" : "No tasks yet"} hint={emptyHint} onNew={() => newTask()} />
-          ) : visible.length === 0 ? (
+            scope.archived ? (
+              <EmptyState title="Nothing archived" hint={emptyHint} icon="archive" />
+            ) : (
+              <EmptyState title={scope.mine ? "Nothing assigned to you" : "No tasks yet"} hint={emptyHint} onNew={() => newTask()} />
+            )
+          ) : visible.length === 0 && filtering ? (
             <EmptyState
-              title={typeFilter === "issue" ? "No issues here" : "No feature requests here"}
-              hint="Try a different filter."
-              action={<Button variant="outline" onClick={() => setTypeFilter("all")}>Show all types</Button>}
+              title="Nothing matches these filters"
+              hint="Loosen a filter to see more tasks."
+              action={<Button variant="outline" onClick={clearFilters}>Clear filters</Button>}
             />
+          ) : scope.archived ? (
+            <ul className="mt-2 flex flex-col gap-1">
+              {archivedList.map((t) => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  selected={t.key === selectedKey}
+                  fresh={fresh.get(t.id)}
+                  showProject={showProject}
+                  sort={view.sort}
+                  href={`${pathname}?task=${t.key}`}
+                  onSeen={() => seen(t.id)}
+                  onStatus={(s) => setStatus(t, s)}
+                  onArchive={(a) => setArchived(t, a)}
+                  refCb={(el) => {
+                    if (el) rowEls.current.set(t.id, el);
+                    else rowEls.current.delete(t.id);
+                  }}
+                />
+              ))}
+            </ul>
           ) : (
             <>
               {openGroups.length === 0 && !showClosed && (
@@ -277,9 +375,11 @@ export function TaskWorkspace({
                         selected={t.key === selectedKey}
                         fresh={fresh.get(t.id)}
                         showProject={showProject}
+                        sort={view.sort}
                         href={`${pathname}?task=${t.key}`}
                         onSeen={() => seen(t.id)}
                         onStatus={(s) => setStatus(t, s)}
+                        onArchive={(a) => setArchived(t, a)}
                         refCb={(el) => {
                           if (el) rowEls.current.set(t.id, el);
                           else rowEls.current.delete(t.id);
@@ -314,18 +414,22 @@ function TaskRow({
   selected,
   fresh,
   showProject,
+  sort,
   href,
   onSeen,
   onStatus,
+  onArchive,
   refCb,
 }: {
   task: Task;
   selected: boolean;
   fresh?: Fresh;
   showProject: boolean;
+  sort: SortKey;
   href: string;
   onSeen: () => void;
   onStatus: (statusId: string) => void;
+  onArchive: (archived: boolean) => void;
   refCb: (el: HTMLLIElement | null) => void;
 }) {
   const { statuses, statusById, memberById, projectById, me, isAdmin } = useOrg();
@@ -374,6 +478,20 @@ function TaskRow({
       </Link>
       <div className="flex items-center gap-3">
         {fresh && <FreshNote fresh={fresh} />}
+        {!fresh && task.archivedAt ? (
+          <span className="text-[12px] text-faint max-md:hidden" title={new Date(task.archivedAt).toLocaleString()}>
+            Archived {timeAgo(task.archivedAt)}
+          </span>
+        ) : !fresh && (sort === "created" || sort === "created-asc") ? (
+          <span className="text-[12px] text-faint max-md:hidden" title={`Created ${new Date(task.createdAt).toLocaleString()}`}>
+            {timeAgo(task.createdAt)}
+          </span>
+        ) : !fresh && sort === "updated" ? (
+          <span className="text-[12px] text-faint max-md:hidden" title={`Updated ${new Date(task.updatedAt).toLocaleString()}`}>
+            {timeAgo(task.updatedAt)}
+          </span>
+        ) : null}
+        {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className="max-sm:hidden" />}
         {(
           <>
             {showProject && project && !fresh && (
@@ -390,6 +508,25 @@ function TaskRow({
           {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={20} /> : null}
         </span>
         <span className="tabular w-[64px] text-right font-mono text-[12px] text-faint max-sm:hidden">{task.key}</span>
+        {canEdit && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => onArchive(!task.archivedAt)}
+                aria-label={task.archivedAt ? `Restore ${task.key}` : `Archive ${task.key}`}
+                className={cn(
+                  "relative z-10 -mr-1.5 grid size-7 place-items-center rounded-md text-faint transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100",
+                  task.archivedAt ? "opacity-100" : "opacity-0 group-hover:opacity-100 max-md:hidden",
+                )}
+              >
+                {task.archivedAt ? <ArchiveRestoreIcon className="size-4" /> : <ArchiveIcon className="size-4" />}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {task.archivedAt ? "Restore" : "Archive"} <Kbd className="ml-1">E</Kbd>
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
     </li>
   );
@@ -460,19 +597,21 @@ function EmptyState({
   onNew,
   action,
   compact,
+  icon,
 }: {
   title: string;
   hint: string;
   onNew?: () => void;
   action?: React.ReactNode;
   compact?: boolean;
+  icon?: "archive";
 }) {
   return (
     <div className={cn("mx-auto flex max-w-sm flex-col items-center text-center", compact ? "py-10" : "py-[18vh]")}>
-      <svg width="40" height="40" viewBox="0 0 20 20" aria-hidden className="mb-4 text-faint/60">
+      {icon === "archive" ? <ArchiveIcon className="mb-4 size-9 stroke-1 text-faint/60" /> : <svg width="40" height="40" viewBox="0 0 20 20" aria-hidden className="mb-4 text-faint/60">
         <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="1" />
         <path d="m6.6 10.2 2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      </svg>}
       <h2 className="text-[15px] font-semibold">{title}</h2>
       <p className="mt-1 text-[13.5px] text-muted-foreground">{hint}</p>
       <div className="mt-5">

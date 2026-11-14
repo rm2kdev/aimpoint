@@ -73,10 +73,10 @@ curl $HOST/api/v1/tasks -H "Authorization: Bearer vec_…" -H "Content-Type: app
 |---|---|
 | `GET /api/v1/me` | the bot and its organisation |
 | `GET /api/v1/projects`, `/statuses`, `/members` | lookups |
-| `GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&limit=50` | list |
-| `POST /api/v1/tasks` | create: `title`, `project` (key or id), optional `type`, `status` (name or id), `assignee` (`me`, email, bot name or id), `priority` (0-3 or none/low/medium/high), `description` (text or HTML) |
+| `GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&limit=50` | list; archived tasks are left out unless `archived=true` |
+| `POST /api/v1/tasks` | create: `title`, `project` (key or id), optional `type`, `status` (name or id), `assignee` (`me`, email, bot name or id), `priority` (0-3 or none/low/medium/high), `description` (text or HTML), `dueDate` (`YYYY-MM-DD` or null) |
 | `GET /api/v1/tasks/WEB-12` | task with description and activity |
-| `PATCH /api/v1/tasks/WEB-12` | same fields as create; only tasks the bot created |
+| `PATCH /api/v1/tasks/WEB-12` | same fields as create, plus `"archived": true/false`; only tasks the bot created |
 | `POST /api/v1/tasks/WEB-12/comments` | `{ "body": "…" }`; mention people or bots with `<@id>` (ids from `/members`) |
 
 Errors are JSON `{ "error": "…" }` with 400/401/403/404. `pnpm seed` creates a demo "Triage Bot" and prints its key.

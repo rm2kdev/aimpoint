@@ -62,6 +62,9 @@ export function toTask(t: TaskDoc, projectKey: string): Task {
     statusId: t.statusId.toHexString(),
     assigneeId: t.assigneeId?.toHexString() ?? null,
     priority: t.priority,
+    dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null,
+    archivedAt: t.archivedAt?.toISOString() ?? null,
+    archivedBy: t.archivedBy?.toHexString() ?? null,
     createdBy: t.createdBy.toHexString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
@@ -144,12 +147,15 @@ export async function loadCounts(orgId: ObjectId, userId: ObjectId, statuses?: S
   const c = await cols();
   statuses ??= await c.statuses.find({ orgId }).toArray();
   const openIds = statuses.filter((s) => s.category !== "done" && s.category !== "cancelled").map((s) => s._id);
-  const rows = await c.tasks
+  const [rows, archived] = await Promise.all([
+    c.tasks
     .aggregate<{ _id: ObjectId; n: number; mine: number }>([
-      { $match: { orgId, statusId: { $in: openIds } } },
+      { $match: { orgId, statusId: { $in: openIds }, archivedAt: null } },
       { $group: { _id: "$projectId", n: { $sum: 1 }, mine: { $sum: { $cond: [{ $eq: ["$assigneeId", userId] }, 1, 0] } } } },
     ])
-    .toArray();
+    .toArray(),
+    c.tasks.countDocuments({ orgId, archivedAt: { $ne: null } }),
+  ]);
   const projects: Record<string, number> = {};
   let all = 0;
   let my = 0;
@@ -158,7 +164,7 @@ export async function loadCounts(orgId: ObjectId, userId: ObjectId, statuses?: S
     all += r.n;
     my += r.mine;
   }
-  return { my, all, projects };
+  return { my, all, archived, projects };
 }
 
 /* ---------------- tasks ---------------- */
@@ -166,11 +172,13 @@ export async function loadCounts(orgId: ObjectId, userId: ObjectId, statuses?: S
 export interface TaskScope {
   projectId?: string;
   assigneeId?: string;
+  archived?: boolean;
 }
 
 export async function listTasks(orgId: ObjectId, scope: TaskScope): Promise<Task[]> {
   const c = await cols();
-  const filter: Filter<TaskDoc> = { orgId };
+  // archivedAt is absent on older tasks; `null` matches both missing and null.
+  const filter: Filter<TaskDoc> = { orgId, archivedAt: scope.archived ? { $ne: null } : null };
   if (scope.projectId) filter.projectId = new ObjectId(scope.projectId);
   if (scope.assigneeId) filter.assigneeId = new ObjectId(scope.assigneeId);
   const [docs, projects] = await Promise.all([

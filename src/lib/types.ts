@@ -53,6 +53,10 @@ export interface TaskDoc {
   statusId: ObjectId;
   assigneeId: ObjectId | null;
   priority: Priority;
+  /** Calendar date (stored as UTC midnight). */
+  dueDate?: Date | null;
+  archivedAt?: Date | null;
+  archivedBy?: ObjectId | null;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -72,7 +76,7 @@ export interface ActivityDoc {
   orgId: ObjectId;
   taskId: ObjectId;
   actorId: ObjectId;
-  kind: "created" | "status" | "assignee" | "priority" | "type" | "title" | "project";
+  kind: "created" | "status" | "assignee" | "priority" | "type" | "title" | "project" | "due" | "archived" | "restored";
   from?: string | null;
   to?: string | null;
   createdAt: Date;
@@ -150,6 +154,10 @@ export interface Task {
   statusId: string;
   assigneeId: string | null;
   priority: Priority;
+  /** "YYYY-MM-DD" or null */
+  dueDate: string | null;
+  archivedAt: string | null;
+  archivedBy: string | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
@@ -170,5 +178,6 @@ export interface FeedItem {
 export interface Counts {
   my: number;
   all: number;
+  archived: number;
   projects: Record<string, number>;
 }

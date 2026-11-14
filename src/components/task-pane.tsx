@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LinkIcon, LockIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, LinkIcon, LockIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
@@ -16,6 +16,8 @@ import {
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
 import { CommentBody, MentionComposer } from "@/components/mentions";
+import { DueBadge, DuePicker } from "@/components/due-date";
+import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -115,6 +117,14 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   }, [org.slug, task]);
   useEffect(() => () => void flushDesc(), [flushDesc]);
 
+  const setArchived = async (archived: boolean) => {
+    if (!task) return;
+    await patch({ archived });
+    toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
+      description: archived ? "Find it under Archive in the sidebar." : task.title,
+    });
+  };
+
   const statusOptions = useStatusOptions();
   const assigneeOptions = useAssigneeOptions();
   const projectOptions = useProjectOptions();
@@ -183,6 +193,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </DropdownMenuItem>
             {canEdit && (
               <>
+                <DropdownMenuItem className="gap-2.5" onSelect={() => setArchived(!task.archivedAt)}>
+                  {task.archivedAt ? <ArchiveRestoreIcon className="size-4" /> : <ArchiveIcon className="size-4" />}
+                  {task.archivedAt ? "Restore" : "Archive"}
+                  <span className="ml-auto font-mono text-[11.5px] text-faint">E</span>
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" className="gap-2.5" onSelect={() => setConfirmDelete(true)}>
                   <Trash2Icon className="size-4" /> Delete task
@@ -203,6 +218,22 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </Picker>
             <TitleField value={task.title} readOnly={!canEdit} onSave={(title) => patch({ title })} />
           </div>
+          {task.archivedAt && (
+            <div className="mt-3 flex items-center gap-2.5 rounded-lg bg-sidebar py-1.5 pr-1.5 pl-3 text-[12.5px] text-muted-foreground">
+              <ArchiveIcon className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                Archived{task.archivedBy ? ` by ${memberById.get(task.archivedBy)?.name ?? "a former member"}` : ""}{" "}
+                <time dateTime={task.archivedAt} title={new Date(task.archivedAt).toLocaleString()}>
+                  {timeAgo(task.archivedAt) === "now" ? "just now" : timeAgo(task.archivedAt)}
+                </time>
+              </span>
+              {canEdit && (
+                <Button size="sm" variant="outline" className="h-7 gap-1.5 bg-background" onClick={() => setArchived(false)}>
+                  <ArchiveRestoreIcon className="size-3.5" /> Restore
+                </Button>
+              )}
+            </div>
+          )}
           {!canEdit && (
             <p className="mt-3 flex items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground">
               <LockIcon className="size-3.5 shrink-0" />
@@ -262,6 +293,40 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                   <span className="truncate">{project?.name}</span>
                 </button>
               </Picker>
+            </dd>
+            <dt className="text-faint">Due date</dt>
+            <dd>
+              <DuePicker disabled={!canEdit} value={task.dueDate} onChange={(dueDate) => patch({ dueDate })}>
+                <button className={propBtn} aria-label={task.dueDate ? `Due ${formatDue(task.dueDate, true)}` : "Set due date"}>
+                  {task.dueDate ? (
+                    <DueBadge due={task.dueDate} long closed={status?.category === "done" || status?.category === "cancelled"} className="text-[13px]" />
+                  ) : (
+                    <>
+                      <CalendarIcon className="size-3.5 text-faint" />
+                      <span className="text-muted-foreground">{canEdit ? "Set due date" : "None"}</span>
+                    </>
+                  )}
+                </button>
+              </DuePicker>
+            </dd>
+            <dt className="text-faint">Created</dt>
+            <dd className="flex h-7 min-w-0 items-center gap-1.5 text-muted-foreground">
+              <time dateTime={task.createdAt} title={new Date(task.createdAt).toLocaleString()}>
+                {formatDay(task.createdAt)}
+              </time>
+              {creator && (
+                <>
+                  <span className="text-faint">by</span>
+                  <MemberAvatar member={creator} id={creator.id} size={16} />
+                  <span className="truncate">{creator.name}</span>
+                </>
+              )}
+            </dd>
+            <dt className="text-faint">Updated</dt>
+            <dd className="flex h-7 items-center text-muted-foreground">
+              <time dateTime={task.updatedAt} title={new Date(task.updatedAt).toLocaleString()}>
+                {timeAgo(task.updatedAt)}
+              </time>
             </dd>
           </dl>
 
@@ -423,6 +488,18 @@ function Feed({ feed }: { feed: FeedItem[] }) {
         return <>changed the type to {f.to === "feature" ? "feature request" : "issue"}</>;
       case "title":
         return "renamed this task";
+      case "due":
+        return f.to ? (
+          <>
+            set the due date to <b className="font-medium text-foreground">{formatDueAbsolute(f.to)}</b>
+          </>
+        ) : (
+          "cleared the due date"
+        );
+      case "archived":
+        return "archived this task";
+      case "restored":
+        return "restored this task from the archive";
       case "project":
         return (
           <>

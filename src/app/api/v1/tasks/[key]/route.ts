@@ -23,6 +23,8 @@ export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
     assigneeId: await resolveAssignee(ctx, b.assignee),
     priority: parsePriority(b.priority),
     projectId: b.project === undefined ? undefined : (await resolveProject(ctx.org._id, b.project))._id.toHexString(),
+    dueDate: b.dueDate === undefined ? undefined : (b.dueDate as string | null),
+    archived: b.archived === undefined ? undefined : Boolean(b.archived),
   });
   return { task };
 });
