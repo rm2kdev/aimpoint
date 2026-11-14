@@ -4,6 +4,8 @@ const nextConfig: NextConfig = {
   // Every screen is per-user and per-organisation, so routes render at request time.
   cacheComponents: false,
   devIndicators: { position: "bottom-right" },
+  // Let other machines on the LAN (e.g. the Mac mini at 10.0.0.2) load dev JS/HMR.
+  allowedDevOrigins: ["10.0.0.2", "192.168.1.90", "*.local"],
   turbopack: {
     rules: {
       "*.css": {
