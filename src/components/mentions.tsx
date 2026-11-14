@@ -159,20 +159,18 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
     if (!valid) return setToken(null);
 
     const end = caret + (/^[^\s@]*/.exec(value.slice(caret))?.[0].length ?? 0);
-    if (!editing) {
-      // Caret parked inside/at the end of an intact picked mention: leave it alone.
-      if (picked.some((m) => value.startsWith(`@${m.name}`, at) && caret <= at + 1 + m.name.length)) return setToken(null);
-    }
+    // An intact picked mention is finished: caret inside it, at its end or in the words typed after it.
+    if (picked.some((m) => value.startsWith(`@${m.name}`, at))) return setToken(null);
 
-    const words = raw.split(/\s+/);
+    const q0 = raw.toLowerCase();
     let q: string | null = null;
-    for (let n = words.length; n >= 1; n--) {
-      const cand = words.slice(0, n).join(" ").toLowerCase();
-      if (members.some((m) => matches(m, cand))) {
-        q = cand;
-        break;
-      }
-      if (n === 1 && !raw.includes(" ")) q = cand; // single word with no match: keep it (list stays hidden)
+    if (!q0.includes(" ") || members.some((m) => matches(m, q0))) {
+      q = q0; // "@mi", "@mia kow": a name still being typed
+    } else if (editing) {
+      // Editing inside a broken mention ("@Mia Kx|owalski"): retry without the word under the caret,
+      // but only that one word, so ordinary text typed after "@Mia" never reopens the list.
+      const shorter = q0.split(/\s+/).slice(0, -1).join(" ");
+      if (shorter && /^[^\s@]/.test(value.slice(caret)) && members.some((m) => matches(m, shorter))) q = shorter;
     }
     setToken(q === null ? null : { query: q, start: at, end });
     setActive(0);
