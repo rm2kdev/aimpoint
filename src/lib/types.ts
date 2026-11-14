@@ -62,7 +62,9 @@ export interface CommentDoc {
   orgId: ObjectId;
   taskId: ObjectId;
   authorId: ObjectId;
+  /** Plain text; mentions are encoded as <@24-hex-id>. */
   body: string;
+  mentions?: ObjectId[];
   createdAt: Date;
 }
 export interface ActivityDoc {
@@ -160,6 +162,7 @@ export interface FeedItem {
   kind: "comment" | ActivityDoc["kind"];
   actorId: string;
   body?: string;
+  mentions?: string[];
   from?: string | null;
   to?: string | null;
   createdAt: string;

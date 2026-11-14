@@ -40,7 +40,7 @@ export function TaskWorkspace({
   showProject: boolean;
   emptyHint: string;
 }) {
-  const { org, me, statuses, memberById } = useOrg();
+  const { org, me, statuses } = useOrg();
   const { newTask, setViewDefaults } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -95,7 +95,7 @@ export function TaskWorkspace({
       }
     } else if (e.type === "feed.add" && e.item.kind === "comment" && e.actorId !== me.id) {
       const t = tasks.get(e.taskId);
-      if (t && t.key !== selectedKey) mark(t.id, e.actorId, "commented");
+      if (t && t.key !== selectedKey) mark(t.id, e.actorId, e.item.mentions?.includes(me.id) ? "mentioned you" : "commented");
     } else if (e.type === "task.delete") {
       setTasks((prev) => {
         if (!prev.has(e.taskId)) return prev;

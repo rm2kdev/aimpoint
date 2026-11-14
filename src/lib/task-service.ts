@@ -197,7 +197,18 @@ export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string)
   if (text.length > 10_000) throw new UserError("Comments are limited to 10,000 characters.");
   const c = await cols();
   if (!(await c.tasks.findOne({ _id: taskId, orgId: actor.orgId }, { projection: { _id: 1 } }))) throw new UserError("This task no longer exists.");
-  const doc = { _id: new ObjectId(), orgId: actor.orgId, taskId, authorId: actor.id, body: text, createdAt: new Date() };
+  // Mentions are <@id> tokens; keep only ids that are members or bots of this org.
+  const ids = [...new Set([...text.matchAll(/<@([a-f0-9]{24})>/g)].map((m) => m[1]))].map((id) => new ObjectId(id));
+  let mentions: ObjectId[] = [];
+  if (ids.length) {
+    const [ms, bs] = await Promise.all([
+      c.memberships.find({ orgId: actor.orgId, userId: { $in: ids } }, { projection: { userId: 1 } }).toArray(),
+      c.bots.find({ orgId: actor.orgId, _id: { $in: ids } }, { projection: { _id: 1 } }).toArray(),
+    ]);
+    const ok = new Set([...ms.map((m) => m.userId.toHexString()), ...bs.map((b) => b._id.toHexString())]);
+    mentions = ids.filter((id) => ok.has(id.toHexString()));
+  }
+  const doc = { _id: new ObjectId(), orgId: actor.orgId, taskId, authorId: actor.id, body: text, mentions, createdAt: new Date() };
   await c.comments.insertOne(doc);
   const item = toFeed(doc);
   await publish(actor.orgId.toHexString(), { type: "feed.add", actorId: actor.id.toHexString(), taskId: taskId.toHexString(), item });

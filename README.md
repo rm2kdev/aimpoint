@@ -77,12 +77,12 @@ curl $HOST/api/v1/tasks -H "Authorization: Bearer vec_…" -H "Content-Type: app
 | `POST /api/v1/tasks` | create: `title`, `project` (key or id), optional `type`, `status` (name or id), `assignee` (`me`, email, bot name or id), `priority` (0-3 or none/low/medium/high), `description` (text or HTML) |
 | `GET /api/v1/tasks/WEB-12` | task with description and activity |
 | `PATCH /api/v1/tasks/WEB-12` | same fields as create; only tasks the bot created |
-| `POST /api/v1/tasks/WEB-12/comments` | `{ "body": "…" }` |
+| `POST /api/v1/tasks/WEB-12/comments` | `{ "body": "…" }`; mention people or bots with `<@id>` (ids from `/members`) |
 
 Errors are JSON `{ "error": "…" }` with 400/401/403/404. `pnpm seed` creates a demo "Triage Bot" and prints its key.
 
 ## Notes
 
 - Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).
-- Comments are plain text; descriptions are sanitised HTML.
+- Comments are plain text with @mentions (stored as `<@id>` tokens, validated against the org on save); descriptions are sanitised HTML.
 - Not built yet: email notifications, billing, presence avatars, drag-to-reorder within a status.

@@ -74,7 +74,14 @@ export const toTaskDetail = (t: TaskDoc, projectKey: string): TaskDetail => ({
 
 export function toFeed(doc: CommentDoc | ActivityDoc): FeedItem {
   if ("body" in doc) {
-    return { id: doc._id.toHexString(), kind: "comment", actorId: doc.authorId.toHexString(), body: doc.body, createdAt: doc.createdAt.toISOString() };
+    return {
+      id: doc._id.toHexString(),
+      kind: "comment",
+      actorId: doc.authorId.toHexString(),
+      body: doc.body,
+      mentions: doc.mentions?.map((m) => m.toHexString()) ?? [],
+      createdAt: doc.createdAt.toISOString(),
+    };
   }
   return {
     id: doc._id.toHexString(),

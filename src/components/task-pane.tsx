@@ -5,7 +5,7 @@ import { LinkIcon, LockIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucid
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
-import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
+import { MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
 import {
   Picker,
   PRIORITY_OPTIONS,
@@ -15,6 +15,7 @@ import {
   useStatusOptions,
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
+import { CommentBody, MentionComposer } from "@/components/mentions";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -284,7 +285,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
           </div>
 
           <Feed feed={feed} />
-          <Composer
+          <MentionComposer
             onSend={async (body) => {
               const r = await addComment(org.slug, task.id, body);
               if (!r.ok) {
@@ -388,7 +389,7 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
 }
 
 function Feed({ feed }: { feed: FeedItem[] }) {
-  const { memberById, statusById, projectById } = useOrg();
+  const { memberById, statusById, projectById, me } = useOrg();
   const [, tick] = useState(0);
   useEffect(() => {
     const t = setInterval(() => tick((n) => n + 1), 60_000);
@@ -449,8 +450,13 @@ function Feed({ feed }: { feed: FeedItem[] }) {
                     {timeAgo(f.createdAt)}
                   </time>
                 </div>
-                <div className="mt-1 rounded-[10px] border border-border bg-sidebar px-3 py-2 text-[13.5px] leading-relaxed break-words whitespace-pre-wrap">
-                  {f.body}
+                <div
+                  className={cn(
+                    "mt-1 rounded-[10px] border border-border bg-sidebar px-3 py-2 text-[13.5px] leading-relaxed break-words whitespace-pre-wrap",
+                    f.mentions?.includes(me.id) && "border-selected-foreground/25",
+                  )}
+                >
+                  <CommentBody body={f.body ?? ""} />
                 </div>
               </div>
             </li>
@@ -470,48 +476,5 @@ function Feed({ feed }: { feed: FeedItem[] }) {
         })}
       </ol>
     </section>
-  );
-}
-
-function Composer({ onSend }: { onSend: (body: string) => Promise<boolean> }) {
-  const [body, setBody] = useState("");
-  const [sending, setSending] = useState(false);
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "0px";
-    el.style.height = `${Math.min(el.scrollHeight, 240)}px`;
-  }, [body]);
-  const send = async () => {
-    if (!body.trim() || sending) return;
-    setSending(true);
-    if (await onSend(body)) setBody("");
-    setSending(false);
-  };
-  return (
-    <div className="mt-4 rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
-      <textarea
-        ref={ref}
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            send();
-          }
-        }}
-        rows={1}
-        placeholder="Leave a comment…"
-        aria-label="Comment"
-        className="block min-h-[40px] w-full resize-none bg-transparent px-3 pt-2.5 text-[13.5px] outline-none placeholder:text-faint"
-      />
-      <div className={cn("flex items-center justify-end gap-2 px-2 pb-2", !body.trim() && "hidden")}>
-        <Kbd>⌘↵</Kbd>
-        <Button size="sm" onClick={send} disabled={sending}>
-          {sending ? "Sending…" : "Comment"}
-        </Button>
-      </div>
-    </div>
   );
 }
