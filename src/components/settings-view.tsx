@@ -250,6 +250,7 @@ function ProjectRow({ id, name, pkey, color, open, canEdit }: { id: string; name
           variant="ghost"
           size="icon-sm"
           aria-label={`Delete ${name}`}
+          className="text-faint hover:text-destructive"
           disabled={pending}
           onClick={() => confirm(`Delete project ${name}?`) && run(() => deleteProject(org.slug, id), "Project deleted")}
         >
@@ -446,7 +447,7 @@ function StatusEditor({
                 <Button variant="ghost" size="icon-sm" aria-label="Move down" disabled={last || busy} onClick={() => onMove?.(1)}>
                   <ArrowDownIcon />
                 </Button>
-                <Button variant="ghost" size="icon-sm" aria-label={`Delete ${status.name}`} onClick={() => setDeleting((d) => !d)} disabled={statuses.length <= 1}>
+                <Button variant="ghost" size="icon-sm" aria-label={`Delete ${status.name}`} className="text-faint hover:text-destructive" onClick={() => setDeleting((d) => !d)} disabled={statuses.length <= 1}>
                   <Trash2Icon />
                 </Button>
               </>
@@ -529,6 +530,7 @@ function Members({ invites }: { invites: InviteRow[] }) {
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Remove ${m.name}`}
+                  className="text-faint hover:text-destructive"
                   onClick={() => confirm(`Remove ${m.name} from ${org.name}?`) && run(() => removeMember(org.slug, m.id), "Member removed")}
                 >
                   <Trash2Icon />

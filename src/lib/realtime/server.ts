@@ -33,6 +33,19 @@ export function pusher(): Pusher {
 }
 
 export const orgChannel = (orgId: string) => `private-org-${orgId}`;
+export const presenceChannel = (orgId: string) => `presence-org-${orgId}`;
+
+/** Local-driver presence: open SSE connections per org and user. */
+const p = globalThis as unknown as { __vectorPresence?: Map<string, Map<string, number>> };
+export function localPresence(orgId: string, userId: string, delta: 1 | -1) {
+  p.__vectorPresence ??= new Map();
+  const org = p.__vectorPresence.get(orgId) ?? new Map<string, number>();
+  const n = (org.get(userId) ?? 0) + delta;
+  if (n > 0) org.set(userId, n);
+  else org.delete(userId);
+  p.__vectorPresence.set(orgId, org);
+  localBus().emit(orgChannel(orgId), { type: "presence", userIds: [...org.keys()] });
+}
 
 export async function publish(orgId: string, event: RealtimeEvent) {
   try {

@@ -40,7 +40,7 @@ function insertImages(editor: Editor, orgSlug: string, files: File[], pos?: numb
       .then((src) => {
         const chain = editor.chain().focus();
         (pos !== undefined ? chain.insertContentAt(pos, { type: "image", attrs: { src, alt: file.name } }) : chain.setImage({ src, alt: file.name })).run();
-        toast.dismiss(id);
+        toast.success("Image added", { id, duration: 1500 });
       })
       .catch((e: Error) => toast.error(e.message, { id }));
   }
@@ -127,7 +127,7 @@ export function RichEditor({
         <div
           role="toolbar"
           aria-label="Formatting"
-          className="mb-3 flex w-max items-center gap-0.5 rounded-lg border border-border p-0.5 opacity-80 transition-opacity group-focus-within/editor:opacity-100 group-hover/editor:opacity-100"
+          className="sticky top-0 z-10 mb-3 flex w-max items-center gap-0.5 rounded-lg border border-border bg-background p-0.5 opacity-80 transition-opacity group-focus-within/editor:opacity-100 group-hover/editor:opacity-100"
         >
           <Tool label="Bold" shortcut="⌘B" active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}>
             <BoldIcon />

@@ -1,0 +1,974 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T17:22:07+08:00",
+  "title": "Design System: Vector",
+  "extensions": {
+    "colorMeta": {
+      "brand-blue": {
+        "role": "primary",
+        "displayName": "Cobalt Selection Blue",
+        "canonical": "#2f6fed",
+        "oklch": "oklch(57.4% 0.202 262.0)",
+        "tonalRamp": [
+          "#000826",
+          "#011d5a",
+          "#043594",
+          "#1151cc",
+          "#3d77e7",
+          "#709df1",
+          "#a8c5f9",
+          "#e4efff"
+        ],
+        "cssVar": "--brand",
+        "mode": "light (:root)"
+      },
+      "selection-wash": {
+        "role": "primary",
+        "displayName": "Selection Wash",
+        "canonical": "#e8effd",
+        "oklch": "oklch(95.1% 0.020 264.5)",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#21242a",
+          "#3b4049",
+          "#585e69",
+          "#787d89",
+          "#9a9ea7",
+          "#c1c4c9",
+          "#edeef0"
+        ],
+        "cssVar": "--selected",
+        "mode": "light (:root)"
+      },
+      "selection-ink": {
+        "role": "primary",
+        "displayName": "Selection Ink",
+        "canonical": "#1d5fd6",
+        "oklch": "oklch(51.9% 0.195 261.2)",
+        "tonalRamp": [
+          "#000825",
+          "#011e58",
+          "#023691",
+          "#0f52c9",
+          "#3c78e4",
+          "#709eee",
+          "#a8c5f7",
+          "#e4efff"
+        ],
+        "cssVar": "--selected-foreground",
+        "mode": "light (:root)"
+      },
+      "ink": {
+        "role": "secondary",
+        "displayName": "Ledger Near-Black",
+        "canonical": "#171717",
+        "oklch": "oklch(20.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--foreground",
+        "mode": "light (:root)"
+      },
+      "ink-inverse": {
+        "role": "neutral",
+        "displayName": "Inverse Ink",
+        "canonical": "#fafafa",
+        "oklch": "oklch(98.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--primary-foreground",
+        "mode": "light (:root)"
+      },
+      "paper": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "#ffffff",
+        "oklch": "oklch(100.0% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--background",
+        "mode": "light (:root)"
+      },
+      "sidebar-paper": {
+        "role": "neutral",
+        "displayName": "Sidebar Paper",
+        "canonical": "#f7f7f5",
+        "oklch": "oklch(97.6% 0.003 106.4)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#242423",
+          "#40403e",
+          "#5e5e5c",
+          "#7d7d7b",
+          "#9e9e9d",
+          "#c4c4c2",
+          "#eeeeec"
+        ],
+        "cssVar": "--sidebar",
+        "mode": "light (:root)"
+      },
+      "stone-wash": {
+        "role": "neutral",
+        "displayName": "Stone Wash",
+        "canonical": "#f3f3f1",
+        "oklch": "oklch(96.4% 0.003 106.4)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#242423",
+          "#40403e",
+          "#5e5e5c",
+          "#7d7d7b",
+          "#9e9e9d",
+          "#c4c4c2",
+          "#eeeeec"
+        ],
+        "cssVar": "--muted",
+        "mode": "light (:root)"
+      },
+      "hover-wash": {
+        "role": "neutral",
+        "displayName": "Hover Wash",
+        "canonical": "#f1f1ef",
+        "oklch": "oklch(95.8% 0.003 106.4)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#242423",
+          "#40403e",
+          "#5e5e5c",
+          "#7d7d7b",
+          "#9e9e9d",
+          "#c4c4c2",
+          "#eeeeec"
+        ],
+        "cssVar": "--accent",
+        "mode": "light (:root)"
+      },
+      "sidebar-hover": {
+        "role": "neutral",
+        "displayName": "Sidebar Hover",
+        "canonical": "#ececea",
+        "oklch": "oklch(94.3% 0.003 106.5)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#242423",
+          "#40403e",
+          "#5e5e5c",
+          "#7d7d7b",
+          "#9e9e9d",
+          "#c4c4c2",
+          "#eeeeec"
+        ],
+        "cssVar": "--sidebar-accent",
+        "mode": "light (:root)"
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#ececea",
+        "oklch": "oklch(94.3% 0.003 106.5)",
+        "tonalRamp": [
+          "#0b0b0a",
+          "#242423",
+          "#40403e",
+          "#5e5e5c",
+          "#7d7d7b",
+          "#9e9e9d",
+          "#c4c4c2",
+          "#eeeeec"
+        ],
+        "cssVar": "--border",
+        "mode": "light (:root)"
+      },
+      "input-stroke": {
+        "role": "neutral",
+        "displayName": "Input Stroke",
+        "canonical": "#e2e2df",
+        "oklch": "oklch(91.2% 0.004 106.5)",
+        "tonalRamp": [
+          "#0b0b09",
+          "#242422",
+          "#40403d",
+          "#5e5e5b",
+          "#7d7d7b",
+          "#9e9e9c",
+          "#c4c4c1",
+          "#efefec"
+        ],
+        "cssVar": "--input",
+        "mode": "light (:root)"
+      },
+      "muted-ink": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "#5c5c5c",
+        "oklch": "oklch(47.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--muted-foreground",
+        "mode": "light (:root)"
+      },
+      "faint-ink": {
+        "role": "neutral",
+        "displayName": "Faint Ink",
+        "canonical": "#737373",
+        "oklch": "oklch(55.6% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--faint",
+        "mode": "light (:root)"
+      },
+      "live-wash": {
+        "role": "tertiary",
+        "displayName": "Live Yellow Wash",
+        "canonical": "#fff6d6",
+        "oklch": "oklch(97.2% 0.043 94.1)",
+        "tonalRamp": [
+          "#0d0b05",
+          "#282416",
+          "#46402a",
+          "#655d42",
+          "#857d63",
+          "#a49e8b",
+          "#c7c4b8",
+          "#f0eeea"
+        ],
+        "cssVar": "--live",
+        "mode": "light (:root)"
+      },
+      "live-border": {
+        "role": "tertiary",
+        "displayName": "Live Border",
+        "canonical": "#f0d98a",
+        "oklch": "oklch(88.7% 0.102 93.7)",
+        "tonalRamp": [
+          "#100b00",
+          "#2d2300",
+          "#4e3e00",
+          "#715c00",
+          "#8f7c37",
+          "#ac9e6e",
+          "#cdc4a7",
+          "#f2eee3"
+        ],
+        "cssVar": "--live-border",
+        "mode": "light (:root)"
+      },
+      "destructive": {
+        "role": "error",
+        "displayName": "Destructive Red",
+        "canonical": "#d93036",
+        "oklch": "oklch(58.0% 0.204 24.8)",
+        "tonalRamp": [
+          "#200000",
+          "#4e0002",
+          "#820006",
+          "#b50016",
+          "#d54141",
+          "#e67a73",
+          "#f4b0aa",
+          "#ffe7e4"
+        ],
+        "cssVar": "--destructive",
+        "mode": "light (:root)"
+      },
+      "issue-red": {
+        "role": "data",
+        "displayName": "Issue Red",
+        "canonical": "#e5484d",
+        "oklch": "oklch(62.6% 0.193 23.0)",
+        "tonalRamp": [
+          "#1f0001",
+          "#4d0007",
+          "#7f0011",
+          "#b10122",
+          "#d14649",
+          "#e37c79",
+          "#f2b1ad",
+          "#ffe7e5"
+        ],
+        "source": "hard-coded hex in components (bits.tsx, task-pane.tsx, new-task-dialog.tsx, task-workspace.tsx); no CSS variable or dark variant"
+      },
+      "feature-green": {
+        "role": "data",
+        "displayName": "Feature Green",
+        "canonical": "#30a46c",
+        "oklch": "oklch(64.1% 0.133 157.7)",
+        "tonalRamp": [
+          "#001005",
+          "#002e15",
+          "#005028",
+          "#00733e",
+          "#2d9261",
+          "#6eaf89",
+          "#a9cfb7",
+          "#e4f3e9"
+        ],
+        "source": "hard-coded hex in components (bits.tsx, task-pane.tsx, new-task-dialog.tsx, task-workspace.tsx); no CSS variable or dark variant"
+      },
+      "dark-paper": {
+        "role": "neutral",
+        "displayName": "Dark Paper",
+        "canonical": "#0a0a0a",
+        "oklch": "oklch(14.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--background",
+        "mode": "dark (.dark)"
+      },
+      "dark-sidebar-paper": {
+        "role": "neutral",
+        "displayName": "Dark Sidebar Paper",
+        "canonical": "#111111",
+        "oklch": "oklch(17.8% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--sidebar",
+        "mode": "dark (.dark)"
+      },
+      "dark-popover": {
+        "role": "neutral",
+        "displayName": "Dark Popover",
+        "canonical": "#141414",
+        "oklch": "oklch(19.1% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--popover",
+        "mode": "dark (.dark)"
+      },
+      "dark-ink": {
+        "role": "secondary",
+        "displayName": "Dark Ledger Near-Black",
+        "canonical": "#ededed",
+        "oklch": "oklch(94.6% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--foreground",
+        "mode": "dark (.dark)"
+      },
+      "dark-stone-wash": {
+        "role": "neutral",
+        "displayName": "Dark Stone Wash",
+        "canonical": "#1a1a1a",
+        "oklch": "oklch(21.8% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--muted",
+        "mode": "dark (.dark)"
+      },
+      "dark-hover-wash": {
+        "role": "neutral",
+        "displayName": "Dark Hover Wash",
+        "canonical": "#171717",
+        "oklch": "oklch(20.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--accent",
+        "mode": "dark (.dark)"
+      },
+      "dark-sidebar-hover": {
+        "role": "neutral",
+        "displayName": "Dark Sidebar Hover",
+        "canonical": "#1c1c1c",
+        "oklch": "oklch(22.6% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--sidebar-accent",
+        "mode": "dark (.dark)"
+      },
+      "dark-hairline": {
+        "role": "neutral",
+        "displayName": "Dark Hairline",
+        "canonical": "#1f1f1f",
+        "oklch": "oklch(23.9% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--border",
+        "mode": "dark (.dark)"
+      },
+      "dark-input-stroke": {
+        "role": "neutral",
+        "displayName": "Dark Input Stroke",
+        "canonical": "#2a2a2a",
+        "oklch": "oklch(28.5% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--input",
+        "mode": "dark (.dark)"
+      },
+      "dark-muted-ink": {
+        "role": "neutral",
+        "displayName": "Dark Muted Ink",
+        "canonical": "#a1a1a1",
+        "oklch": "oklch(70.9% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--muted-foreground",
+        "mode": "dark (.dark)"
+      },
+      "dark-faint-ink": {
+        "role": "neutral",
+        "displayName": "Dark Faint Ink",
+        "canonical": "#8a8a8a",
+        "oklch": "oklch(63.3% 0.000 89.9)",
+        "tonalRamp": [
+          "#0b0b0b",
+          "#242424",
+          "#404040",
+          "#5d5d5d",
+          "#7d7d7d",
+          "#9e9e9e",
+          "#c4c4c4",
+          "#eeeeee"
+        ],
+        "cssVar": "--faint",
+        "mode": "dark (.dark)"
+      },
+      "dark-brand-blue": {
+        "role": "primary",
+        "displayName": "Dark Cobalt Selection Blue",
+        "canonical": "#3b7cff",
+        "oklch": "oklch(61.7% 0.206 262.3)",
+        "tonalRamp": [
+          "#000727",
+          "#011c5c",
+          "#033496",
+          "#104fcf",
+          "#3c76ea",
+          "#6f9df3",
+          "#a8c5fa",
+          "#e3efff"
+        ],
+        "cssVar": "--brand",
+        "mode": "dark (.dark)"
+      },
+      "dark-selection-wash": {
+        "role": "primary",
+        "displayName": "Dark Selection Wash",
+        "canonical": "#14233f",
+        "oklch": "oklch(25.9% 0.057 261.9)",
+        "tonalRamp": [
+          "#070b13",
+          "#1b2434",
+          "#324058",
+          "#4c5e7e",
+          "#6d7e9c",
+          "#929fb6",
+          "#bcc5d3",
+          "#ebeff4"
+        ],
+        "cssVar": "--selected",
+        "mode": "dark (.dark)"
+      },
+      "dark-selection-ink": {
+        "role": "primary",
+        "displayName": "Dark Selection Ink",
+        "canonical": "#9dbdff",
+        "oklch": "oklch(79.9% 0.101 264.3)",
+        "tonalRamp": [
+          "#050b19",
+          "#162340",
+          "#293e6b",
+          "#405b96",
+          "#627cb4",
+          "#8a9ec9",
+          "#b7c4df",
+          "#e9eff9"
+        ],
+        "cssVar": "--selected-foreground",
+        "mode": "dark (.dark)"
+      },
+      "dark-live-wash": {
+        "role": "tertiary",
+        "displayName": "Dark Live Yellow Wash",
+        "canonical": "#2a2310",
+        "oklch": "oklch(25.9% 0.033 89.8)",
+        "tonalRamp": [
+          "#0d0b06",
+          "#282419",
+          "#453f2f",
+          "#655d48",
+          "#847d69",
+          "#a49e8f",
+          "#c7c4bb",
+          "#f0eeeb"
+        ],
+        "cssVar": "--live",
+        "mode": "dark (.dark)"
+      },
+      "dark-live-border": {
+        "role": "tertiary",
+        "displayName": "Dark Live Border",
+        "canonical": "#5c4a14",
+        "oklch": "oklch(41.7% 0.074 89.8)",
+        "tonalRamp": [
+          "#0f0b02",
+          "#2c2309",
+          "#4c3e16",
+          "#6e5c28",
+          "#8d7c4e",
+          "#aa9e7c",
+          "#cbc4af",
+          "#f1eee6"
+        ],
+        "cssVar": "--live-border",
+        "mode": "dark (.dark)"
+      },
+      "dark-destructive": {
+        "role": "error",
+        "displayName": "Dark Destructive Red",
+        "canonical": "#ff6166",
+        "oklch": "oklch(69.8% 0.193 21.8)",
+        "tonalRamp": [
+          "#1f0002",
+          "#4c0009",
+          "#7e0015",
+          "#b10227",
+          "#d0464c",
+          "#e37c7b",
+          "#f2b1ae",
+          "#ffe7e6"
+        ],
+        "cssVar": "--destructive",
+        "mode": "dark (.dark)"
+      }
+    },
+    "dataPalettes": {
+      "statusSeedDefaults": {
+        "Backlog": "#a3a3a3",
+        "Todo": "#737373",
+        "In Progress": "#e5a00d",
+        "In Review": "#8b5cf6",
+        "Done": "#2f6fed",
+        "Cancelled": "#a3a3a3"
+      },
+      "projectColors": [
+        "#2f6fed",
+        "#30a46c",
+        "#e5a00d",
+        "#8b5cf6",
+        "#e5484d",
+        "#0ea5b7",
+        "#d6409f",
+        "#737373"
+      ],
+      "avatarColors": [
+        "#2f6fed",
+        "#e5484d",
+        "#30a46c",
+        "#8b5cf6",
+        "#d6409f",
+        "#0e9aa7",
+        "#e38c0a",
+        "#5b6b7f"
+      ],
+      "note": "Org/user data, shown only in status rings, project dots and avatars. Not chrome tokens."
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Editable task title in the detail pane (New Task title field: 18px / -0.015em)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "View headers and empty-state titles."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base size; task row titles; rich-text descriptions capped at 72ch."
+      },
+      "body-small": {
+        "displayName": "Body Small",
+        "purpose": "Property values, settings descriptions, activity feed."
+      },
+      "group-label": {
+        "displayName": "Group Label",
+        "purpose": "Sticky status group headers, Activity heading."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Sidebar section labels, role captions, save state. Sentence case."
+      },
+      "mono-id": {
+        "displayName": "Mono ID",
+        "purpose": "Task keys and counts; always tabular numerals."
+      }
+    },
+    "shadows": [
+      {
+        "name": "float-ring",
+        "value": "0 0 0 1px color-mix(in oklab, var(--foreground) 10%, transparent)",
+        "purpose": "Edge of popovers, menus and dialogs."
+      },
+      {
+        "name": "popover-lift",
+        "value": "0 4px 6px -1px rgb(0 0 0 / .1), 0 2px 4px -2px rgb(0 0 0 / .1)",
+        "purpose": "Pickers and popovers (with float-ring)."
+      },
+      {
+        "name": "menu-lift",
+        "value": "0 10px 15px -3px rgb(0 0 0 / .1), 0 4px 6px -4px rgb(0 0 0 / .1)",
+        "purpose": "Dropdown menus, colour swatch popover."
+      },
+      {
+        "name": "drawer-lift",
+        "value": "0 20px 25px -5px rgb(0 0 0 / .1), 0 8px 10px -6px rgb(0 0 0 / .1)",
+        "purpose": "Mobile sidebar drawer only."
+      },
+      {
+        "name": "live-inset",
+        "value": "inset 0 0 0 1px var(--live-border)",
+        "purpose": "Border of a live-changed row without layout shift."
+      },
+      {
+        "name": "focus-ring",
+        "value": "0 0 0 3px color-mix(in oklab, var(--ring) 50%, transparent)",
+        "purpose": "Buttons and inputs on :focus-visible (with blue border). Rows and nav use a solid 2px ring."
+      },
+      {
+        "name": "dialog-overlay",
+        "value": "rgb(0 0 0 / .25) light; rgb(0 0 0 / .55) dark",
+        "purpose": "Scrim behind dialogs; dialogs themselves cast no shadow."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-glide",
+        "value": "cubic-bezier(.2,.8,.2,1)",
+        "purpose": "Row reorder glide and status-ring arc fill."
+      },
+      {
+        "name": "row-reorder-flip",
+        "value": "380ms ease-glide, translateY(prev - next) -> 0",
+        "purpose": "Rows glide to a new position when status/priority changes; skipped under reduced motion."
+      },
+      {
+        "name": "ring-arc",
+        "value": "300ms ease-glide on SVG path d",
+        "purpose": "Status ring arc grows/shrinks with status change."
+      },
+      {
+        "name": "row-wash",
+        "value": "background-color 300ms",
+        "purpose": "Hover/selected/live washes fade on task rows."
+      },
+      {
+        "name": "overlay-in",
+        "value": "100ms fade + zoom 95%",
+        "purpose": "Menus, popovers, dialogs."
+      },
+      {
+        "name": "drawer",
+        "value": "200ms ease-out transform",
+        "purpose": "Mobile sidebar slide-over."
+      },
+      {
+        "name": "live-seen-delay",
+        "value": "700ms hover",
+        "purpose": "Hover time before a live highlight is cleared."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "all transitions/animations -> 0.01ms",
+        "purpose": "Global prefers-reduced-motion kill switch."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "effect": "Task key column and header filter appear; header padding 28px."
+      },
+      {
+        "name": "md",
+        "value": "768px",
+        "effect": "Type tag and live indicator appear; settings rows go two-column."
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "effect": "Persistent 248px sidebar; detail pane sits beside list at 440px."
+      },
+      {
+        "name": "xl",
+        "value": "1280px",
+        "effect": "Detail pane 500px; project label shown in rows."
+      },
+      {
+        "name": "2xl",
+        "value": "1536px",
+        "effect": "Detail pane 560px."
+      }
+    ],
+    "darkMode": {
+      "strategy": "class (.dark) via next-themes, default system",
+      "note": "dark-* frontmatter colors are the .dark values of the same CSS variables."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Near-black slab for the one primary action per view; carries its shortcut as a tinted Kbd.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" aria-hidden=\"true\"><path d=\"M12 5v14M5 12h14\"/></svg><span>New task</span><kbd class=\"ds-btn-kbd\">N</kbd></button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; gap:8px; height:30px; padding:0 12px; border:1px solid transparent; border-radius:9px; background:var(--primary, #171717); color:var(--primary-foreground, #fafafa); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:background-color .15s, transform .1s; } .ds-btn-primary:hover { background:color-mix(in oklab, var(--primary, #171717) 80%, transparent); } .ds-btn-primary:focus-visible { outline:none; border-color:var(--ring, #2f6fed); box-shadow:0 0 0 3px color-mix(in oklab, var(--ring, #2f6fed) 50%, transparent); } .ds-btn-primary:active { transform:translateY(1px); } .ds-btn-kbd { display:inline-flex; align-items:center; justify-content:center; height:18px; min-width:18px; padding:0 4px; border-radius:4px; background:rgba(255,255,255,.15); color:currentColor; font-family: var(--font-geist-mono, 'Geist Mono'), ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size:10.5px; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary actions and empty-state CTAs: paper fill, hairline border.",
+      "html": "<button class=\"ds-btn-outline\">Show all types</button>",
+      "css": ".ds-btn-outline { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 10px; border:1px solid var(--border, #ececea); border-radius:9px; background:var(--background, #fff); color:var(--foreground, #171717); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:background-color .15s; } .ds-btn-outline:hover { background:var(--muted, #f3f3f1); } .ds-btn-outline:focus-visible { outline:none; border-color:var(--ring, #2f6fed); box-shadow:0 0 0 3px color-mix(in oklab, var(--ring, #2f6fed) 50%, transparent); } .ds-btn-outline:active { transform:translateY(1px); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Cancel and low-emphasis actions; no fill until hover.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost { display:inline-flex; align-items:center; height:32px; padding:0 10px; border:1px solid transparent; border-radius:9px; background:transparent; color:var(--foreground, #171717); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; font-size:14px; font-weight:500; cursor:pointer; transition:background-color .15s; } .ds-btn-ghost:hover { background:var(--muted, #f3f3f1); } .ds-btn-ghost:focus-visible { outline:none; border-color:var(--ring, #2f6fed); box-shadow:0 0 0 3px color-mix(in oklab, var(--ring, #2f6fed) 50%, transparent); }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "32px field, Input Stroke border, blue border plus 3px ring on focus, blue caret.",
+      "html": "<input class=\"ds-input\" placeholder=\"teammate@company.com\" aria-label=\"Email\" />",
+      "css": ".ds-input { height:32px; width:260px; padding:4px 10px; border:1px solid var(--input, #e2e2df); border-radius:9px; background:transparent; color:var(--foreground, #171717); caret-color:var(--brand, #2f6fed); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; font-size:14px; transition:border-color .15s, box-shadow .15s; } .ds-input::placeholder { color:var(--muted-foreground, #5c5c5c); } .ds-input:focus-visible { outline:none; border-color:var(--ring, #2f6fed); box-shadow:0 0 0 3px color-mix(in oklab, var(--ring, #2f6fed) 50%, transparent); }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Warm sidebar paper; 30px items, active item in Selection Wash with mono count.",
+      "html": "<nav class=\"ds-sidebar\"><a class=\"ds-nav-item is-active\" href=\"#\" aria-current=\"page\"><span class=\"ds-nav-ic\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"8\" r=\"4\"/><path d=\"M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1\"/></svg></span><span>My Tasks</span><span class=\"ds-nav-count\">5</span></a><a class=\"ds-nav-item\" href=\"#\"><span class=\"ds-nav-ic\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m12 2 10 5-10 5L2 7z\"/><path d=\"m2 17 10 5 10-5\"/><path d=\"m2 12 10 5 10-5\"/></svg></span><span>All Tasks</span><span class=\"ds-nav-count\">12</span></a><div class=\"ds-nav-label\">Projects</div><a class=\"ds-nav-item\" href=\"#\"><span class=\"ds-nav-ic\"><span class=\"ds-dot\" style=\"background:#2f6fed\"></span></span><span>Web App</span><span class=\"ds-nav-count\">6</span></a></nav>",
+      "css": ".ds-sidebar { width:228px; padding:12px 10px; background:var(--sidebar, #f7f7f5); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; } .ds-nav-item { display:flex; align-items:center; gap:10px; height:30px; margin-bottom:1px; padding:0 8px; border-radius:7px; color:var(--sidebar-foreground, #171717); font-size:13.5px; text-decoration:none; transition:background-color .15s; } .ds-nav-item:hover { background:var(--sidebar-accent, #ececea); } .ds-nav-item:focus-visible { outline:none; box-shadow:0 0 0 2px var(--ring, #2f6fed); } .ds-nav-item.is-active { background:var(--selected, #e8effd); color:var(--selected-foreground, #1d5fd6); font-weight:500; } .ds-nav-ic { display:flex; color:var(--muted-foreground, #5c5c5c); } .ds-nav-item.is-active .ds-nav-ic { color:var(--selected-foreground, #1d5fd6); } .ds-nav-count { margin-left:auto; font-family: var(--font-geist-mono, 'Geist Mono'), ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size:11.5px; color:var(--faint, #737373); } .ds-nav-item.is-active .ds-nav-count { color:color-mix(in oklab, var(--selected-foreground, #1d5fd6) 80%, transparent); } .ds-nav-label { margin:16px 0 4px; height:24px; display:flex; align-items:center; padding:0 8px; font-size:11.5px; font-weight:500; color:var(--faint, #737373); } .ds-dot { display:inline-block; width:10px; height:10px; margin:0 3px; border-radius:3px; }"
+    },
+    {
+      "name": "Type Tag",
+      "kind": "chip",
+      "refersTo": "type-tag",
+      "description": "Issue / Feature tag: stone wash, 5px radius, coloured 6px square.",
+      "html": "<span class=\"ds-type-tag\"><span class=\"ds-type-sq\" style=\"background:#e5484d\"></span>Issue</span> <span class=\"ds-type-tag\"><span class=\"ds-type-sq\" style=\"background:#30a46c\"></span>Feature</span>",
+      "css": ".ds-type-tag { display:inline-flex; align-items:center; gap:6px; height:20px; padding:0 6px; border-radius:5px; background:var(--chip, #f3f3f1); color:var(--muted-foreground, #5c5c5c); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; font-size:11.5px; } .ds-type-sq { width:6px; height:6px; border-radius:2px; }"
+    },
+    {
+      "name": "Type Filter",
+      "kind": "chip",
+      "refersTo": "filter-segment-active",
+      "description": "Pill segmented control in the list header; active segment is solid ink.",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\" aria-label=\"Filter by type\"><button role=\"radio\" aria-checked=\"true\" class=\"ds-seg-btn\">All</button><button role=\"radio\" aria-checked=\"false\" class=\"ds-seg-btn\">Issues</button><button role=\"radio\" aria-checked=\"false\" class=\"ds-seg-btn\">Features</button></div>",
+      "css": ".ds-seg { display:inline-flex; align-items:center; padding:2px; border:1px solid var(--input, #e2e2df); border-radius:9999px; font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; } .ds-seg-btn { height:22px; padding:0 10px; border:0; border-radius:9999px; background:transparent; color:var(--muted-foreground, #5c5c5c); font:inherit; font-size:12.5px; cursor:pointer; transition:color .15s, background-color .15s; } .ds-seg-btn:hover { color:var(--foreground, #171717); } .ds-seg-btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--ring, #2f6fed); } .ds-seg-btn[aria-checked=true] { background:var(--foreground, #171717); color:var(--background, #fff); }"
+    },
+    {
+      "name": "Task List Group",
+      "kind": "custom",
+      "refersTo": "task-row",
+      "description": "Signature list: sticky status header, 40px rows with 9px radius and 4px gap; hover, selected and live states.",
+      "html": "<div class=\"ds-list\"><h2 class=\"ds-group\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 17.5 10\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"3.4\"/></svg>In Progress<span class=\"ds-group-count\">3</span></h2><ul class=\"ds-rows\"><li class=\"ds-row\"><span class=\"ds-ring\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 17.5 10\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"3.4\"/></svg></span><a href=\"#\" class=\"ds-row-title\">Image paste in editor uploads twice on Safari</a><span class=\"ds-row-meta\"><span class=\"ds-type-tag\"><span class=\"ds-type-sq\" style=\"background:#e5484d\"></span>Issue</span><svg width=\"14\" height=\"14\" viewBox=\"0 0 14 14\" aria-label=\"High\"><rect x=\"1.5\" y=\"9\" width=\"3\" height=\"4\" rx=\"0.8\" fill=\"var(--muted-foreground)\"/><rect x=\"5.5\" y=\"6\" width=\"3\" height=\"7\" rx=\"0.8\" fill=\"var(--muted-foreground)\"/><rect x=\"9.5\" y=\"3\" width=\"3\" height=\"10\" rx=\"0.8\" fill=\"var(--input)\"/></svg><span class=\"ds-av\" style=\"background:#8b5cf6\">RL</span><span class=\"ds-key\">WEB-1</span></span></li><li class=\"ds-row is-selected\"><span class=\"ds-ring\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 17.5 10\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"3.4\"/></svg></span><a href=\"#\" class=\"ds-row-title\" aria-current=\"true\">Dark mode contrast on muted labels</a><span class=\"ds-row-meta\"><span class=\"ds-type-tag\"><span class=\"ds-type-sq\" style=\"background:#e5484d\"></span>Issue</span><svg width=\"14\" height=\"14\" viewBox=\"0 0 14 14\" aria-label=\"High\"><rect x=\"1.5\" y=\"9\" width=\"3\" height=\"4\" rx=\"0.8\" fill=\"var(--muted-foreground)\"/><rect x=\"5.5\" y=\"6\" width=\"3\" height=\"7\" rx=\"0.8\" fill=\"var(--muted-foreground)\"/><rect x=\"9.5\" y=\"3\" width=\"3\" height=\"10\" rx=\"0.8\" fill=\"var(--input)\"/></svg><span class=\"ds-av\" style=\"background:#30a46c\">MK</span><span class=\"ds-key\">WEB-4</span></span></li><li class=\"ds-row is-live\"><span class=\"ds-ring\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 17.5 10\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"3.4\"/></svg></span><a href=\"#\" class=\"ds-row-title\">Keyboard shortcut sheet</a><span class=\"ds-row-meta\"><span class=\"ds-fresh\">Mia changed this</span><svg width=\"14\" height=\"14\" viewBox=\"0 0 14 14\" aria-label=\"High\"><rect x=\"1.5\" y=\"9\" width=\"3\" height=\"4\" rx=\"0.8\" fill=\"var(--muted-foreground)\"/><rect x=\"5.5\" y=\"6\" width=\"3\" height=\"7\" rx=\"0.8\" fill=\"var(--muted-foreground)\"/><rect x=\"9.5\" y=\"3\" width=\"3\" height=\"10\" rx=\"0.8\" fill=\"var(--input)\"/></svg><span class=\"ds-av\" style=\"background:#d6409f\">JT</span><span class=\"ds-key\">WEB-3</span></span></li></ul></div>",
+      "css": ".ds-list { width:620px; padding:8px 16px; background:var(--background, #fff); color:var(--foreground, #171717); font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; } .ds-group { position:sticky; top:0; display:flex; align-items:center; gap:8px; height:32px; margin:0; padding:0 12px; font-size:12.5px; font-weight:600; background:var(--background, #fff); } .ds-group svg { width:15px; height:15px; } .ds-group-count { font-family: var(--font-geist-mono, 'Geist Mono'), ui-monospace, monospace; font-variant-numeric: tabular-nums; font-weight:400; color:var(--faint, #737373); } .ds-rows { display:flex; flex-direction:column; gap:4px; margin:0; padding:0; list-style:none; } .ds-row { position:relative; display:grid; grid-template-columns:22px minmax(0,1fr) auto; align-items:center; gap:12px; height:40px; padding:0 12px; border-radius:9px; transition:background-color .3s; } .ds-row:hover { background:var(--accent, #f1f1ef); } .ds-row.is-selected { background:var(--selected, #e8effd); } .ds-row.is-live { background:var(--live, #fff6d6); box-shadow:inset 0 0 0 1px var(--live-border, #f0d98a); } .ds-ring { display:grid; place-items:center; transition:transform .15s; } .ds-ring:hover { transform:scale(1.1); } .ds-row-title { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:inherit; font-size:14px; text-decoration:none; outline:none; } .ds-row-title::after { content:''; position:absolute; inset:0; border-radius:9px; } .ds-row-title:focus-visible::after { box-shadow:0 0 0 2px var(--ring, #2f6fed); } .ds-row-meta { display:flex; align-items:center; gap:12px; } .ds-type-tag { display:inline-flex; align-items:center; gap:6px; height:20px; padding:0 6px; border-radius:5px; background:var(--chip, #f3f3f1); color:var(--muted-foreground, #5c5c5c); font-size:11.5px; } .ds-type-sq { width:6px; height:6px; border-radius:2px; } .ds-fresh { font-size:11.5px; color:var(--muted-foreground, #5c5c5c); } .ds-av { display:inline-grid; place-items:center; width:20px; height:20px; border-radius:9999px; color:#fff; font-size:8px; font-weight:600; } .ds-key { width:64px; text-align:right; font-family: var(--font-geist-mono, 'Geist Mono'), ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size:12px; color:var(--faint, #737373); }"
+    },
+    {
+      "name": "Status Ring",
+      "kind": "custom",
+      "refersTo": "",
+      "description": "Signature mark: dashed for backlog, segmented arc across the org's active statuses, filled disc with check when done.",
+      "html": "<div class=\"ds-rings\"><span><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#a3a3a3\" stroke-width=\"1.6\" stroke-dasharray=\"2.6 2.3\"/></svg>Backlog</span><span><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#737373\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 16.495 6.25\" fill=\"none\" stroke=\"#737373\" stroke-width=\"3.4\"/></svg>Todo</span><span><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 17.5 10\" fill=\"none\" stroke=\"#e5a00d\" stroke-width=\"3.4\"/></svg>In Progress</span><span><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"7.5\" fill=\"none\" stroke=\"#8b5cf6\" stroke-width=\"1.6\"/><path d=\"M 10 2.5 A 7.5 7.5 0 0 1 10 17.5\" fill=\"none\" stroke=\"#8b5cf6\" stroke-width=\"3.4\"/></svg>In Review</span><span><svg width=\"18\" height=\"18\" viewBox=\"0 0 20 20\" aria-hidden=\"true\"><circle cx=\"10\" cy=\"10\" r=\"8.5\" fill=\"#2f6fed\"/><path d=\"m6.4 10.3 2.5 2.4 4.7-4.9\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>Done</span></div>",
+      "css": ".ds-rings { display:flex; gap:18px; font-family: var(--font-geist-sans, Geist), ui-sans-serif, system-ui, sans-serif; font-size:13px; color:var(--foreground, #171717); } .ds-rings span { display:inline-flex; align-items:center; gap:8px; } .ds-rings path { transition:d .3s cubic-bezier(.2,.8,.2,1); }"
+    },
+    {
+      "name": "Kbd",
+      "kind": "custom",
+      "refersTo": "kbd",
+      "description": "Keyboard shortcut key shown beside the action it triggers.",
+      "html": "<span class=\"ds-kbd-row\"><kbd class=\"ds-kbd\">⌘K</kbd><kbd class=\"ds-kbd\">N</kbd><kbd class=\"ds-kbd\">⌘↵</kbd></span>",
+      "css": ".ds-kbd { display:inline-flex; align-items:center; justify-content:center; height:18px; min-width:18px; padding:0 4px; border:1px solid var(--input, #e2e2df); border-radius:4px; background:var(--background, #fff); color:var(--faint, #737373); font-family: var(--font-geist-mono, 'Geist Mono'), ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size:10.5px; } .ds-kbd-row { display:inline-flex; gap:6px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Calm Ledger",
+    "overview": "Vector is a list you can leave open all day. A warm off-white sidebar sits beside a pure white work column; tasks are 40px rows with soft 9px corners and a 2px breath between them, grouped under sticky status headings. The chrome is hairlines and grey type. Almost everything that carries colour is data: the status ring, the project dot, the type tag, the avatar. The interface itself owns one blue (selection and focus), one near-black (the primary action), and one warm yellow that only appears when a teammate changed something you have not looked at yet.\n\nThe precision comes from Vercel: Geist Sans for UI, Geist Mono with tabular numerals for task keys and counts, 1px borders, a near-black primary button, and a true #0a0a0a dark mode rather than a grey one. The calm comes from Things 3: generous row height, one list per view, a detail pane that slides in beside the list rather than replacing it, and no visible grid lines between rows. Density is moderate; the list never turns into a table.\n\nMotion is small and causal. Rows glide to their new position when their status changes (FLIP, 380ms), the status ring's arc animates as it fills, and live highlights fade rather than snap. Nothing moves on its own. Under `prefers-reduced-motion` every transition collapses to near-zero.",
+    "keyCharacteristics": [
+      "Two-tone canvas: warm sidebar paper beside pure white work area; #0a0a0a / #111111 in dark.",
+      "Tasks as 40px rounded rows with a 4px gap, never ruled table lines.",
+      "Colour belongs to data (status, project, type, avatar); chrome is neutral.",
+      "One blue for selection, focus and caret; one near-black for the primary action.",
+      "Geist Mono with tabular numerals for every ID and count.",
+      "The status ring is the signature: a segmented arc across the org's ordered statuses.",
+      "Live changes from teammates hold a soft yellow wash until seen."
+    ],
+    "rules": [
+      {
+        "name": "The Data Owns Colour Rule",
+        "body": "Chroma on screen belongs to tasks (status rings, project dots, type squares, avatars). Chrome stays neutral, apart from the selection blue and the live yellow.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Blue Rule",
+        "body": "Cobalt means \"this is selected or focused\". Do not use it for decoration, headings or secondary buttons.",
+        "section": "colors"
+      },
+      {
+        "name": "The Yellow Means Someone Else Rule",
+        "body": "The live wash appears only for changes made by another person and disappears once seen. It is never a generic highlight or warning colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Mono Rule",
+        "body": "Every task key and every count is set in Geist Mono with tabular numerals so columns of IDs and counts align. Do not set IDs in the sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The Sentence Case Rule",
+        "body": "Labels are sentence case at 11.5–12.5px. The system has no uppercase tracked eyebrows; a group is named by its heading.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Page Rule",
+        "body": "Anything on the page is flat. Shadows are for layers that float above it and close when dismissed.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** build lists from 40px rows with a 9px radius and a 4px gap, grouped under sticky 32px status headers.",
+      "**Do** put colour on data (status ring, project dot, type square, avatar) and keep chrome in the neutral stone palette.",
+      "**Do** reserve Cobalt Selection Blue for selection, focus rings, carets and checkmarks.",
+      "**Do** set every task key and count in Geist Mono with tabular numerals.",
+      "**Do** use the status ring wherever a status appears, in that status's colour.",
+      "**Do** separate surfaces with 1px hairlines and the sidebar/paper tone change. Use shadows only on floating layers.",
+      "**Do** mark a teammate's unseen change with the live wash and inset border, and clear it on hover (700ms) or open.",
+      "**Do** animate list reorders with the 380ms FLIP glide on `cubic-bezier(.2,.8,.2,1)`, and honour `prefers-reduced-motion`.",
+      "**Do** lay settings out as 280px title/description rows beside their controls, divided by hairlines.",
+      "**Do** show the keyboard shortcut as a Kbd next to the action it triggers."
+    ],
+    "donts": [
+      "**Don't** draw ruled table lines or zebra stripes between task rows; spacing and hover washes separate them.",
+      "**Don't** use the live yellow for warnings, badges or your own changes.",
+      "**Don't** add shadows to rows, panes, headers or settings containers.",
+      "**Don't** introduce a second accent hue for buttons or links; secondary actions are outline or ghost.",
+      "**Don't** use uppercase tracked eyebrow labels; section labels are sentence case at 11.5px.",
+      "**Don't** fill destructive buttons with solid red; use the red tint with red text.",
+      "**Don't** set status colours on anything other than rings (and the matching ring in a picker)."
+    ]
+  }
+}

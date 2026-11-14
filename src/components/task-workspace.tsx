@@ -12,6 +12,8 @@ import { Kbd, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "
 import { Picker, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { timeAgo } from "@/lib/format";
 import { updateTask } from "@/app/actions/tasks";
 import type { Status, Task, TaskType } from "@/lib/types";
 
@@ -49,7 +51,7 @@ export function TaskWorkspace({
   useEffect(() => setTasks(new Map(initialTasks.map((t) => [t.id, t]))), [initialTasks]);
 
   // Rows a teammate changed live: id -> actor id. Cleared once seen (hovered or opened).
-  const [fresh, setFresh] = useState<Map<string, string>>(new Map());
+  const [fresh, setFresh] = useState<Map<string, Fresh>>(new Map());
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [showClosed, setShowClosed] = useState(false);
 
@@ -74,12 +76,26 @@ export function TaskWorkspace({
     [matches],
   );
 
+  const mark = (id: string, actorId: string, verb: string) =>
+    setFresh((f) => new Map(f).set(id, { actorId, verb, at: Date.now() }));
+
   useOrgEvents((e) => {
     if (e.type === "task.upsert") {
+      const prev = tasks.get(e.task.id);
       upsert(e.task);
       if (e.actorId !== me.id && matches(e.task) && e.task.key !== selectedKey) {
-        setFresh((f) => new Map(f).set(e.task.id, e.actorId));
+        const verb = !prev
+          ? "added this"
+          : prev.statusId !== e.task.statusId
+            ? "moved this"
+            : prev.assigneeId !== e.task.assigneeId
+              ? "reassigned this"
+              : "edited this";
+        mark(e.task.id, e.actorId, verb);
       }
+    } else if (e.type === "feed.add" && e.item.kind === "comment" && e.actorId !== me.id) {
+      const t = tasks.get(e.taskId);
+      if (t && t.key !== selectedKey) mark(t.id, e.actorId, "commented");
     } else if (e.type === "task.delete") {
       setTasks((prev) => {
         if (!prev.has(e.taskId)) return prev;
@@ -222,6 +238,7 @@ export function TaskWorkspace({
             ))}
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <Presence />
             <LiveIndicator />
             <Button onClick={() => newTask()} className="h-[30px] gap-2 rounded-lg px-3">
               <PlusIcon className="size-3.5" />
@@ -247,18 +264,18 @@ export function TaskWorkspace({
               )}
               {shown.map((g) => (
                 <div key={g.status.id} className="mt-4 first:mt-2">
-                  <h2 className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-background/95 px-3 text-[12.5px] font-semibold backdrop-blur-sm">
+                  <h2 className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-background px-3 text-[12.5px] font-semibold">
                     <StatusRing status={g.status} statuses={statuses} size={15} />
                     {g.status.name}
                     <span className="tabular font-mono font-normal text-faint">{g.tasks.length}</span>
                   </h2>
-                  <ul className="flex flex-col gap-0.5">
+                  <ul className="flex flex-col gap-1">
                     {g.tasks.map((t) => (
                       <TaskRow
                         key={t.id}
                         task={t}
                         selected={t.key === selectedKey}
-                        freshBy={fresh.has(t.id) ? memberById.get(fresh.get(t.id)!)?.name ?? "A teammate" : undefined}
+                        fresh={fresh.get(t.id)}
                         showProject={showProject}
                         href={`${pathname}?task=${t.key}`}
                         onSeen={() => seen(t.id)}
@@ -295,7 +312,7 @@ export function TaskWorkspace({
 function TaskRow({
   task,
   selected,
-  freshBy,
+  fresh,
   showProject,
   href,
   onSeen,
@@ -304,7 +321,7 @@ function TaskRow({
 }: {
   task: Task;
   selected: boolean;
-  freshBy?: string;
+  fresh?: Fresh;
   showProject: boolean;
   href: string;
   onSeen: () => void;
@@ -322,11 +339,11 @@ function TaskRow({
   return (
     <li
       ref={refCb}
-      onPointerEnter={() => freshBy && (hoverTimer.current = setTimeout(onSeen, 700))}
+      onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
-        selected ? "bg-selected" : freshBy ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent",
+        selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent",
       )}
     >
       <Picker label={`Status: ${status?.name ?? "none"}`} value={task.statusId} options={statusOptions} onChange={onStatus} searchable={false}>
@@ -348,17 +365,16 @@ function TaskRow({
         {task.title}
       </Link>
       <div className="flex items-center gap-3">
-        {freshBy ? (
-          <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">{freshBy.split(" ")[0]} changed this</span>
-        ) : (
+        {fresh && <FreshNote fresh={fresh} />}
+        {(
           <>
-            {showProject && project && (
+            {showProject && project && !fresh && (
               <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground max-xl:hidden">
                 <ProjectDot color={project.color} />
                 {project.name}
               </span>
             )}
-            <TypeTag type={task.type} className="max-md:hidden" />
+            <TypeTag type={task.type} className={fresh ? "max-xl:hidden" : "max-md:hidden"} />
           </>
         )}
         <PriorityIcon priority={task.priority} />
@@ -368,6 +384,52 @@ function TaskRow({
         <span className="tabular w-[64px] text-right font-mono text-[12px] text-faint max-sm:hidden">{task.key}</span>
       </div>
     </li>
+  );
+}
+
+interface Fresh {
+  actorId: string;
+  verb: string;
+  at: number;
+}
+
+function FreshNote({ fresh }: { fresh: Fresh }) {
+  const { memberById } = useOrg();
+  const who = memberById.get(fresh.actorId);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  return (
+    <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">
+      {who && <UserAvatar id={who.id} name={who.name} size={16} />}
+      {who?.name.split(" ")[0] ?? "A teammate"} {fresh.verb} · {timeAgo(new Date(fresh.at).toISOString())}
+    </span>
+  );
+}
+
+function Presence() {
+  const { online, me, memberById } = useOrg();
+  const others = online.filter((id) => id !== me.id).map((id) => memberById.get(id)).filter((m) => !!m);
+  if (!others.length) return null;
+  const shown = others.slice(0, 3);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center pl-1.5 max-sm:hidden" aria-label={`Also here: ${others.map((m) => m.name).join(", ")}`}>
+          {shown.map((m) => (
+            <UserAvatar key={m.id} id={m.id} name={m.name} size={24} className="-ml-1.5 ring-2 ring-background" />
+          ))}
+          {others.length > 3 && (
+            <span className="tabular -ml-1.5 grid size-6 place-items-center rounded-full bg-chip text-[10.5px] font-medium text-muted-foreground ring-2 ring-background">
+              +{others.length - 3}
+            </span>
+          )}
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>Also here: {others.map((m) => m.name).join(", ")}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -399,9 +461,9 @@ function EmptyState({
 }) {
   return (
     <div className={cn("mx-auto flex max-w-sm flex-col items-center text-center", compact ? "py-10" : "py-[18vh]")}>
-      <svg width="44" height="44" viewBox="0 0 20 20" aria-hidden className="mb-4 text-input">
-        <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M10 2.5A7.5 7.5 0 0 1 17.5 10" fill="none" stroke="var(--brand)" strokeWidth="2.6" />
+      <svg width="40" height="40" viewBox="0 0 20 20" aria-hidden className="mb-4 text-faint/60">
+        <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="1" />
+        <path d="m6.6 10.2 2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       <h2 className="text-[15px] font-semibold">{title}</h2>
       <p className="mt-1 text-[13.5px] text-muted-foreground">{hint}</p>

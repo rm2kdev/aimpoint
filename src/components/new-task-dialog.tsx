@@ -103,13 +103,6 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
         <DialogTitle className="sr-only">New task</DialogTitle>
         <DialogDescription className="sr-only">Capture an issue or feature request.</DialogDescription>
         <div className="flex items-center gap-2 px-5 pt-4 text-[12.5px] text-faint">
-          {project && (
-            <span className="inline-flex items-center gap-1.5">
-              <ProjectDot color={project.color} />
-              {project.name}
-            </span>
-          )}
-          <span aria-hidden>›</span>
           <span>New task</span>
         </div>
         <div className="px-5 pt-3">

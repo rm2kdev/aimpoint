@@ -479,7 +479,7 @@ function Composer({ onSend }: { onSend: (body: string) => Promise<boolean> }) {
     setSending(false);
   };
   return (
-    <div className="mt-4 rounded-[10px] border border-input bg-background transition-colors focus-within:border-faint/60">
+    <div className="mt-4 rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
       <textarea
         ref={ref}
         value={body}

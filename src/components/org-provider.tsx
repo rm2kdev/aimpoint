@@ -32,6 +32,8 @@ interface Ctx {
   counts: Counts;
   subscribe: (fn: (e: RealtimeEvent) => void) => () => void;
   connected: boolean;
+  /** Members who currently have this organisation open. */
+  online: string[];
 }
 
 const OrgCtx = createContext<Ctx | null>(null);
@@ -76,6 +78,7 @@ export function OrgProvider({
   const router = useRouter();
   const listeners = useRef(new Set<(e: RealtimeEvent) => void>());
   const [connected, setConnected] = useState(false);
+  const [online, setOnline] = useState<string[]>([]);
   const [counts, setCounts] = useState(initialCounts);
   useEffect(() => setCounts(initialCounts), [initialCounts]);
 
@@ -96,6 +99,7 @@ export function OrgProvider({
 
   useEffect(() => {
     const dispatch = (e: RealtimeEvent) => {
+      if (e.type === "presence") return setOnline(e.userIds);
       if (e.type === "org.changed") router.refresh();
       if (e.type === "task.upsert" || e.type === "task.delete") refreshCounts();
       listeners.current.forEach((fn) => fn(e));
@@ -113,8 +117,20 @@ export function OrgProvider({
         const ch = client.subscribe(`private-org-${org.id}`);
         ch.bind("event", dispatch);
         client.connection.bind("state_change", ({ current }: { current: string }) => setConnected(current === "connected"));
+        type Members = { each: (fn: (m: { id: string }) => void) => void };
+        const pres = client.subscribe(`presence-org-${org.id}`);
+        const sync = () => {
+          const ids: string[] = [];
+          ((pres as unknown as { members: Members }).members).each((m) => ids.push(m.id));
+          setOnline(ids);
+        };
+        pres.bind("pusher:subscription_succeeded", sync);
+        pres.bind("pusher:member_added", sync);
+        pres.bind("pusher:member_removed", sync);
         cleanup = () => {
           ch.unbind_all();
+          pres.unbind_all();
+          client.unsubscribe(`presence-org-${org.id}`);
           client.unsubscribe(`private-org-${org.id}`);
           client.disconnect();
         };
@@ -151,8 +167,9 @@ export function OrgProvider({
       counts,
       subscribe,
       connected,
+      online,
     }),
-    [org, orgs, me, members, projects, statuses, counts, subscribe, connected],
+    [org, orgs, me, members, projects, statuses, counts, subscribe, connected, online],
   );
   return <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>;
 }
