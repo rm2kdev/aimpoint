@@ -1,6 +1,7 @@
 "use client";
 
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { BotAvatar, Kbd, UserAvatar } from "@/components/bits";
@@ -62,6 +63,9 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
   const [active, setActive] = useState(0);
   const [sending, setSending] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<React.CSSProperties | null>(null);
 
   const options = useMemo(() => {
     if (query === null) return [];
@@ -72,6 +76,42 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
     return [...people.slice(0, 6), ...bots.slice(0, 5)];
   }, [query, members, me.id]);
   const open = query !== null && options.length > 0;
+
+  // Float the list in a portal, above the composer when there's room, otherwise below it,
+  // so it never covers what you're typing and isn't clipped by the scrolling pane.
+  useLayoutEffect(() => {
+    if (!open) return setPos(null);
+    const place = () => {
+      const box = boxRef.current?.getBoundingClientRect();
+      if (!box) return;
+      const h = listRef.current?.scrollHeight ?? 260;
+      const width = Math.min(320, box.width);
+      const left = Math.min(box.left, window.innerWidth - width - 8);
+      const above = box.top - 14;
+      const below = window.innerHeight - box.bottom - 14;
+      // Prefer above; go below if only that fits; otherwise use the roomier side and scroll the list.
+      const useAbove = h <= above || (h > below && above >= below);
+      const maxHeight = Math.max(120, useAbove ? above : below);
+      setPos(
+        useAbove
+          ? { left, width, maxHeight, bottom: window.innerHeight - box.top + 6 }
+          : { left, width, maxHeight, top: box.bottom + 6 },
+      );
+    };
+    place();
+    const id = requestAnimationFrame(place); // re-measure once the list has rendered
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, options.length]);
+
+  useLayoutEffect(() => {
+    if (open) document.getElementById(`mention-${options[active]?.id}`)?.scrollIntoView({ block: "nearest" });
+  }, [open, active, options]);
 
   const autosize = () => {
     const el = ref.current;
@@ -125,31 +165,36 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
 
   return (
     <div className="relative mt-4">
-      {open && (
-        <div
-          id="mention-list"
-          role="listbox"
-          aria-label="Mention someone"
-          className="absolute bottom-full left-0 z-30 mb-1.5 w-[300px] overflow-hidden rounded-[10px] border border-border bg-popover p-1 text-popover-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.18),0_1px_2px_rgba(0,0,0,0.06)]"
-          onMouseDown={(e) => e.preventDefault()}
-        >
-          {people.length > 0 && <GroupLabel>People</GroupLabel>}
-          {people.map((m) => (
-            <Option key={m.id} m={m} idx={options.indexOf(m)} active={active} setActive={setActive} onPick={pick} isMe={m.id === me.id} />
-          ))}
-          {bots.length > 0 && <GroupLabel className={people.length ? "mt-1 border-t border-border pt-1.5" : ""}>Bots</GroupLabel>}
-          {bots.map((m) => (
-            <Option key={m.id} m={m} idx={options.indexOf(m)} active={active} setActive={setActive} onPick={pick} isMe={false} />
-          ))}
-        </div>
-      )}
-      <div className="rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+      {open &&
+        createPortal(
+          <div
+            ref={listRef}
+            id="mention-list"
+            role="listbox"
+            aria-label="Mention someone"
+            style={{ position: "fixed", ...(pos ?? { left: -9999, top: 0, width: 320 }) }}
+            className="z-50 overflow-y-auto overscroll-contain rounded-[10px] border border-border bg-popover p-1 text-popover-foreground shadow-[0_8px_24px_-8px_rgba(0,0,0,0.18),0_1px_2px_rgba(0,0,0,0.06)]"
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            {people.length > 0 && <GroupLabel>People</GroupLabel>}
+            {people.map((m) => (
+              <Option key={m.id} m={m} idx={options.indexOf(m)} active={active} setActive={setActive} onPick={pick} isMe={m.id === me.id} />
+            ))}
+            {bots.length > 0 && <GroupLabel className={people.length ? "mt-1 border-t border-border pt-1.5" : ""}>Bots</GroupLabel>}
+            {bots.map((m) => (
+              <Option key={m.id} m={m} idx={options.indexOf(m)} active={active} setActive={setActive} onPick={pick} isMe={false} />
+            ))}
+          </div>,
+          document.body,
+        )}
+      <div ref={boxRef} className="rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
         <textarea
           ref={ref}
           value={text}
           rows={1}
           placeholder="Leave a comment… Type @ to mention someone"
           aria-label="Comment"
+          role="combobox"
           aria-autocomplete="list"
           aria-controls={open ? "mention-list" : undefined}
           aria-expanded={open}
