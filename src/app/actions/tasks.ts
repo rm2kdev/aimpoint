@@ -8,6 +8,11 @@ import { publish } from "@/lib/realtime/server";
 import { findTaskByKey, loadCounts, loadFeed, sanitizeDescription, toFeed, toTask, toTaskDetail } from "@/lib/data";
 import type { ActivityDoc, Counts, FeedItem, Priority, Task, TaskDetail, TaskDoc, TaskType } from "@/lib/types";
 
+/** Ownership rule: the creator and org admins may change a task; everyone in the org can read and comment. */
+function canEditTask(task: TaskDoc, userId: ObjectId, isAdmin: boolean) {
+  return isAdmin || task.createdBy.equals(userId);
+}
+
 const oid = (id: string, what = "item") => {
   if (!ObjectId.isValid(id)) throw new UserError(`Unknown ${what}.`);
   return new ObjectId(id);
@@ -83,11 +88,12 @@ export interface TaskPatch {
 
 export async function updateTask(slug: string, taskId: string, patch: TaskPatch): Promise<Result<Task>> {
   return guard(async () => {
-    const { org, user } = await requireOrg(slug);
+    const { org, user, isAdmin } = await requireOrg(slug);
     const c = await cols();
     const id = oid(taskId, "task");
     const before = await c.tasks.findOne({ _id: id, orgId: org._id });
     if (!before) throw new UserError("This task no longer exists.");
+    if (!canEditTask(before, user._id, isAdmin)) throw new UserError("Only the task's creator or an admin can edit it.");
     const set: Partial<TaskDoc> = {};
     const acts: Omit<ActivityDoc, "_id" | "orgId" | "taskId" | "actorId" | "createdAt">[] = [];
 
@@ -170,7 +176,7 @@ export async function deleteTask(slug: string, taskId: string): Promise<Result> 
     const id = oid(taskId, "task");
     const t = await c.tasks.findOne({ _id: id, orgId: org._id });
     if (!t) return;
-    if (!isAdmin && !t.createdBy.equals(user._id)) throw new UserError("Only admins or the task's creator can delete it.");
+    if (!canEditTask(t, user._id, isAdmin)) throw new UserError("Only the task's creator or an admin can delete it.");
     await c.tasks.deleteOne({ _id: id });
     await Promise.all([c.comments.deleteMany({ taskId: id }), c.activity.deleteMany({ taskId: id })]);
     await publish(org._id.toHexString(), { type: "task.delete", actorId: user._id.toHexString(), taskId });

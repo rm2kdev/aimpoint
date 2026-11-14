@@ -58,6 +58,8 @@ scripts/seed.mjs              demo data
 
 Every query is scoped by the organisation resolved from the URL slug and checked against the signed-in user's membership (`src/lib/session.ts`). Admin-only actions pass `{ admin: true }`.
 
+Task ownership: everyone in the organisation can read every task and comment on it, but only the task's **creator** or an **admin** can edit or delete it (enforced in `updateTask` / `deleteTask`, mirrored as a read-only pane in the UI).
+
 ## Notes
 
 - Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).

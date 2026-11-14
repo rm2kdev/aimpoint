@@ -55,6 +55,7 @@ export function RichEditor({
   className,
   autofocus,
   syncKey,
+  editable = true,
 }: {
   orgSlug: string;
   value: string;
@@ -64,6 +65,7 @@ export function RichEditor({
   autofocus?: boolean;
   /** Changes when a remote update should replace the content (ignored while focused). */
   syncKey?: string | number;
+  editable?: boolean;
 }) {
   const onChangeRef = useRef(onChange);
   useEffect(() => {
@@ -76,6 +78,7 @@ export function RichEditor({
 
   const editor = useEditor({
     immediatelyRender: false,
+    editable,
     autofocus: autofocus ? "end" : false,
     extensions: [
       StarterKit.configure({
@@ -119,11 +122,15 @@ export function RichEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncKey, editor]);
 
+  useEffect(() => {
+    if (editor && editor.isEditable !== editable) editor.setEditable(editable);
+  }, [editor, editable]);
+
   const fileInput = useRef<HTMLInputElement>(null);
 
   return (
     <div className={cn("group/editor", className)}>
-      {editor && (
+      {editor && editable && (
         <div
           role="toolbar"
           aria-label="Formatting"

@@ -328,8 +328,9 @@ function TaskRow({
   onStatus: (statusId: string) => void;
   refCb: (el: HTMLLIElement | null) => void;
 }) {
-  const { statuses, statusById, memberById, projectById } = useOrg();
+  const { statuses, statusById, memberById, projectById, me, isAdmin } = useOrg();
   const statusOptions = useStatusOptions();
+  const canEdit = isAdmin || task.createdBy === me.id;
   const status = statusById.get(task.statusId);
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
   const project = projectById.get(task.projectId);
@@ -346,8 +347,15 @@ function TaskRow({
         selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent",
       )}
     >
-      <Picker label={`Status: ${status?.name ?? "none"}`} value={task.statusId} options={statusOptions} onChange={onStatus} searchable={false}>
-        <button className="relative z-10 -m-1 grid size-[26px] place-items-center rounded-full transition-transform hover:scale-110 active:scale-95">
+      <Picker
+        disabled={!canEdit}
+        label={`Status: ${status?.name ?? "none"}`}
+        value={task.statusId}
+        options={statusOptions}
+        onChange={onStatus}
+        searchable={false}
+      >
+        <button className="relative z-10 -m-1 grid size-[26px] place-items-center rounded-full transition-transform enabled:hover:scale-110 enabled:active:scale-95 disabled:pointer-events-none">
           <StatusRing status={status} statuses={statuses} size={18} />
         </button>
       </Picker>

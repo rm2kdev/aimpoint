@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { cloneElement, isValidElement, useState } from "react";
 import { CheckIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -25,6 +25,7 @@ export function Picker<V extends string>({
   align = "start",
   searchable = true,
   label,
+  disabled,
 }: {
   value: V | null;
   options: Option<V>[];
@@ -34,8 +35,15 @@ export function Picker<V extends string>({
   align?: "start" | "end" | "center";
   searchable?: boolean;
   label: string;
+  /** Read-only: render the trigger as a disabled button with no menu. */
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  if (disabled) {
+    return isValidElement<{ disabled?: boolean; "aria-label"?: string }>(children)
+      ? cloneElement(children, { disabled: true, "aria-label": label })
+      : <>{children}</>;
+  }
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild aria-label={label}>

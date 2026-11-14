@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { LinkIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucide-react";
+import { LinkIcon, LockIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
@@ -38,7 +38,7 @@ import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
 import type { FeedItem, Priority, Task, TaskDetail } from "@/lib/types";
 
 const propBtn =
-  "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent";
+  "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
 
 export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClose: () => void; onTask: (t: Task) => void }) {
   const { org, me, isAdmin, statuses, statusById, memberById, projectById } = useOrg();
@@ -160,7 +160,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const status = statusById.get(task.statusId);
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
   const project = projectById.get(task.projectId);
-  const canDelete = isAdmin || task.createdBy === me.id;
+  const canEdit = isAdmin || task.createdBy === me.id;
+  const creator = memberById.get(task.createdBy);
 
   return shell(
     <>
@@ -179,7 +180,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             >
               <LinkIcon className="size-4" /> Copy link
             </DropdownMenuItem>
-            {canDelete && (
+            {canEdit && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem variant="destructive" className="gap-2.5" onSelect={() => setConfirmDelete(true)}>
@@ -194,18 +195,24 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-6 pt-5 pb-10">
           <div className="flex items-start gap-3">
-            <Picker label={`Status: ${status?.name}`} value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
-              <button className="-m-1 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full transition-transform hover:scale-110">
+            <Picker disabled={!canEdit} label={`Status: ${status?.name}`} value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
+              <button className="-m-1 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full transition-transform enabled:hover:scale-110">
                 <StatusRing status={status} statuses={statuses} size={20} />
               </button>
             </Picker>
-            <TitleField value={task.title} onSave={(title) => patch({ title })} />
+            <TitleField value={task.title} readOnly={!canEdit} onSave={(title) => patch({ title })} />
           </div>
+          {!canEdit && (
+            <p className="mt-3 flex items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground">
+              <LockIcon className="size-3.5 shrink-0" />
+              Only {creator?.name ?? "the creator"} or an admin can edit this task. You can still comment.
+            </p>
+          )}
 
           <dl className="mt-5 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[13px]">
             <dt className="text-faint">Status</dt>
             <dd>
-              <Picker label="Status" value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
+              <Picker disabled={!canEdit} label="Status" value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
                 <button className={propBtn}>
                   <StatusRing status={status} statuses={statuses} size={14} />
                   {status?.name ?? "No status"}
@@ -215,6 +222,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             <dt className="text-faint">Assignee</dt>
             <dd>
               <Picker
+                disabled={!canEdit}
                 label="Assignee"
                 value={task.assigneeId ?? "none"}
                 options={assigneeOptions}
@@ -229,7 +237,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
             <dt className="text-faint">Priority</dt>
             <dd>
-              <Picker label="Priority" value={`${task.priority}`} options={PRIORITY_OPTIONS} onChange={(v) => patch({ priority: Number(v) as Priority })} searchable={false}>
+              <Picker disabled={!canEdit} label="Priority" value={`${task.priority}`} options={PRIORITY_OPTIONS} onChange={(v) => patch({ priority: Number(v) as Priority })} searchable={false}>
                 <button className={propBtn}>
                   <PriorityIcon priority={task.priority} />
                   <span className={cn(!task.priority && "text-muted-foreground")}>{PRIORITY_LABELS[task.priority]}</span>
@@ -238,7 +246,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
             <dt className="text-faint">Type</dt>
             <dd>
-              <Picker label="Type" value={task.type} options={TYPE_OPTIONS} onChange={(type) => patch({ type })} searchable={false}>
+              <Picker disabled={!canEdit} label="Type" value={task.type} options={TYPE_OPTIONS} onChange={(type) => patch({ type })} searchable={false}>
                 <button className={propBtn}>
                   <span className={cn("size-2 rounded-[2px]", task.type === "issue" ? "bg-[#e5484d]" : "bg-[#30a46c]")} />
                   {task.type === "issue" ? "Issue" : "Feature request"}
@@ -247,7 +255,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
             <dt className="text-faint">Project</dt>
             <dd>
-              <Picker label="Project" value={task.projectId} options={projectOptions} onChange={(projectId) => patch({ projectId })} placeholder="Move to project…">
+              <Picker disabled={!canEdit} label="Project" value={task.projectId} options={projectOptions} onChange={(projectId) => patch({ projectId })} placeholder="Move to project…">
                 <button className={propBtn}>
                   {project && <ProjectDot color={project.color} />}
                   <span className="truncate">{project?.name}</span>
@@ -259,6 +267,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
           <div className="mt-6 border-t border-border pt-5">
             <RichEditor
               orgSlug={org.slug}
+              editable={canEdit}
+              placeholder={canEdit ? "Add a description…" : "No description"}
               value={task.description}
               syncKey={descSync}
               onChange={(html) => {
@@ -335,7 +345,7 @@ function PaneHeader({ taskKey, onClose, children }: { taskKey: string; onClose: 
   );
 }
 
-function TitleField({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: string) => void; readOnly?: boolean }) {
   const [draft, setDraft] = useState(value);
   const ref = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
@@ -357,6 +367,7 @@ function TitleField({ value, onSave }: { value: string; onSave: (v: string) => v
       ref={ref}
       rows={1}
       value={draft}
+      readOnly={readOnly}
       maxLength={300}
       aria-label="Title"
       onChange={(e) => setDraft(e.target.value.replace(/\n/g, " "))}
