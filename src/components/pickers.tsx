@@ -1,0 +1,106 @@
+"use client";
+
+import { useState } from "react";
+import { CheckIcon } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { useOrg } from "@/components/org-provider";
+import { PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
+import { PRIORITY_LABELS } from "@/lib/format";
+import type { Priority, TaskType } from "@/lib/types";
+
+export interface Option<V extends string> {
+  value: V;
+  label: string;
+  icon?: React.ReactNode;
+  hint?: string;
+}
+
+export function Picker<V extends string>({
+  value,
+  options,
+  onChange,
+  children,
+  placeholder = "Search…",
+  align = "start",
+  searchable = true,
+  label,
+}: {
+  value: V | null;
+  options: Option<V>[];
+  onChange: (v: V) => void;
+  children: React.ReactNode;
+  placeholder?: string;
+  align?: "start" | "end" | "center";
+  searchable?: boolean;
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild aria-label={label}>
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align={align} className="w-60 p-0" onClick={(e) => e.stopPropagation()}>
+        <Command>
+          {searchable && <CommandInput placeholder={placeholder} />}
+          <CommandList>
+            <CommandEmpty>No matches</CommandEmpty>
+            <CommandGroup>
+              {options.map((o) => (
+                <CommandItem
+                  key={o.value}
+                  value={`${o.label} ${o.hint ?? ""}`}
+                  onSelect={() => {
+                    setOpen(false);
+                    if (o.value !== value) onChange(o.value);
+                  }}
+                  className="gap-2.5"
+                >
+                  {o.icon}
+                  <span className="truncate">{o.label}</span>
+                  {o.value === value && <CheckIcon className="ml-auto size-3.5 text-brand" />}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function useStatusOptions(): Option<string>[] {
+  const { statuses } = useOrg();
+  return statuses.map((s) => ({ value: s.id, label: s.name, icon: <StatusRing status={s} statuses={statuses} size={15} /> }));
+}
+
+export function useAssigneeOptions(): Option<string>[] {
+  const { members, me } = useOrg();
+  const sorted = [...members].sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
+  return [
+    { value: "none", label: "Unassigned", icon: <UnassignedAvatar size={18} /> },
+    ...sorted.map((m) => ({
+      value: m.id,
+      label: m.id === me.id ? `${m.name} (you)` : m.name,
+      hint: m.email,
+      icon: <UserAvatar id={m.id} name={m.name} size={18} />,
+    })),
+  ];
+}
+
+export const PRIORITY_OPTIONS: Option<`${Priority}`>[] = ([3, 2, 1, 0] as Priority[]).map((p) => ({
+  value: `${p}`,
+  label: PRIORITY_LABELS[p],
+  icon: <PriorityIcon priority={p} />,
+}));
+
+export const TYPE_OPTIONS: Option<TaskType>[] = [
+  { value: "issue", label: "Issue", icon: <span className="ml-0.5 size-2 rounded-[2px] bg-[#e5484d]" /> },
+  { value: "feature", label: "Feature request", icon: <span className="ml-0.5 size-2 rounded-[2px] bg-[#30a46c]" /> },
+];
+
+export function useProjectOptions(): Option<string>[] {
+  const { projects } = useOrg();
+  return projects.map((p) => ({ value: p.id, label: p.name, hint: p.key, icon: <ProjectDot color={p.color} /> }));
+}

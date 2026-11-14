@@ -1,0 +1,96 @@
+"use client";
+
+import Link from "next/link";
+import { useActionState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Logo } from "@/components/logo";
+import type { FormState } from "@/app/actions/auth";
+
+type Mode = "login" | "signup";
+
+export function AuthForm({
+  mode,
+  action,
+  next,
+  email,
+}: {
+  mode: Mode;
+  action: (s: FormState, f: FormData) => Promise<FormState>;
+  next?: string;
+  email?: string;
+}) {
+  const [state, formAction, pending] = useActionState(action, undefined);
+  const nextQs = next ? `?next=${encodeURIComponent(next)}` : "";
+  return (
+    <main className="grid min-h-full place-items-center bg-sidebar px-4 py-16">
+      <div className="w-full max-w-[360px]">
+        <Logo className="mb-8" />
+        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">
+          {mode === "login" ? "Sign in to Vector" : "Create your account"}
+        </h1>
+        <p className="mt-1.5 text-[13.5px] text-muted-foreground">
+          {mode === "login" ? "Pick up where your team left off." : "Then create an organisation or accept an invite."}
+        </p>
+        <form action={formAction} className="mt-7 grid gap-4" noValidate>
+          {next && <input type="hidden" name="next" value={next} />}
+          {mode === "signup" && (
+            <div className="grid gap-1.5">
+              <Label htmlFor="name">Name</Label>
+              <Input id="name" name="name" autoComplete="name" defaultValue={state?.fields?.name} required className="h-9 bg-background" />
+            </div>
+          )}
+          <div className="grid gap-1.5">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              defaultValue={state?.fields?.email ?? email}
+              required
+              className="h-9 bg-background"
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="password">Password</Label>
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              required
+              minLength={mode === "signup" ? 8 : undefined}
+              className="h-9 bg-background"
+            />
+            {mode === "signup" && <p className="text-xs text-faint">At least 8 characters.</p>}
+          </div>
+          <p role="alert" aria-live="polite" className="min-h-5 text-[13px] text-destructive">
+            {state?.error}
+          </p>
+          <Button type="submit" size="lg" disabled={pending} className="-mt-2 h-9">
+            {pending ? (mode === "login" ? "Signing in…" : "Creating account…") : mode === "login" ? "Sign in" : "Create account"}
+          </Button>
+        </form>
+        <p className="mt-6 text-[13px] text-muted-foreground">
+          {mode === "login" ? (
+            <>
+              New to Vector?{" "}
+              <Link className="font-medium text-foreground underline underline-offset-4" href={`/signup${nextQs}`}>
+                Create an account
+              </Link>
+            </>
+          ) : (
+            <>
+              Already have an account?{" "}
+              <Link className="font-medium text-foreground underline underline-offset-4" href={`/login${nextQs}`}>
+                Sign in
+              </Link>
+            </>
+          )}
+        </p>
+      </div>
+    </main>
+  );
+}

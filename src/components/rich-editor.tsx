@@ -1,0 +1,228 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Image from "@tiptap/extension-image";
+import Placeholder from "@tiptap/extension-placeholder";
+import {
+  BoldIcon,
+  CodeIcon,
+  Heading2Icon,
+  ImageIcon,
+  ItalicIcon,
+  ListIcon,
+  ListOrderedIcon,
+  QuoteIcon,
+  StrikethroughIcon,
+  LinkIcon,
+} from "lucide-react";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+
+export async function uploadImage(orgSlug: string, file: File): Promise<string> {
+  const body = new FormData();
+  body.set("file", file);
+  body.set("org", orgSlug);
+  const res = await fetch("/api/uploads", { method: "POST", body });
+  const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+  if (!res.ok || !json.url) throw new Error(json.error ?? "Upload failed. Try again.");
+  return json.url;
+}
+
+function insertImages(editor: Editor, orgSlug: string, files: File[], pos?: number) {
+  const images = files.filter((f) => f.type.startsWith("image/"));
+  if (!images.length) return false;
+  for (const file of images) {
+    const id = toast.loading(`Uploading ${file.name || "image"}…`);
+    uploadImage(orgSlug, file)
+      .then((src) => {
+        const chain = editor.chain().focus();
+        (pos !== undefined ? chain.insertContentAt(pos, { type: "image", attrs: { src, alt: file.name } }) : chain.setImage({ src, alt: file.name })).run();
+        toast.dismiss(id);
+      })
+      .catch((e: Error) => toast.error(e.message, { id }));
+  }
+  return true;
+}
+
+export function RichEditor({
+  orgSlug,
+  value,
+  onChange,
+  placeholder = "Add a description…",
+  className,
+  autofocus,
+  syncKey,
+}: {
+  orgSlug: string;
+  value: string;
+  onChange: (html: string) => void;
+  placeholder?: string;
+  className?: string;
+  autofocus?: boolean;
+  /** Changes when a remote update should replace the content (ignored while focused). */
+  syncKey?: string | number;
+}) {
+  const onChangeRef = useRef(onChange);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
+  const slugRef = useRef(orgSlug);
+  useEffect(() => {
+    slugRef.current = orgSlug;
+  }, [orgSlug]);
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    autofocus: autofocus ? "end" : false,
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+        link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
+      }),
+      Image.configure({ inline: false, allowBase64: false }),
+      Placeholder.configure({ placeholder }),
+    ],
+    content: value,
+    editorProps: {
+      attributes: { class: "prose-vector", "aria-label": "Description", role: "textbox", "aria-multiline": "true" },
+      // Handle paste and drop ourselves and return true so the browser/ProseMirror
+      // default never inserts a second copy.
+      handlePaste(view, event) {
+        const files = Array.from(event.clipboardData?.files ?? []);
+        if (!files.some((f) => f.type.startsWith("image/"))) return false;
+        event.preventDefault();
+        return insertImages(editorRef.current!, slugRef.current, files);
+      },
+      handleDrop(view, event, _slice, moved) {
+        if (moved) return false;
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (!files.some((f) => f.type.startsWith("image/"))) return false;
+        event.preventDefault();
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        return insertImages(editorRef.current!, slugRef.current, files, pos);
+      },
+    },
+    onUpdate: ({ editor }) => onChangeRef.current(editor.isEmpty ? "" : editor.getHTML()),
+  });
+  const editorRef = useRef<Editor | null>(null);
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  // Apply remote changes when the user isn't editing.
+  useEffect(() => {
+    if (!editor || editor.isFocused) return;
+    if (editor.getHTML() !== value && !(editor.isEmpty && !value)) editor.commands.setContent(value, { emitUpdate: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncKey, editor]);
+
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className={cn("group/editor", className)}>
+      {editor && (
+        <div
+          role="toolbar"
+          aria-label="Formatting"
+          className="mb-3 flex w-max items-center gap-0.5 rounded-lg border border-border p-0.5 opacity-80 transition-opacity group-focus-within/editor:opacity-100 group-hover/editor:opacity-100"
+        >
+          <Tool label="Bold" shortcut="⌘B" active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}>
+            <BoldIcon />
+          </Tool>
+          <Tool label="Italic" shortcut="⌘I" active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}>
+            <ItalicIcon />
+          </Tool>
+          <Tool label="Strikethrough" active={editor.isActive("strike")} onClick={() => editor.chain().focus().toggleStrike().run()}>
+            <StrikethroughIcon />
+          </Tool>
+          <Tool label="Inline code" active={editor.isActive("code")} onClick={() => editor.chain().focus().toggleCode().run()}>
+            <CodeIcon />
+          </Tool>
+          <Sep />
+          <Tool label="Heading" active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
+            <Heading2Icon />
+          </Tool>
+          <Tool label="Bulleted list" active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}>
+            <ListIcon />
+          </Tool>
+          <Tool label="Numbered list" active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
+            <ListOrderedIcon />
+          </Tool>
+          <Tool label="Quote" active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+            <QuoteIcon />
+          </Tool>
+          <Tool
+            label="Link"
+            active={editor.isActive("link")}
+            onClick={() => {
+              if (editor.isActive("link")) return void editor.chain().focus().unsetLink().run();
+              const url = window.prompt("Link URL");
+              if (url && /^(https?:\/\/|mailto:)/i.test(url.trim())) editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run();
+            }}
+          >
+            <LinkIcon />
+          </Tool>
+          <Sep />
+          <Tool label="Upload image" onClick={() => fileInput.current?.click()}>
+            <ImageIcon />
+          </Tool>
+          <input
+            ref={fileInput}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+            multiple
+            hidden
+            onChange={(e) => {
+              insertImages(editor, orgSlug, Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
+        </div>
+      )}
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+
+function Tool({
+  label,
+  shortcut,
+  active,
+  onClick,
+  children,
+}: {
+  label: string;
+  shortcut?: string;
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={label}
+          aria-pressed={active}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onClick}
+          className={cn(
+            "grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[15px]",
+            active && "bg-accent text-foreground",
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top">
+        {label}
+        {shortcut && <span className="ml-1.5 opacity-60">{shortcut}</span>}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+const Sep = () => <span className="mx-0.5 h-4 w-px bg-border" aria-hidden />;
