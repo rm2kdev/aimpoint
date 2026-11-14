@@ -1,11 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRightIcon, PlusIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { useOrg } from "@/components/org-provider";
-import { MobileNavButton } from "@/components/app-shell";
+import { EntityList, EntityRow, SettingsRow, Tag } from "@/components/settings/ui";
 import { BotAvatar } from "@/components/bits";
 import { AvatarPicker, randomAvatar } from "@/components/bots/avatar-picker";
 import { KeyReveal } from "@/components/bots/key-reveal";
@@ -18,78 +17,65 @@ import { createBot } from "@/app/actions/bots";
 import { timeAgo } from "@/lib/format";
 import type { Bot, BotAvatar as BotAvatarData } from "@/lib/types";
 
-export function BotsView({ bots, stats }: { bots: Bot[]; stats: Record<string, { assigned: number; created: number }> }) {
+export function BotsSettings({ bots, stats }: { bots: Bot[]; stats: Record<string, { assigned: number; created: number }> }) {
   const { org, isAdmin } = useOrg();
   const [creating, setCreating] = useState(false);
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col" aria-label="Bots">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
-        <MobileNavButton />
-        <h1 className="text-[15px] font-semibold tracking-[-0.01em]">Bots</h1>
-        <span className="tabular font-mono text-[12px] text-faint">{bots.length}</span>
-        {isAdmin && (
-          <Button onClick={() => setCreating(true)} className="ml-auto h-[30px] gap-2 rounded-lg px-3">
+    <>
+      <SettingsRow
+        title="Bots"
+        desc={
+          <>
+            Automations and AI agents that work in {org.name} through the API. They can create tasks, be assigned work, update the tasks they
+            created and comment. Open one to edit it or manage its key.
+          </>
+        }
+      >
+        {bots.length === 0 ? (
+          <div className="flex flex-col items-start rounded-[10px] border border-dashed border-input px-5 py-8">
+            <div className="flex -space-x-1.5">
+              {(["ghost", "blob", "star"] as const).map((s, i) => (
+                <BotAvatar key={s} avatar={{ kind: "shape", shape: s, color: ["#8b5cf6", "#30a46c", "#e5a00d"][i] }} name={s} size={32} className="ring-2 ring-background" />
+              ))}
+            </div>
+            <h3 className="mt-3.5 text-[14px] font-semibold">No bots yet</h3>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              {isAdmin ? "Create one to give a script, CI job or agent its own identity and key." : "Ask an admin to create one."}
+            </p>
+          </div>
+        ) : (
+          <EntityList>
+            {bots.map((b) => (
+              <EntityRow
+                key={b.id}
+                href={`/${org.slug}/settings/bots/${b.id}`}
+                avatar={<BotAvatar avatar={b.avatar} name={b.name} size={32} />}
+                name={b.name}
+                tags={<Tag>Bot</Tag>}
+                subtitle={b.description || "No description"}
+                meta={
+                  <>
+                    <div>
+                      {stats[b.id]?.assigned ?? 0} assigned · {stats[b.id]?.created ?? 0} created
+                    </div>
+                    <div className="mt-0.5">{b.lastUsedAt ? `Active ${timeAgo(b.lastUsedAt)}` : "Never used"}</div>
+                  </>
+                }
+              />
+            ))}
+          </EntityList>
+        )}
+      </SettingsRow>
+      {isAdmin && (
+        <SettingsRow title="Add a bot" desc="Each bot gets its own name, avatar and API key. You'll see the key once, right after creating it.">
+          <Button onClick={() => setCreating(true)} className="gap-2">
             <PlusIcon className="size-3.5" /> New bot
           </Button>
-        )}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="max-w-[1100px] px-4 py-6 sm:px-7">
-          <p className="mb-5 max-w-[72ch] text-[13.5px] text-muted-foreground">
-            Bots are automations and AI agents that work in {org.name} through the API. They can create tasks, be assigned work, update the tasks
-            they created and comment on any task. Each bot has its own API key.
-          </p>
-          {bots.length === 0 ? (
-            <div className="flex flex-col items-start rounded-[10px] border border-dashed border-input px-6 py-10">
-              <div className="flex -space-x-1.5">
-                {(["ghost", "blob", "star"] as const).map((s, i) => (
-                  <BotAvatar key={s} avatar={{ kind: "shape", shape: s, color: ["#8b5cf6", "#30a46c", "#e5a00d"][i] }} name={s} size={36} className="ring-2 ring-background" />
-                ))}
-              </div>
-              <h2 className="mt-4 text-[15px] font-semibold">No bots yet</h2>
-              <p className="mt-1 text-[13.5px] text-muted-foreground">
-                {isAdmin ? "Create one to give a script, CI job or agent its own identity and key." : "Ask an admin to create one."}
-              </p>
-              {isAdmin && (
-                <Button variant="outline" className="mt-5 gap-2" onClick={() => setCreating(true)}>
-                  <PlusIcon className="size-3.5" /> New bot
-                </Button>
-              )}
-            </div>
-          ) : (
-            <ul className="divide-y divide-border rounded-[10px] border border-border">
-              {bots.map((b) => (
-                <li key={b.id}>
-                  <Link
-                    href={`/${org.slug}/bots/${b.id}`}
-                    className="group flex items-center gap-3.5 px-3.5 py-3 transition-colors first:rounded-t-[10px] last:rounded-b-[10px] hover:bg-accent"
-                  >
-                    <BotAvatar avatar={b.avatar} name={b.name} size={32} />
-                    <div className="min-w-0 flex-1 leading-tight">
-                      <div className="flex items-center gap-2 text-[13.5px] font-medium">
-                        <span className="truncate">{b.name}</span>
-                        <span className="rounded-[4px] bg-chip px-1.5 py-px text-[11.5px] font-medium text-muted-foreground">Bot</span>
-                      </div>
-                      <div className="mt-0.5 truncate text-[12.5px] text-muted-foreground">{b.description || "No description"}</div>
-                    </div>
-                    <div className="hidden text-right text-[12px] leading-tight text-faint sm:block">
-                      <div className="tabular">
-                        {stats[b.id]?.assigned ?? 0} assigned · {stats[b.id]?.created ?? 0} created
-                      </div>
-                      <div className="mt-0.5">{b.lastUsedAt ? `Active ${timeAgo(b.lastUsedAt)}` : "Never used"}</div>
-                    </div>
-                    <span className="hidden font-mono text-[12px] text-faint md:block">{b.keyHint}</span>
-                    <ChevronRightIcon className="size-4 text-faint transition-transform group-hover:translate-x-0.5" />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
+        </SettingsRow>
+      )}
       <NewBotDialog open={creating} onClose={() => setCreating(false)} />
-    </section>
+    </>
   );
 }
 
@@ -111,7 +97,7 @@ function NewBotDialog({ open, onClose }: { open: boolean; onClose: () => void })
     setCreated(null);
   };
   const close = () => {
-    if (created) router.push(`/${org.slug}/bots/${created.bot.id}`);
+    if (created) router.push(`/${org.slug}/settings/bots/${created.bot.id}`);
     onClose();
     setTimeout(reset, 200);
   };

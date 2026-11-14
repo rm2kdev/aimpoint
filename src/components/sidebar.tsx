@@ -58,7 +58,7 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
           All Tasks
         </NavItem>
 
-        <SectionLabel action={isAdmin ? { href: `${base}/settings?tab=projects&new=1`, label: "New project" } : undefined}>Projects</SectionLabel>
+        <SectionLabel action={isAdmin ? { href: `${base}/settings/projects?new=1`, label: "New project" } : undefined}>Projects</SectionLabel>
         {projects.map((p) => {
           const href = `${base}/p/${p.key}`;
           return (
@@ -82,13 +82,18 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
         </div>
 
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
-        <NavItem href={`${base}/settings?tab=members`} active={false} icon={<UsersIcon />} onNavigate={onNavigate}>
+        <NavItem href={`${base}/settings/members`} active={pathname.startsWith(`${base}/settings/members`)} icon={<UsersIcon />} onNavigate={onNavigate}>
           Members
         </NavItem>
-        <NavItem href={`${base}/bots`} active={pathname.startsWith(`${base}/bots`)} icon={<BotIcon />} onNavigate={onNavigate}>
+        <NavItem href={`${base}/settings/bots`} active={pathname.startsWith(`${base}/settings/bots`)} icon={<BotIcon />} onNavigate={onNavigate}>
           Bots
         </NavItem>
-        <NavItem href={`${base}/settings`} active={pathname === `${base}/settings`} icon={<SettingsIcon />} onNavigate={onNavigate}>
+        <NavItem
+          href={`${base}/settings/general`}
+          active={["general", "projects", "statuses"].some((t) => pathname.startsWith(`${base}/settings/${t}`))}
+          icon={<SettingsIcon />}
+          onNavigate={onNavigate}
+        >
           Settings
         </NavItem>
       </div>

@@ -1,38 +1,28 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDownIcon, ArrowUpIcon, CopyIcon, Trash2Icon } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
-import { MobileNavButton } from "@/components/app-shell";
-import { ProjectDot, StatusRing, UserAvatar } from "@/components/bits";
+import { SettingsRow, useAction } from "@/components/settings/ui";
+import { ProjectDot, StatusRing } from "@/components/bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  createInvite,
   createProject,
   deleteProject,
   deleteStatus,
   removeMember,
   renameOrg,
   reorderStatuses,
-  revokeInvite,
   saveStatus,
-  setMemberRole,
   updateProject,
 } from "@/app/actions/org";
 import type { Role, Status, StatusCategory } from "@/lib/types";
-
-const TABS = [
-  ["general", "General"],
-  ["projects", "Projects"],
-  ["statuses", "Statuses"],
-  ["members", "Members"],
-] as const;
 
 export interface InviteRow {
   id: string;
@@ -42,83 +32,11 @@ export interface InviteRow {
   expiresAt: string;
 }
 
-export function SettingsView({ initialTab, invites, openNewProject }: { initialTab: string; invites: InviteRow[]; openNewProject: boolean }) {
-  const [tab, setTab] = useState(TABS.some(([t]) => t === initialTab) ? initialTab : "general");
-  useEffect(() => setTab(TABS.some(([t]) => t === initialTab) ? initialTab : "general"), [initialTab]);
-  const { isAdmin } = useOrg();
-
-  return (
-    <section className="flex min-w-0 flex-1 flex-col" aria-label="Settings">
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
-        <MobileNavButton />
-        <h1 className="text-[15px] font-semibold tracking-[-0.01em]">Settings</h1>
-        <nav className="ml-4 flex items-center gap-1" role="tablist">
-          {TABS.map(([t, label]) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              onClick={() => {
-                setTab(t);
-                history.replaceState(null, "", `?tab=${t}`);
-              }}
-              className={cn(
-                "h-7 rounded-md px-2.5 text-[13px] transition-colors",
-                tab === t ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </nav>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="max-w-[1100px] px-4 py-6 sm:px-7">
-          {!isAdmin && (
-            <p className="mb-6 rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground">
-              You&rsquo;re a member. Only admins can change organisation settings.
-            </p>
-          )}
-          {tab === "general" && <General />}
-          {tab === "projects" && <Projects openNew={openNewProject} />}
-          {tab === "statuses" && <Statuses />}
-          {tab === "members" && <Members invites={invites} />}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Row({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
-  return (
-    <div className="grid gap-4 border-b border-border py-7 first:pt-1 last:border-0 md:grid-cols-[280px_minmax(0,1fr)] md:gap-10">
-      <div>
-        <h2 className="text-[14px] font-semibold">{title}</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">{desc}</p>
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
-
-function useAction() {
-  const router = useRouter();
-  const [pending, start] = useTransition();
-  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, success?: string) =>
-    start(async () => {
-      const r = await fn();
-      if (!r.ok) toast.error(r.error);
-      else {
-        if (success) toast.success(success);
-        router.refresh();
-      }
-    });
-  return { pending, run };
-}
+const Row = SettingsRow;
 
 /* ---------------- General ---------------- */
 
-function General() {
+export function GeneralSettings() {
   const { org, isAdmin, me } = useOrg();
   const [name, setName] = useState(org.name);
   const { pending, run } = useAction();
@@ -161,7 +79,7 @@ function General() {
 
 /* ---------------- Projects ---------------- */
 
-function Projects({ openNew }: { openNew: boolean }) {
+export function ProjectsSettings({ openNew }: { openNew: boolean }) {
   const { org, projects, isAdmin, counts } = useOrg();
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
@@ -306,7 +224,7 @@ const STAGES: [StatusCategory, string][] = [
   ["cancelled", "Cancelled"],
 ];
 
-function Statuses() {
+export function StatusesSettings() {
   const { org, statuses, isAdmin } = useOrg();
   const { pending, run } = useAction();
   const [adding, setAdding] = useState(false);
@@ -484,116 +402,3 @@ function StatusEditor({
   );
 }
 
-/* ---------------- Members ---------------- */
-
-function Members({ invites }: { invites: InviteRow[] }) {
-  const { org, members, me, isAdmin } = useOrg();
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState<Role>("member");
-  const [link, setLink] = useState<string>();
-  const { pending, run } = useAction();
-
-  const copy = (path: string) => {
-    navigator.clipboard.writeText(`${location.origin}${path}`);
-    toast.success("Invite link copied");
-  };
-
-  return (
-    <>
-      <Row title="Members" desc="Admins manage members, projects and statuses. Members create and work on tasks.">
-        <ul className="divide-y divide-border rounded-[10px] border border-border">
-          {members.filter((m) => m.kind === "user").map((m) => (
-            <li key={m.id} className="flex flex-wrap items-center gap-3 px-3.5 py-2.5">
-              <UserAvatar id={m.id} name={m.name} size={28} />
-              <div className="min-w-0 flex-1 leading-tight">
-                <div className="truncate text-[13.5px] font-medium">
-                  {m.name}
-                  {m.id === me.id && <span className="ml-1.5 font-normal text-faint">you</span>}
-                </div>
-                <div className="truncate text-[12.5px] text-muted-foreground">{m.email}</div>
-              </div>
-              {isAdmin ? (
-                <Select value={m.role} onValueChange={(v) => run(() => setMemberRole(org.slug, m.id, v as Role), "Role updated")}>
-                  <SelectTrigger size="sm" className="w-28" aria-label={`Role for ${m.name}`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="member">Member</SelectItem>
-                  </SelectContent>
-                </Select>
-              ) : (
-                <span className="text-[12.5px] text-muted-foreground">{m.role === "admin" ? "Admin" : "Member"}</span>
-              )}
-              {isAdmin && m.id !== me.id && (
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Remove ${m.name}`}
-                  className="text-faint hover:text-destructive"
-                  onClick={() => confirm(`Remove ${m.name} from ${org.name}?`) && run(() => removeMember(org.slug, m.id), "Member removed")}
-                >
-                  <Trash2Icon />
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      </Row>
-      {isAdmin && (
-        <Row title="Invite people" desc="Creates a link that works once and expires in 14 days. Send it however you like.">
-          <form
-            className="flex max-w-lg flex-wrap gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(async () => {
-                const r = await createInvite(org.slug, email, role);
-                if (r.ok && r.data) {
-                  setLink(r.data.url);
-                  setEmail("");
-                  copy(r.data.url);
-                }
-                return r;
-              });
-            }}
-          >
-            <Input type="email" placeholder="teammate@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-56 flex-1" aria-label="Email" />
-            <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-              <SelectTrigger className="w-28" aria-label="Role">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="member">Member</SelectItem>
-                <SelectItem value="admin">Admin</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button type="submit" disabled={pending || !email.trim()}>
-              Create invite
-            </Button>
-          </form>
-          {link && (
-            <p className="mt-3 flex items-center gap-2 text-[12.5px] text-muted-foreground">
-              Link copied: <span className="truncate font-mono text-foreground">{link}</span>
-            </p>
-          )}
-          {invites.length > 0 && (
-            <ul className="mt-5 divide-y divide-border rounded-[10px] border border-border">
-              {invites.map((i) => (
-                <li key={i.id} className="flex flex-wrap items-center gap-3 px-3.5 py-2">
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{i.email}</span>
-                  <span className="text-[12px] text-faint">{i.role === "admin" ? "Admin" : "Member"} · pending</span>
-                  <Button variant="ghost" size="icon-sm" aria-label={`Copy invite link for ${i.email}`} onClick={() => copy(`/invite/${i.token}`)}>
-                    <CopyIcon />
-                  </Button>
-                  <Button variant="ghost" size="icon-sm" aria-label={`Revoke invite for ${i.email}`} onClick={() => run(() => revokeInvite(org.slug, i.id), "Invite revoked")}>
-                    <Trash2Icon />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Row>
-      )}
-    </>
-  );
-}

@@ -167,6 +167,46 @@ export async function loadCounts(orgId: ObjectId, userId: ObjectId, statuses?: S
   return { my, all, archived, projects };
 }
 
+/* ---------------- people & bots ---------------- */
+
+/** Assigned (open, not archived) and created task counts per member or bot id. */
+export async function loadWorkStats(orgId: ObjectId, ids: ObjectId[]) {
+  const c = await cols();
+  const open = (await c.statuses.find({ orgId, category: { $nin: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray()).map((s) => s._id);
+  const [assigned, created] = await Promise.all([
+    c.tasks
+      .aggregate<{ _id: ObjectId; n: number }>([
+        { $match: { orgId, assigneeId: { $in: ids }, statusId: { $in: open }, archivedAt: null } },
+        { $group: { _id: "$assigneeId", n: { $sum: 1 } } },
+      ])
+      .toArray(),
+    c.tasks
+      .aggregate<{ _id: ObjectId; n: number }>([{ $match: { orgId, createdBy: { $in: ids } } }, { $group: { _id: "$createdBy", n: { $sum: 1 } } }])
+      .toArray(),
+  ]);
+  const out: Record<string, { assigned: number; created: number }> = {};
+  for (const id of ids) out[id.toHexString()] = { assigned: 0, created: 0 };
+  for (const a of assigned) out[a._id.toHexString()].assigned = a.n;
+  for (const a of created) out[a._id.toHexString()].created = a.n;
+  return out;
+}
+
+/** Open, unarchived tasks assigned to someone, most recently updated first. */
+export async function loadOpenAssigned(orgId: ObjectId, assigneeId: ObjectId, limit = 50): Promise<Task[]> {
+  const c = await cols();
+  const open = (await c.statuses.find({ orgId, category: { $nin: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray()).map((s) => s._id);
+  const [docs, projects] = await Promise.all([
+    c.tasks
+      .find({ orgId, assigneeId, statusId: { $in: open }, archivedAt: null }, { projection: { description: 0 } })
+      .sort({ updatedAt: -1 })
+      .limit(limit)
+      .toArray(),
+    c.projects.find({ orgId }, { projection: { key: 1 } }).toArray(),
+  ]);
+  const keys = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
+  return docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"));
+}
+
 /* ---------------- tasks ---------------- */
 
 export interface TaskScope {

@@ -211,7 +211,7 @@ export async function createInvite(slug: string, email: string, role: Role): Pro
       createdAt: now,
       expiresAt: new Date(now.getTime() + 14 * 864e5),
     });
-    revalidatePath(`/${slug}/settings`);
+    revalidatePath(`/${slug}/settings/members`);
     return { url: `/invite/${token}` };
   });
 }
@@ -221,7 +221,7 @@ export async function revokeInvite(slug: string, inviteId: string): Promise<Resu
     const { org } = await requireOrg(slug, { admin: true });
     const c = await cols();
     await c.invites.deleteOne({ _id: new ObjectId(inviteId), orgId: org._id });
-    revalidatePath(`/${slug}/settings`);
+    revalidatePath(`/${slug}/settings/members`);
   });
 }
 

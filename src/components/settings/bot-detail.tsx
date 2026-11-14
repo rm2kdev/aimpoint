@@ -1,13 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeftIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
-import { MobileNavButton } from "@/components/app-shell";
-import { BotAvatar, StatusRing } from "@/components/bits";
+import { DetailHeader, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
+import { BotAvatar } from "@/components/bits";
 import { AvatarPicker } from "@/components/bots/avatar-picker";
 import { KeyReveal } from "@/components/bots/key-reveal";
 import { Button } from "@/components/ui/button";
@@ -28,20 +27,10 @@ import { deleteBot, rerollBotKey, updateBot } from "@/app/actions/bots";
 import { timeAgo } from "@/lib/format";
 import type { Bot, BotAvatar as BotAvatarData, Task } from "@/lib/types";
 
-function Row({ title, desc, children }: { title: string; desc: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="grid gap-4 border-b border-border py-7 first:pt-1 last:border-0 md:grid-cols-[280px_minmax(0,1fr)] md:gap-10">
-      <div>
-        <h2 className="text-[14px] font-semibold">{title}</h2>
-        <div className="mt-1 text-[13px] text-muted-foreground">{desc}</div>
-      </div>
-      <div className="min-w-0">{children}</div>
-    </div>
-  );
-}
+const Row = SettingsRow;
 
-export function BotSettings({ bot: initial, assigned, createdCount }: { bot: Bot; assigned: Task[]; createdCount: number }) {
-  const { org, isAdmin, statuses, statusById, memberById, projects } = useOrg();
+export function BotDetail({ bot: initial, assigned, createdCount }: { bot: Bot; assigned: Task[]; createdCount: number }) {
+  const { org, isAdmin, memberById, projects } = useOrg();
   const router = useRouter();
   const [bot, setBot] = useState(initial);
   const [name, setName] = useState(initial.name);
@@ -68,21 +57,15 @@ export function BotSettings({ bot: initial, assigned, createdCount }: { bot: Bot
     });
 
   return (
-    <section className="flex min-w-0 flex-1 flex-col" aria-label={`${bot.name} settings`}>
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4 sm:px-7">
-        <MobileNavButton />
-        <Link href={`/${org.slug}/bots`} className="flex items-center gap-1 text-[13.5px] text-muted-foreground hover:text-foreground">
-          <ChevronLeftIcon className="size-4" /> Bots
-        </Link>
-        <span className="text-faint" aria-hidden>
-          /
-        </span>
-        <BotAvatar avatar={bot.avatar} name={bot.name} size={20} />
-        <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">{bot.name}</h1>
-      </header>
+    <>
+      <DetailHeader
+        back={{ href: `/${org.slug}/settings/bots`, label: "Bots" }}
+        avatar={<BotAvatar avatar={bot.avatar} name={bot.name} size={44} />}
+        name={bot.name}
+        tags={<Tag>Bot</Tag>}
+        subtitle={bot.description || "No description"}
+      />
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="max-w-[1100px] px-4 py-6 sm:px-7">
           <Row
             title="Profile"
             desc={
@@ -159,25 +142,8 @@ export function BotSettings({ bot: initial, assigned, createdCount }: { bot: Bot
             </ul>
           </Row>
 
-          <Row title="Work" desc={`${createdCount} task${createdCount === 1 ? "" : "s"} created by ${bot.name}.`}>
-            {assigned.length ? (
-              <ul className="grid gap-1">
-                {assigned.map((t) => (
-                  <li key={t.id}>
-                    <Link
-                      href={`/${org.slug}/all?task=${t.key}`}
-                      className="flex h-9 items-center gap-3 rounded-[9px] px-3 text-[13.5px] transition-colors hover:bg-accent"
-                    >
-                      <StatusRing status={statusById.get(t.statusId)} statuses={statuses} size={16} />
-                      <span className="truncate">{t.title}</span>
-                      <span className="tabular ml-auto font-mono text-[12px] text-faint">{t.key}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-[13px] text-muted-foreground">Nothing is assigned to {bot.name} right now.</p>
-            )}
+          <Row title="Work" desc={`Open tasks assigned to ${bot.name}. It has created ${createdCount} task${createdCount === 1 ? "" : "s"}.`}>
+            <WorkList tasks={assigned} emptyText={`Nothing is assigned to ${bot.name} right now.`} />
           </Row>
 
           {isAdmin && (
@@ -187,8 +153,6 @@ export function BotSettings({ bot: initial, assigned, createdCount }: { bot: Bot
               </Button>
             </Row>
           )}
-        </div>
-      </div>
 
       <AlertDialog open={confirmReroll} onOpenChange={setConfirmReroll}>
         <AlertDialogContent>
@@ -230,7 +194,7 @@ export function BotSettings({ bot: initial, assigned, createdCount }: { bot: Bot
                 const r = await deleteBot(org.slug, bot.id);
                 if (!r.ok) return void toast.error(r.error);
                 toast.success(`Deleted ${bot.name}`);
-                router.push(`/${org.slug}/bots`);
+                router.push(`/${org.slug}/settings/bots`);
               }}
             >
               Delete bot
@@ -238,6 +202,6 @@ export function BotSettings({ bot: initial, assigned, createdCount }: { bot: Bot
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </section>
+    </>
   );
 }

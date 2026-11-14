@@ -1,28 +1,11 @@
-import { requireOrgPage } from "@/lib/session";
-import { cols } from "@/lib/db";
-import { SettingsView } from "@/components/settings-view";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Settings" };
+const TABS = ["general", "projects", "statuses", "members", "bots"];
 
-export default async function SettingsPage({ params, searchParams }: PageProps<"/[org]/settings">) {
-  const { org: slug } = await params;
+/** /settings (and old ?tab= links) land on a section. */
+export default async function SettingsIndex({ params, searchParams }: PageProps<"/[org]/settings">) {
+  const { org } = await params;
   const { tab, new: isNew } = await searchParams;
-  const { org, isAdmin } = await requireOrgPage(slug);
-  const c = await cols();
-  const invites = isAdmin
-    ? await c.invites.find({ orgId: org._id, acceptedAt: { $exists: false }, expiresAt: { $gt: new Date() } }).sort({ createdAt: -1 }).toArray()
-    : [];
-  return (
-    <SettingsView
-      initialTab={typeof tab === "string" ? tab : "general"}
-      openNewProject={isNew === "1"}
-      invites={invites.map((i) => ({
-        id: i._id.toHexString(),
-        email: i.email,
-        role: i.role,
-        token: i.token,
-        expiresAt: i.expiresAt.toISOString(),
-      }))}
-    />
-  );
+  const t = typeof tab === "string" && TABS.includes(tab) ? tab : "general";
+  redirect(`/${org}/settings/${t}${t === "projects" && isNew === "1" ? "?new=1" : ""}`);
 }

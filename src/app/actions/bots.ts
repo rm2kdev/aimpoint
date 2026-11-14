@@ -70,7 +70,7 @@ export async function rerollBotKey(slug: string, id: string): Promise<Result<{ b
       { returnDocument: "after" },
     );
     if (!bot) throw new UserError("This bot no longer exists.");
-    revalidatePath(`/${slug}/bots/${id}`);
+    revalidatePath(`/${slug}/settings/bots/${id}`);
     return { bot: toBot(bot), key };
   });
 }
