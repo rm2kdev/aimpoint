@@ -168,7 +168,7 @@ export function FilterMenu({ value, onChange, hideAssignee }: { value: ViewState
       <DropdownMenuTrigger className={cn(triggerCls, n > 0 && "text-foreground")} aria-label={n ? `Filters (${n} active)` : "Filter"}>
         <ListFilterIcon className="size-3.5" />
         <span className="max-md:hidden">Filter</span>
-        {n > 0 && <span className="tabular grid h-4 min-w-4 place-items-center rounded-full bg-foreground px-1 text-[10.5px] font-medium text-background">{n}</span>}
+        {n > 0 && <span className="tabular grid h-4 min-w-4 place-items-center rounded-full bg-foreground px-1 text-[11px] font-medium text-background">{n}</span>}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
         {!hideAssignee && (

@@ -210,6 +210,23 @@ export function TaskWorkspace({
     },
     [params, pathname, router],
   );
+  /** Archive or restore with an optimistic move and an Undo toast. */
+  const setArchived = async (task: Task, archived: boolean, undo = true) => {
+    upsert({ ...task, archivedAt: archived ? new Date().toISOString() : null });
+    const r = await updateTask(org.slug, task.id, { archived });
+    if (!r.ok) {
+      upsert(task);
+      return void toast.error(r.error);
+    }
+    if (r.data) window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: r.data }));
+    if (undo) {
+      toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
+        description: task.title,
+        action: { label: "Undo", onClick: () => setArchived(r.data ?? task, !archived, false) },
+      });
+    }
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -238,30 +255,13 @@ export function TaskWorkspace({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setArchived is recreated each render
   }, [flat, selectedKey, open]);
 
   useEffect(() => {
     const t = flat.find((x) => x.key === selectedKey);
     if (t) seen(t.id);
   }, [selectedKey, flat, seen]);
-
-  /** Archive or restore with an optimistic move and an Undo toast. */
-  const setArchived = async (task: Task, archived: boolean, undo = true) => {
-    upsert({ ...task, archivedAt: archived ? new Date().toISOString() : null });
-    const r = await updateTask(org.slug, task.id, { archived });
-    if (!r.ok) {
-      upsert(task);
-      return void toast.error(r.error);
-    }
-    if (r.data) window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: r.data }));
-    if (undo) {
-      toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
-        description: task.title,
-        action: { label: "Undo", onClick: () => setArchived(r.data ?? task, !archived, false) },
-      });
-    }
-  };
 
   const setStatus = async (task: Task, statusId: string) => {
     upsert({ ...task, statusId });
