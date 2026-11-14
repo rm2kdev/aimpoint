@@ -1,36 +1,65 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vector
 
-## Getting Started
+A small, calm task tracker for software teams: issues and feature requests, organised by organisation and project, live for everyone.
 
-First, run the development server:
+- Multi-user, multi-organisation, with **admin** / **member** roles
+- **Projects** inside each organisation; task IDs use the project key (`WEB-12`)
+- Per-organisation **custom statuses** (name, colour, stage, order)
+- Assignment, priority, type (issue / feature request), comments and an activity feed
+- **WYSIWYG** descriptions (Tiptap) with image upload by button, paste or drag and drop
+- **Real-time**: lists, task details, comments and descriptions update live; rows a teammate changed stay highlighted until you've seen them
+- Light, dark and system themes; keyboard first (`N` new task, `⌘K` search, `J`/`K` or arrows to move, `Esc` to close)
+
+Stack: Next.js 16 (App Router, server actions), MongoDB, Auth.js (email + password), shadcn/ui + Tailwind 4, Tiptap.
+
+## Run locally
+
+Requirements: Node 20+, pnpm, a MongoDB server (any local `mongod` works; no replica set needed).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.local      # then set AUTH_SECRET (openssl rand -base64 32)
+pnpm seed                       # optional: demo org "Northwind Labs"
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Seeded logins (password `vector-demo`): `ryan@demo.vector.dev` (admin), `jonah@demo.vector.dev` (admin), `mia@demo.vector.dev`, `sofia@demo.vector.dev`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Locally, with no Pusher or Blob variables set:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- real-time runs over **Server-Sent Events** from an in-process event bus (`/api/realtime`)
+- uploaded images are stored in `.data/uploads` and served only to members of the owning org via `/api/uploads/[name]`
 
-## Learn More
+## Deploy to Vercel
 
-To learn more about Next.js, take a look at the following resources:
+1. Create a MongoDB Atlas cluster and set `MONGODB_URI` / `MONGODB_DB`.
+2. Set `AUTH_SECRET`.
+3. **Real-time:** create a Pusher Channels app (or a Pusher-compatible service such as Soketi) and set `PUSHER_APP_ID`, `PUSHER_SECRET`, `NEXT_PUBLIC_PUSHER_KEY`, `NEXT_PUBLIC_PUSHER_CLUSTER`. Clients subscribe to `private-org-<orgId>`; `/api/realtime/pusher-auth` only authorises members of that org. (Serverless functions can't hold SSE connections or share an in-memory bus, so the local driver is dev-only.)
+4. **Images:** add a Vercel Blob store to the project; Vercel injects `BLOB_READ_WRITE_TOKEN` and uploads switch to Blob automatically.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Drivers are picked from the environment at runtime: `src/lib/realtime/server.ts` and `src/lib/storage.ts`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Layout
 
-## Deploy on Vercel
+```
+src/
+  auth.ts                     Auth.js config (credentials, JWT sessions)
+  app/
+    actions/                  server actions: auth, org (projects, statuses, members, invites), tasks
+    api/realtime/             SSE stream (local) and Pusher channel auth (Vercel)
+    api/uploads/              image upload + local file serving
+    [org]/my | all | p/[key]  task views; ?task=WEB-12 opens the detail pane
+    [org]/settings            general, projects, statuses, members & invites
+    login | signup | onboarding | invite/[token]
+  components/                 shell, sidebar, task list, task pane, editor, pickers
+  lib/                        db, session/authorisation, data mappers, realtime + storage adapters
+scripts/seed.mjs              demo data
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Every query is scoped by the organisation resolved from the URL slug and checked against the signed-in user's membership (`src/lib/session.ts`). Admin-only actions pass `{ admin: true }`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+
+- Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).
+- Comments are plain text; descriptions are sanitised HTML.
+- Not built yet: email notifications, billing, presence avatars, drag-to-reorder within a status.
