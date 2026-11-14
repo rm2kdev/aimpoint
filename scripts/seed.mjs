@@ -4,6 +4,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { MongoClient, ObjectId } from "mongodb";
 import bcrypt from "bcryptjs";
+import { createHash, randomBytes } from "node:crypto";
 
 if (existsSync(".env.local")) {
   for (const line of readFileSync(".env.local", "utf8").split("\n")) {
@@ -24,7 +25,7 @@ const people = [
 
 const old = await db.collection("orgs").findOne({ slug: "northwind" });
 if (old) {
-  for (const c of ["memberships", "projects", "statuses", "tasks", "comments", "activity", "invites"]) {
+  for (const c of ["memberships", "projects", "statuses", "tasks", "comments", "activity", "invites", "bots"]) {
     await db.collection(c).deleteMany({ orgId: old._id });
   }
   await db.collection("orgs").deleteOne({ _id: old._id });
@@ -76,8 +77,23 @@ const tasks = [
   ["API", "Pusher private channel auth", "feature", "Done", jonah, 2, ""],
   ["MOB", "Login screen ignores system font size", "issue", "Todo", sofia, 2, ""],
 ];
+// A demo bot with a fresh API key (printed at the end).
+const botKey = `vec_${randomBytes(32).toString("base64url")}`;
+const triage = {
+  _id: new ObjectId(), orgId, name: "Triage Bot",
+  description: "Files crash reports from Sentry as issues and picks up flaky-test tickets.",
+  avatar: { kind: "shape", shape: "ghost", color: "#8b5cf6" },
+  keyHash: createHash("sha256").update(botKey).digest("hex"), keyHint: `vec_…${botKey.slice(-4)}`,
+  keyRotatedAt: new Date(now - 5 * 864e5), createdBy: ryan._id, createdAt: new Date(now - 5 * 864e5),
+};
+await db.collection("bots").insertOne(triage);
+tasks.push(
+  ["API", "TypeError: Cannot read properties of undefined (reading 'statusId')", "issue", "Todo", ryan, 2, "<p>Seen 41 times in the last hour on <code>/api/v1/tasks</code>. Reported automatically from Sentry.</p>", triage],
+  ["WEB", "Flaky test: realtime glide animation", "issue", "In Progress", triage, 1, "", null],
+);
+
 const byKey = Object.fromEntries(projects.map((p) => [p.key, p]));
-const docs = tasks.map(([pk, title, type, status, who, priority, description], i) => {
+const docs = tasks.map(([pk, title, type, status, who, priority, description, creator], i) => {
   const p = byKey[pk];
   const t = new Date(now - (tasks.length - i) * 3.6e6 * 7);
   return {
@@ -91,7 +107,7 @@ const docs = tasks.map(([pk, title, type, status, who, priority, description], i
     statusId: S[status],
     assigneeId: who?._id ?? null,
     priority,
-    createdBy: [ryan, mia, sofia, jonah][i % 4]._id,
+    createdBy: (creator ?? [ryan, mia, sofia, jonah][i % 4])._id,
     createdAt: t,
     updatedAt: t,
   };
@@ -111,5 +127,6 @@ await db.collection("comments").insertOne({
   body: "Reproduced on iPad too. Probably need to dedupe by file hash before upload.", createdAt: new Date(now - 40 * 6e4),
 });
 
+console.log(`Triage Bot API key: ${botKey}`);
 console.log(`Seeded Northwind Labs (/northwind). Sign in as ${people.map((p) => p.email).join(", ")} with password "${PASSWORD}".`);
 await client.close();

@@ -10,6 +10,7 @@ import type {
   CommentDoc,
   ActivityDoc,
   InviteDoc,
+  BotDoc,
 } from "./types";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
@@ -47,6 +48,7 @@ export async function cols() {
     comments: db.collection<CommentDoc>("comments"),
     activity: db.collection<ActivityDoc>("activity"),
     invites: db.collection<InviteDoc>("invites"),
+    bots: db.collection<BotDoc>("bots"),
   };
 }
 export type Cols = Awaited<ReturnType<typeof cols>>;
@@ -68,5 +70,7 @@ async function ensureIndexes(db: Db) {
     db.collection("activity").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("invites").createIndex({ token: 1 }, { unique: true }),
     db.collection("invites").createIndex({ orgId: 1 }),
+    db.collection("bots").createIndex({ keyHash: 1 }, { unique: true }),
+    db.collection("bots").createIndex({ orgId: 1 }),
   ]);
 }

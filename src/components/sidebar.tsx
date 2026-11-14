@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import {
+  BotIcon,
   CheckIcon,
   ChevronsUpDownIcon,
   LayersIcon,
@@ -76,6 +77,9 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
         <NavItem href={`${base}/settings?tab=members`} active={false} icon={<UsersIcon />} onNavigate={onNavigate}>
           Members
+        </NavItem>
+        <NavItem href={`${base}/bots`} active={pathname.startsWith(`${base}/bots`)} icon={<BotIcon />} onNavigate={onNavigate}>
+          Bots
         </NavItem>
         <NavItem href={`${base}/settings`} active={pathname === `${base}/settings`} icon={<SettingsIcon />} onNavigate={onNavigate}>
           Settings

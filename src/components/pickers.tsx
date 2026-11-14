@@ -5,7 +5,7 @@ import { CheckIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useOrg } from "@/components/org-provider";
-import { PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
+import { BotAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
 import { PRIORITY_LABELS } from "@/lib/format";
 import type { Priority, TaskType } from "@/lib/types";
 
@@ -14,6 +14,7 @@ export interface Option<V extends string> {
   label: string;
   icon?: React.ReactNode;
   hint?: string;
+  group?: string;
 }
 
 export function Picker<V extends string>({
@@ -54,8 +55,9 @@ export function Picker<V extends string>({
           {searchable && <CommandInput placeholder={placeholder} />}
           <CommandList>
             <CommandEmpty>No matches</CommandEmpty>
-            <CommandGroup>
-              {options.map((o) => (
+            {[...new Set(options.map((o) => o.group))].map((g) => (
+            <CommandGroup key={g ?? "_"} heading={g}>
+              {options.filter((o) => o.group === g).map((o) => (
                 <CommandItem
                   key={o.value}
                   value={`${o.label} ${o.hint ?? ""}`}
@@ -71,6 +73,7 @@ export function Picker<V extends string>({
                 </CommandItem>
               ))}
             </CommandGroup>
+            ))}
           </CommandList>
         </Command>
       </PopoverContent>
@@ -85,14 +88,23 @@ export function useStatusOptions(): Option<string>[] {
 
 export function useAssigneeOptions(): Option<string>[] {
   const { members, me } = useOrg();
-  const sorted = [...members].sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
+  const people = members.filter((m) => m.kind === "user").sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
+  const bots = members.filter((m) => m.kind === "bot");
   return [
     { value: "none", label: "Unassigned", icon: <UnassignedAvatar size={18} /> },
-    ...sorted.map((m) => ({
+    ...people.map((m) => ({
       value: m.id,
       label: m.id === me.id ? `${m.name} (you)` : m.name,
       hint: m.email,
+      group: bots.length ? "People" : undefined,
       icon: <UserAvatar id={m.id} name={m.name} size={18} />,
+    })),
+    ...bots.map((m) => ({
+      value: m.id,
+      label: m.name,
+      hint: "bot",
+      group: "Bots",
+      icon: <BotAvatar avatar={m.avatar} name={m.name} size={18} />,
     })),
   ];
 }

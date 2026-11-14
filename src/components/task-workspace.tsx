@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
 import { MobileNavButton, useShell } from "@/components/app-shell";
-import { Kbd, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
+import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
 import { Picker, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
 import { Button } from "@/components/ui/button";
@@ -387,7 +387,7 @@ function TaskRow({
         )}
         <PriorityIcon priority={task.priority} />
         <span className="w-[22px]">
-          {assignee ? <UserAvatar id={assignee.id} name={assignee.name} size={20} /> : null}
+          {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={20} /> : null}
         </span>
         <span className="tabular w-[64px] text-right font-mono text-[12px] text-faint max-sm:hidden">{task.key}</span>
       </div>
@@ -411,8 +411,8 @@ function FreshNote({ fresh }: { fresh: Fresh }) {
   }, []);
   return (
     <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">
-      {who && <UserAvatar id={who.id} name={who.name} size={16} />}
-      {who?.name.split(" ")[0] ?? "A teammate"} {fresh.verb} · {timeAgo(new Date(fresh.at).toISOString())}
+      {who && <MemberAvatar member={who} id={who.id} size={16} />}
+      {who ? (who.kind === "bot" ? who.name : who.name.split(" ")[0]) : "A teammate"} {fresh.verb} · {timeAgo(new Date(fresh.at).toISOString())}
     </span>
   );
 }

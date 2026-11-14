@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useOrg } from "@/components/org-provider";
-import { Kbd, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
+import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
 import {
   Picker,
   PRIORITY_OPTIONS,
@@ -141,7 +141,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
           </Picker>
           <Picker label="Assignee" value={assigneeId ?? "none"} options={assigneeOptions} onChange={(v) => setAssigneeId(v === "none" ? null : v)} placeholder="Assign to…">
             <button className={chip}>
-              {assignee ? <UserAvatar id={assignee.id} name={assignee.name} size={16} /> : <UnassignedAvatar size={14} />}
+              {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={16} /> : <UnassignedAvatar size={14} />}
               {assignee?.name ?? "Assignee"}
             </button>
           </Picker>

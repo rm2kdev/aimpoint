@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import { avatarColor, initials, PRIORITY_LABELS } from "@/lib/format";
-import type { Priority, Status, TaskType } from "@/lib/types";
+import type { BotAvatar as BotAvatarData, BotShape, Member, Priority, Status, TaskType } from "@/lib/types";
 
 /* ---------- Status ring (signature move) ---------- */
 
@@ -80,6 +80,106 @@ export function UserAvatar({ id, name, size = 22, className }: { id: string; nam
       {initials(name)}
     </span>
   );
+}
+
+/* ---------- Bot avatars: a cute shape on colour, or an uploaded picture, in a squircle ---------- */
+
+export function BotShapeGlyph({ shape, bg, className }: { shape: BotShape; bg: string; className?: string }) {
+  const eyes = (y: number, gap = 3.2) => (
+    <>
+      <circle cx={12 - gap} cy={y} r="1.25" fill={bg} />
+      <circle cx={12 + gap} cy={y} r="1.25" fill={bg} />
+    </>
+  );
+  const body: Record<BotShape, React.ReactNode> = {
+    star: (
+      <>
+        <path d="M12 2.8l2.75 5.6 6.15.9-4.45 4.33 1.05 6.12L12 16.86l-5.5 2.89 1.05-6.12L3.1 9.3l6.15-.9z" fill="#fff" strokeLinejoin="round" stroke="#fff" strokeWidth="1.2" />
+        {eyes(11.2, 2.2)}
+      </>
+    ),
+    heart: (
+      <>
+        <path d="M12 20.2s-7.6-4.6-7.6-10.4A4.3 4.3 0 0 1 12 7.1a4.3 4.3 0 0 1 7.6 2.7c0 5.8-7.6 10.4-7.6 10.4z" fill="#fff" />
+        {eyes(11.4, 2.6)}
+      </>
+    ),
+    flower: (
+      <>
+        {[0, 72, 144, 216, 288].map((a) => (
+          <circle key={a} cx={12 + 4.6 * Math.sin((a * Math.PI) / 180)} cy={12 - 4.6 * Math.cos((a * Math.PI) / 180)} r="3.9" fill="#fff" />
+        ))}
+        <circle cx="12" cy="12" r="3.4" fill="#fff" />
+        {eyes(11.6, 1.6)}
+      </>
+    ),
+    cloud: (
+      <>
+        <path d="M7.2 18.6a4.3 4.3 0 0 1-.5-8.57 5.6 5.6 0 0 1 10.8-1.13A4.85 4.85 0 0 1 17.1 18.6z" fill="#fff" />
+        {eyes(13.2, 2.8)}
+      </>
+    ),
+    bolt: <path d="M13.6 2.4 4.9 13.7h6.3l-1.3 7.9 9.2-11.6h-6.5z" fill="#fff" strokeLinejoin="round" stroke="#fff" strokeWidth="1" />,
+    moon: (
+      <>
+        <path d="M19.8 14.9A8.3 8.3 0 1 1 9.1 4.2a6.6 6.6 0 0 0 10.7 10.7z" fill="#fff" />
+        <circle cx="8.6" cy="12.6" r="1.2" fill={bg} />
+        <circle cx="12.4" cy="15.2" r="1.2" fill={bg} />
+      </>
+    ),
+    blob: (
+      <>
+        <path d="M12 3.6c4 0 7.6 2.5 7.6 7 0 4.8-3.3 9.6-8 9.6-4.4 0-7.2-3.5-7.2-7.6 0-5 3.7-9 7.6-9z" fill="#fff" />
+        {eyes(11.3, 2.7)}
+        <path d="M10.4 14.4q1.6 1.3 3.2 0" stroke={bg} strokeWidth="1.2" fill="none" strokeLinecap="round" />
+      </>
+    ),
+    ghost: (
+      <>
+        <path d="M12 3.2a7 7 0 0 1 7 7v10.3l-2.33-1.6-2.33 1.6L12 18.9l-2.33 1.6-2.33-1.6L5 20.5V10.2a7 7 0 0 1 7-7z" fill="#fff" />
+        {eyes(10.4, 2.6)}
+      </>
+    ),
+  };
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      {body[shape]}
+    </svg>
+  );
+}
+
+export function BotAvatar({ avatar, name, size = 22, className }: { avatar?: BotAvatarData; name: string; size?: number; className?: string }) {
+  const radius = Math.round(size * 0.3);
+  if (avatar?.kind === "image") {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={avatar.url}
+        alt=""
+        title={name}
+        width={size}
+        height={size}
+        className={cn("inline-block shrink-0 object-cover", className)}
+        style={{ width: size, height: size, borderRadius: radius }}
+      />
+    );
+  }
+  const shape = avatar?.kind === "shape" ? avatar : { shape: "blob" as BotShape, color: "#525252" };
+  return (
+    <span
+      title={name}
+      className={cn("inline-grid shrink-0 place-items-center", className)}
+      style={{ width: size, height: size, borderRadius: radius, background: shape.color }}
+    >
+      <BotShapeGlyph shape={shape.shape} bg={shape.color} className="size-[72%]" />
+    </span>
+  );
+}
+
+/** Avatar for anyone who can own or be assigned a task: a person or a bot. */
+export function MemberAvatar({ member, id, size = 22, className }: { member?: Member; id: string; size?: number; className?: string }) {
+  if (member?.kind === "bot") return <BotAvatar avatar={member.avatar} name={member.name} size={size} className={className} />;
+  return <UserAvatar id={id} name={member?.name ?? "?"} size={size} className={className} />;
 }
 
 export function UnassignedAvatar({ size = 22 }: { size?: number }) {

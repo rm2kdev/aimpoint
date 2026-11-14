@@ -60,6 +60,27 @@ Every query is scoped by the organisation resolved from the URL slug and checked
 
 Task ownership: everyone in the organisation can read every task and comment on it, but only the task's **creator** or an **admin** can edit or delete it (enforced in `updateTask` / `deleteTask`, mirrored as a read-only pane in the UI).
 
+## Bots and the API
+
+Admins create bots under **Bots** in the sidebar (name, description, a shape-and-colour avatar or an uploaded picture). Each bot gets its own API key (`vec_…`), shown once at creation and on **Reroll key**; only a SHA-256 hash is stored, and rerolling disables the old key immediately. Bots can be assigned tasks and can create tasks, edit the tasks they created and comment on any task in their organisation.
+
+```bash
+curl $HOST/api/v1/tasks -H "Authorization: Bearer vec_…" -H "Content-Type: application/json" \
+  -d '{"project":"WEB","title":"Checkout fails on Safari","type":"issue","assignee":"me","priority":"high"}'
+```
+
+| Endpoint | |
+|---|---|
+| `GET /api/v1/me` | the bot and its organisation |
+| `GET /api/v1/projects`, `/statuses`, `/members` | lookups |
+| `GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&limit=50` | list |
+| `POST /api/v1/tasks` | create: `title`, `project` (key or id), optional `type`, `status` (name or id), `assignee` (`me`, email, bot name or id), `priority` (0-3 or none/low/medium/high), `description` (text or HTML) |
+| `GET /api/v1/tasks/WEB-12` | task with description and activity |
+| `PATCH /api/v1/tasks/WEB-12` | same fields as create; only tasks the bot created |
+| `POST /api/v1/tasks/WEB-12/comments` | `{ "body": "…" }` |
+
+Errors are JSON `{ "error": "…" }` with 400/401/403/404. `pnpm seed` creates a demo "Triage Bot" and prints its key.
+
 ## Notes
 
 - Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).

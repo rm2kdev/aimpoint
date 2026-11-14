@@ -5,7 +5,7 @@ import { LinkIcon, LockIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucid
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
-import { Kbd, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
+import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
 import {
   Picker,
   PRIORITY_OPTIONS,
@@ -230,7 +230,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 placeholder="Assign to…"
               >
                 <button className={propBtn}>
-                  {assignee ? <UserAvatar id={assignee.id} name={assignee.name} size={18} /> : <UnassignedAvatar size={16} />}
+                  {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={18} /> : <UnassignedAvatar size={16} />}
                   <span className={cn("truncate", !assignee && "text-muted-foreground")}>{assignee?.name ?? "Unassigned"}</span>
                 </button>
               </Picker>
@@ -441,7 +441,7 @@ function Feed({ feed }: { feed: FeedItem[] }) {
           const actor = memberById.get(f.actorId);
           return f.kind === "comment" ? (
             <li key={f.id} className="flex gap-2.5">
-              <UserAvatar id={f.actorId} name={actor?.name ?? "?"} size={22} className="mt-px" />
+              <MemberAvatar member={actor} id={f.actorId} size={22} className="mt-px" />
               <div className="min-w-0 flex-1">
                 <div className="text-[13px]">
                   <span className="font-medium">{actor?.name ?? "Former member"}</span>

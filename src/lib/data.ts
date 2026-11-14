@@ -4,6 +4,8 @@ import sanitizeHtml from "sanitize-html";
 import { cols } from "@/lib/db";
 import type {
   ActivityDoc,
+  Bot,
+  BotDoc,
   CommentDoc,
   Counts,
   FeedItem,
@@ -27,6 +29,18 @@ export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId">[] = [
 ];
 
 export const PROJECT_COLORS = ["#2f6fed", "#30a46c", "#e5a00d", "#8b5cf6", "#e5484d", "#0ea5b7", "#d6409f", "#737373"];
+
+export const toBot = (b: BotDoc): Bot => ({
+  id: b._id.toHexString(),
+  name: b.name,
+  description: b.description,
+  avatar: b.avatar,
+  keyHint: b.keyHint,
+  keyRotatedAt: b.keyRotatedAt.toISOString(),
+  lastUsedAt: b.lastUsedAt?.toISOString() ?? null,
+  createdBy: b.createdBy.toHexString(),
+  createdAt: b.createdAt.toISOString(),
+});
 
 export const toProject = (p: ProjectDoc): Project => ({ id: p._id.toHexString(), name: p.name, key: p.key, color: p.color });
 export const toStatus = (s: StatusDoc): Status => ({
@@ -87,22 +101,34 @@ export function sanitizeDescription(html: string): string {
 
 export async function loadShell(orgId: ObjectId, userId: ObjectId) {
   const c = await cols();
-  const [projects, statuses, memberships] = await Promise.all([
+  const [projects, statuses, memberships, bots] = await Promise.all([
     c.projects.find({ orgId }).sort({ createdAt: 1 }).toArray(),
     c.statuses.find({ orgId }).sort({ order: 1 }).toArray(),
     c.memberships.find({ orgId }).toArray(),
+    c.bots.find({ orgId }).sort({ name: 1 }).toArray(),
   ]);
   const users = await c.users
     .find({ _id: { $in: memberships.map((m) => m.userId) } }, { projection: { passwordHash: 0 } })
     .toArray();
   const byId = new Map(users.map((u) => [u._id.toHexString(), u]));
   const members: Member[] = memberships
-    .map((m) => {
+    .map((m): Member | null => {
       const u = byId.get(m.userId.toHexString());
-      return u ? { id: u._id.toHexString(), name: u.name, email: u.email, role: m.role } : null;
+      return u ? { id: u._id.toHexString(), name: u.name, email: u.email, role: m.role, kind: "user" } : null;
     })
     .filter((m): m is Member => !!m)
     .sort((a, b) => a.name.localeCompare(b.name));
+  for (const b of bots) {
+    members.push({
+      id: b._id.toHexString(),
+      name: b.name,
+      email: "",
+      role: "member",
+      kind: "bot",
+      avatar: b.avatar,
+      description: b.description,
+    });
+  }
   const counts = await loadCounts(orgId, userId, statuses);
   return { projects: projects.map(toProject), statuses: statuses.map(toStatus), members, counts };
 }

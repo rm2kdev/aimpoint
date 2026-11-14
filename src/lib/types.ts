@@ -87,12 +87,43 @@ export interface InviteDoc {
   acceptedAt?: Date;
 }
 
+export type BotShape = "star" | "heart" | "flower" | "cloud" | "bolt" | "moon" | "blob" | "ghost";
+export type BotAvatar = { kind: "shape"; shape: BotShape; color: string } | { kind: "image"; url: string };
+
+export interface BotDoc {
+  _id: ObjectId;
+  orgId: ObjectId;
+  name: string;
+  description: string;
+  avatar: BotAvatar;
+  keyHash: string; // sha256 of the API key; the key itself is shown once
+  keyHint: string; // "vec_…abcd"
+  keyRotatedAt: Date;
+  lastUsedAt?: Date;
+  createdBy: ObjectId;
+  createdAt: Date;
+}
+
 /* ---- serialised shapes sent to the client ---- */
 export interface Member {
   id: string;
   name: string;
   email: string;
   role: Role;
+  kind: "user" | "bot";
+  avatar?: BotAvatar;
+  description?: string;
+}
+export interface Bot {
+  id: string;
+  name: string;
+  description: string;
+  avatar: BotAvatar;
+  keyHint: string;
+  keyRotatedAt: string;
+  lastUsedAt: string | null;
+  createdBy: string;
+  createdAt: string;
 }
 export interface Project {
   id: string;
