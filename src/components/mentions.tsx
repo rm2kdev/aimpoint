@@ -296,7 +296,7 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
             if (open) {
               if (e.key === "ArrowDown") return (e.preventDefault(), setActive((a) => (a + 1) % options.length));
               if (e.key === "ArrowUp") return (e.preventDefault(), setActive((a) => (a - 1 + options.length) % options.length));
-              if (e.key === "Enter" || e.key === "Tab") return (e.preventDefault(), pick(options[active]));
+              if (e.key === "Enter" || e.key === "Tab" || (e.key === " " && query)) return (e.preventDefault(), pick(options[active]));
               if (e.key === "Escape") return (e.preventDefault(), e.stopPropagation(), setToken(null));
             }
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
