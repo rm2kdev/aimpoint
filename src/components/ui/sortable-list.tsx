@@ -52,11 +52,13 @@ export {
  * - Mouse/pen: press and move 4px to start (plain clicks on links still navigate; the click
  *   that ends a real drag is swallowed). Touch: long-press 250ms, then drag; moving first
  *   scrolls as usual.
- * - While dragging, a 2px brand-blue line marks the insertion point in the list under the
- *   pointer and the dragged row dims in place, so nothing shifts. Positions that would not
- *   change the order show no line. An empty linked list shows a dashed drop zone. A floating
- *   copy of the row follows the pointer once it is over another list or a drop target, or
- *   once the source row is gone (after navigating).
+ * - A pointer drag looks the same everywhere (VEC-95): a floating copy of the row follows the
+ *   pointer from the moment the drag starts, in its own list, over another list, a heading or
+ *   a drop target, and the source row leaves an empty slot until the drop. A 2px brand-blue
+ *   line marks the insertion point in the list under the pointer; positions that would not
+ *   change the order show no line. An empty linked list shows a dashed drop zone. A cancel
+ *   or a drop back in place glides the card into the row's slot. A keyboard lift keeps the
+ *   row in place, dimmed, with no floating copy.
  * - Keyboard: focus the element carrying `handleProps`, Space lifts, Up/Down (Home/End)
  *   move, Left/Right move to the previous/next linked list, Space or Enter drops, Escape or
  *   Tab cancels. Every step is announced in an assertive live region, naming the list.
@@ -286,6 +288,7 @@ function SortableListInner<T>(props: SortableListProps<T>) {
               index={index}
               isDragging={isDragging}
               isKeyboardDragging={isDragging && keyboard}
+              lifted={isDragging && !keyboard}
               handleProps={handleProps}
               renderItem={renderItem}
               handlers={handlers}
@@ -341,6 +344,8 @@ type SortableRowProps<T> = {
   index: number
   isDragging: boolean
   isKeyboardDragging: boolean
+  /** Lifted by a pointer drag: an empty slot while the floating card stands in for it. */
+  lifted: boolean
   handleProps: SortableHandleProps
   renderItem: (item: T, state: SortableItemState) => React.ReactNode
   handlers: RowHandlers
@@ -354,6 +359,7 @@ const SortableRow = React.memo(function SortableRow<T>({
   index,
   isDragging,
   isKeyboardDragging,
+  lifted,
   handleProps,
   renderItem,
   handlers,
@@ -363,9 +369,14 @@ const SortableRow = React.memo(function SortableRow<T>({
     <li
       data-sortable-id={id}
       data-dragging={isDragging ? "" : undefined}
+      // A pointer drag lifts the row out (the provider's floating card is the task in your hand) and leaves
+      // its slot empty: same height, so nothing shifts under a still pointer and the gaps next to it stay the
+      // no-op drop. A keyboard lift keeps it in place, dimmed, with the focus ring on it.
+      data-drag-lifted={lifted ? "" : undefined}
       className={cn(
         "transition-opacity duration-150 motion-reduce:transition-none",
-        isDragging && "opacity-45",
+        lifted && "invisible",
+        isKeyboardDragging && "opacity-45",
         className,
       )}
       onPointerDown={(e) => handlers.pointerDown(e, id)}

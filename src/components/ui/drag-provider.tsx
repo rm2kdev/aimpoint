@@ -405,9 +405,9 @@ export function createDragStore() {
     let offset = { x: 0, y: 0 }
     let removeShield: (() => void) | null = null
 
-    // A floating copy of the row that follows the pointer. Shown only once the row can't
-    // stand in for itself: it's gone (route change) or the pointer is over another list or
-    // a drop target. Reordering within one list keeps the line-only look.
+    // A floating copy of the row that follows the pointer for the whole drag (VEC-95): in its own list,
+    // over another list or a drop target, or after the source row is gone (a route change). The source row
+    // is left as an empty slot meanwhile (SortableRow), so the card reads as the task in your hand.
     const makeGhost = () => {
       const r = row.getBoundingClientRect()
       // Hang the preview just right of the pointer, and cap its width, so it never covers the target
@@ -422,7 +422,7 @@ export function createDragStore() {
       g.className =
         "pointer-events-none fixed top-0 left-0 z-[100] list-none rounded-lg bg-popover opacity-95 shadow-lg ring-1 ring-border"
       g.style.width = `${Math.min(r.width, GHOST_MAX_WIDTH)}px`
-      g.style.display = "none"
+      g.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
       document.body.appendChild(g)
       // Promote it to the top layer where supported, so nothing on the page can paint over it (VEC-76):
       // a z-index alone loses to the sticky status headings where the engine composites them separately
@@ -445,11 +445,35 @@ export function createDragStore() {
     }
 
     const placeGhost = () => {
-      if (!ghost || !snap) return
-      const over = snap.over
-      const show = !row.isConnected || blocked || (over !== null && !(over.kind === "list" && over.listId === item.listId))
-      ghost.style.display = show ? "" : "none"
+      if (!ghost) return
       ghost.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
+    }
+
+    /**
+     * A cancel (Escape, release away from every list and target) or a drop back where it started: the card
+     * glides back into the row's slot, then goes. The row stays invisible until the card lands on it.
+     */
+    const settleGhost = () => {
+      const g = ghost
+      ghost = null // cleanup() leaves this one alone
+      if (!g) return
+      if (!row.isConnected || matchMedia("(prefers-reduced-motion: reduce)").matches) return g.remove()
+      row.style.visibility = "hidden"
+      const done = () => {
+        g.remove()
+        row.style.visibility = ""
+      }
+      // The row shows again when the drag state clears; measure it once that has rendered.
+      requestAnimationFrame(() => {
+        const r = row.getBoundingClientRect()
+        if (!row.isConnected || (!r.width && !r.height)) return done()
+        const anim = g.animate(
+          [{ transform: g.style.transform }, { transform: `translate3d(${r.left}px, ${r.top}px, 0)` }],
+          { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" },
+        )
+        anim.onfinish = done
+        anim.oncancel = done
+      })
     }
 
     const update = () => {
@@ -541,6 +565,10 @@ export function createDragStore() {
       setTimeout(() => window.removeEventListener("click", swallowClick, { capture: true }), 0)
       update()
       const over = snap?.over ?? null
+      // Nothing moves (a cancel, or back where it started): the card settles into the row's slot.
+      const reg = over?.kind === "list" ? list(over.listId) : undefined
+      const stays = !over || (over.kind === "list" && !!reg && isNoopDrop(true, fromIndexIn(reg, item), over.gap))
+      if (stays) settleGhost()
       cleanup(false)
       drop(item, over)
       set(null)
@@ -548,6 +576,7 @@ export function createDragStore() {
 
     const cancel = () => {
       const wasActive = active
+      if (wasActive) settleGhost()
       cleanup(false)
       if (wasActive) {
         drop(item, null)
