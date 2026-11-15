@@ -184,7 +184,8 @@
   pointer-events: none;
 }
 
-/* ---------- status ring: "a bot is working" orbit ---------- */
+/* ---------- status ring: "a bot is working" = the ring's own progress bit travels round ---------- */
+.status-ring-halo { display: none; }
 .status-ring-working {
   transform-box: view-box;
   transform-origin: 10px 10px;
@@ -196,7 +197,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
-  /* No spin: a static, faint full halo still says "working". */
-  .status-ring-working { animation: none !important; opacity: 0.45; }
-  .status-ring-working circle { stroke-dasharray: none; }
+  /* No spin: the same track thickens faintly all the way round, so "working" still reads. */
+  .status-ring-working { animation: none !important; }
+  .status-ring-halo { display: inline; opacity: 0.35; }
 }

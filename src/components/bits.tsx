@@ -22,17 +22,31 @@ function arc(fraction: number, r: number, c: number) {
   return `M ${c} ${c - r} A ${r} ${r} 0 ${f > 0.5 ? 1 : 0} 1 ${x.toFixed(3)} ${y.toFixed(3)}`;
 }
 
+/** Length of the travelling segment when a ring has no progress arc of its own (about a quarter turn). */
+const WORKING_ARC = 0.25;
+
 /**
- * "Working" overlay: a short arc orbiting just outside the ring (r 9.3, clear of the
- * 8.3 outer edge of the track/arc and inside the 20-unit viewBox), so the status colour
- * and progress arc stay readable and the icon never changes size. Spins via
- * `.status-ring-working` in globals.css; reduced motion swaps it for a static faint halo.
+ * "Working" = the ring's own progress bit travels around it. The group spins via
+ * `.status-ring-working` in globals.css (transform-origin 10 10, so the icon never changes size
+ * or shifts). Under reduced motion nothing rotates and `.status-ring-halo` (hidden otherwise)
+ * thickens the same track faintly, so "working" still reads without an extra circle.
  */
-function WorkingOrbit({ color }: { color: string }) {
+function WorkingSpin({ children }: { children: React.ReactNode }) {
+  return <g className="status-ring-working">{children}</g>;
+}
+
+/**
+ * Done/cancelled are filled discs with no arc to move, so a short faint white arc rides the
+ * disc's own edge (inside r 8.5, same circle): the quietest cue that keeps the tick/cross clear.
+ */
+function DiscEdgeSpin() {
   return (
-    <g className="status-ring-working">
-      <circle cx="10" cy="10" r="9.3" fill="none" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeDasharray="14.6 58.4" />
-    </g>
+    <>
+      <circle className="status-ring-halo" cx="10" cy="10" r="7.4" fill="none" stroke="#fff" strokeOpacity="0.4" strokeWidth="1.3" />
+      <WorkingSpin>
+        <path d={arc(WORKING_ARC, 7.4, 10)} fill="none" stroke="#fff" strokeOpacity="0.75" strokeWidth="1.3" strokeLinecap="round" />
+      </WorkingSpin>
+    </>
   );
 }
 
@@ -50,7 +64,7 @@ export function StatusRing({
   statuses: Status[];
   size?: number;
   className?: string;
-  /** Show the orbiting "a bot is working on this" indicator. */
+  /** Spin the ring's progress bit: "a bot is working on this". */
   working?: boolean;
   workingLabel?: string;
 }) {
@@ -59,27 +73,24 @@ export function StatusRing({
   const common = working
     ? { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), role: "img", "aria-label": workingLabel }
     : { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), "aria-hidden": true };
-  const extra = working ? (
-    <>
-      <title>{workingLabel}</title>
-      <WorkingOrbit color={color} />
-    </>
-  ) : null;
+  const title = working ? <title>{workingLabel}</title> : null;
   if (cat === "done") {
     return (
       <svg {...common}>
-        {extra}
+        {title}
         <circle cx="10" cy="10" r="8.5" fill={color} />
         <path d="m6.4 10.3 2.5 2.4 4.7-4.9" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {working && <DiscEdgeSpin />}
       </svg>
     );
   }
   if (cat === "cancelled") {
     return (
       <svg {...common}>
-        {extra}
+        {title}
         <circle cx="10" cy="10" r="8.5" fill={color} opacity="0.9" />
         <path d="m7.2 7.2 5.6 5.6m0-5.6-5.6 5.6" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" />
+        {working && <DiscEdgeSpin />}
       </svg>
     );
   }
@@ -87,18 +98,42 @@ export function StatusRing({
     // Dashed = not yet. Triage adds a centre dot: not yet, and waiting to be broken down.
     return (
       <svg {...common}>
-        {extra}
+        {title}
         <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" strokeDasharray="2.6 2.3" />
         {cat === "triage" && <circle cx="10" cy="10" r="2.6" fill={color} />}
+        {working && (
+          <>
+            <circle className="status-ring-halo" cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />
+            <WorkingSpin>
+              <path d={arc(WORKING_ARC, 7.5, 10)} fill="none" stroke={color} strokeWidth="2.4" strokeLinecap="round" />
+            </WorkingSpin>
+          </>
+        )}
       </svg>
     );
   }
   const p = status ? ringProgress(status, statuses) : 0;
+  const progressArc = (
+    <path
+      d={arc(working && p <= 0 ? WORKING_ARC : p, 7.5, 10)}
+      fill="none"
+      stroke={color}
+      strokeWidth="3.4"
+      style={{ transition: "d 300ms cubic-bezier(.2,.8,.2,1)" }}
+    />
+  );
   return (
     <svg {...common}>
-      {extra}
+      {title}
       <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />
-      <path d={arc(p, 7.5, 10)} fill="none" stroke={color} strokeWidth="3.4" style={{ transition: "d 300ms cubic-bezier(.2,.8,.2,1)" }} />
+      {working ? (
+        <>
+          <circle className="status-ring-halo" cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="3.4" />
+          <WorkingSpin>{progressArc}</WorkingSpin>
+        </>
+      ) : (
+        progressArc
+      )}
     </svg>
   );
 }
