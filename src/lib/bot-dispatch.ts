@@ -7,6 +7,7 @@ import { unseal } from "@/lib/secrets";
 import { isPush } from "@/lib/bot-connect";
 import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
+import { markStartedByBot } from "@/lib/task-service";
 import type { BotConnectionDoc, BotDelivery, BotDoc, OrgDoc } from "@/lib/types";
 
 /**
@@ -159,7 +160,9 @@ async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReason) {
       { $setOnInsert: { _id: new ObjectId(), orgId: org._id, state: "in_progress", claimedAt: new Date(), finishedAt: null } },
       { upsert: true },
     );
-    if (res.upsertedCount) await publishWorking(org._id, bot._id, [reason.taskId]);
+    // Only a fresh claim starts work: the status follows it (Todo / In Review -> In Progress), and that
+    // broadcast carries the claim too.
+    if (res.upsertedCount && !(await markStartedByBot(org._id, bot._id, reason.taskId))) await publishWorking(org._id, bot._id, [reason.taskId]);
   } else if (reason.kind === "closeout") {
     // Delivered: check_for_work won't hand the close-out out again. Only the request this wake-up was for.
     await c.tasks.updateOne({ _id: reason.taskId, "closeout.botId": bot._id, "closeout.deliveredAt": null }, { $set: { "closeout.deliveredAt": new Date() } });
@@ -208,6 +211,10 @@ export const CLOSEOUT_STEPS = (key: string) =>
     `As its triager you can only comment on ${key} and move it to a closing status; anything else needs its creator, its assignee or an admin.`,
   ].join("\n");
 
+/** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
+const STARTED_NOTE =
+  "Vector moves it to In Progress for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and Done, or In Review only when a named person must check something.";
+
 const TOOLS_HINT =
   "Act on the ticket with the `vector` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Moving a task to a done status releases the tasks that depend on it; In Review does not, so finish with Done when the work meets its acceptance criteria, and use In Review only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects, statuses and people.";
 
@@ -239,9 +246,9 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       : reason.kind === "closeout"
       ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey)}`
       : reason.kind === "assigned"
-      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for.`
+      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE}`
       : reason.kind === "ready"
-        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task).`
+        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. Reply to it.`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
   const projectBlock = meta.length

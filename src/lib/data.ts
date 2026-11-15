@@ -239,6 +239,7 @@ export function toFeed(doc: CommentDoc | ActivityDoc): FeedItem {
     actorId: doc.actorId.toHexString(),
     from: doc.from ?? null,
     to: doc.to ?? null,
+    ...(doc.note ? { note: doc.note } : {}),
     createdAt: doc.createdAt.toISOString(),
   };
 }

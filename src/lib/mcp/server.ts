@@ -4,7 +4,7 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { toolsForBot } from "@/lib/bots";
-import { addCommentAs, createTaskAs, recordTriagedBy, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
+import { addCommentAs, createTaskAs, markStartedByBot, recordTriagedBy, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, taskKeys } from "@/lib/dependencies";
 import { CLOSEOUT_STEPS, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
@@ -294,7 +294,7 @@ async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment
 const TOOLS: Record<string, ToolImpl> = {
   check_for_work: {
     description:
-      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply; (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you (invisible to people). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
+      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply; (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved to In Progress for you (from Backlog, Todo or In Review). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
     inputSchema: { type: "object", properties: { include_images: IMAGES_ARG }, additionalProperties: false },
     run: async (args, ctx) => {
       const c = await cols();
@@ -358,7 +358,9 @@ const TOOLS: Record<string, ToolImpl> = {
           if ((err as { code?: number }).code === 11000) continue; // another run picked it up
           throw err;
         }
-        await publishWorking(ctx.org._id, ctx.bot._id, [t._id]);
+        // The status follows the work (Todo / In Review -> In Progress). That broadcast carries the claim too.
+        const moved = await markStartedByBot(ctx.org._id, ctx.bot._id, t._id);
+        if (!moved) await publishWorking(ctx.org._id, ctx.bot._id, [t._id]);
         const task = await c.tasks.findOne({ _id: t._id });
         const project = task && (await c.projects.findOne({ _id: task.projectId }));
         if (!task || !project) continue;
@@ -368,7 +370,7 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           task,
           project,
-          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps} It's now marked as picked up by you (people don't see this). Work on it, keep people posted with add_comment, move it with set_status, and call complete_task when you're done (or release_task to hand it back). Moving it to a done status releases any tasks waiting on it.`,
+          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to In Progress for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it, keep people posted with add_comment, and call complete_task when you're done (or release_task to hand it back). Finish with Done when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use In Review only when a named person must check or decide something, and @mention them.`,
           { includeImages, extra: { kind: "assigned", queue: await queueCounts(ctx) } },
         );
       }
@@ -462,7 +464,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   complete_task: {
     description:
-      "Say you've finished your work on a task. Optionally post a final comment and move it to a status. Use Done when the work meets its acceptance criteria: only a done (or cancelled) status releases the tasks that depend on it. In Review leaves them waiting until a person closes it, so use it only when a person really has to check or decide something, and @mention that person in the comment. The task won't be offered again by check_for_work unless someone assigns it to you afresh. Mentions on it still reach you. For a task you're triaging, this ends the triage: pass a `status` that moves it out of Triage. You stay its triager afterwards: once everything it depends on is done you're called back (push wake-up, or `kind: \"closeout\"` on check_for_work) and close it out with complete_task and a closing status (e.g. Done, or In Review if something was cancelled or left open).",
+      "Say you've finished your work on a task. Optionally post a final comment and move it to a status. (When you picked the task up, Vector already moved it to In Progress for you, so pass the status it should end in.) Use Done when the work meets its acceptance criteria: only a done (or cancelled) status releases the tasks that depend on it. In Review leaves them waiting until a person closes it, so use it only when a person really has to check or decide something, and @mention that person in the comment. The task won't be offered again by check_for_work unless someone assigns it to you afresh. Mentions on it still reach you. For a task you're triaging, this ends the triage: pass a `status` that moves it out of Triage. You stay its triager afterwards: once everything it depends on is done you're called back (push wake-up, or `kind: \"closeout\"` on check_for_work) and close it out with complete_task and a closing status (e.g. Done, or In Review if something was cancelled or left open).",
     inputSchema: {
       type: "object",
       properties: {
@@ -777,7 +779,7 @@ export const SERVER_INSTRUCTIONS = `You are a bot in a Vector issue tracker orga
 Typical loop: call check_for_work. It returns one item at a time:
 - kind "mention": someone tagged you in a comment. Read the task and thread, then reply with add_comment.
 - kind "closeout": a task you triaged whose sub-tasks are all done. Summarise what they delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
-- kind "assigned": a task assigned to you, now picked up by you. Do the work, post progress with add_comment, move it with set_status, hand it on with assign_task, then call complete_task.
+- kind "assigned": a task assigned to you, now picked up by you and moved to In Progress for you. Do the work, post progress with add_comment, hand it on with assign_task if needed, then call complete_task with Done (releases the tasks waiting on it), or In Review only when a named person must check something (@mention them).
 - kind "idle": nothing new.
 Call check_for_work again until it says idle. Use get_workspace for project keys, statuses and people's ids.
 If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task, chain them with \`depends_on\` so they run in a logical order, make the original depend on them, then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).

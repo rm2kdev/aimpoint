@@ -124,6 +124,8 @@ export interface ActivityDoc {
     | "unblocked";
   from?: string | null;
   to?: string | null;
+  /** Why Vector made the change itself. "started_work": a bot picked the task up, so it moved to In Progress. */
+  note?: "started_work";
   createdAt: Date;
 }
 export interface InviteDoc {
@@ -390,6 +392,7 @@ export interface FeedItem {
   mentions?: string[];
   from?: string | null;
   to?: string | null;
+  note?: "started_work";
   createdAt: string;
 }
 export interface Counts {

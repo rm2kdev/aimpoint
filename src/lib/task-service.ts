@@ -9,7 +9,7 @@ import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, tas
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, taskKeys, type By } from "@/lib/dependencies";
-import { isClosedCategory, type ActivityDoc, type FeedItem, type Priority, type Task, type TaskDoc, type TaskType } from "@/lib/types";
+import { isClosedCategory, type ActivityDoc, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -71,6 +71,44 @@ async function assertCloseOut(actor: Actor, task: TaskDoc, patch: TaskPatch) {
 export async function recordTriagedBy(taskId: ObjectId, botId: ObjectId) {
   const c = await cols();
   await c.tasks.updateOne({ _id: taskId }, { $set: { triagedBy: botId } });
+}
+
+/** Stages a bot's pickup moves out of. Triage, done and cancelled tasks are never touched. */
+const STARTABLE = new Set<StatusCategory>(["backlog", "unstarted", "started"]);
+
+/**
+ * A bot took a (non-triage) in-progress claim on a task: the status follows the work. Moves it to the
+ * first started-stage status in workflow order (In Progress by default) when it's in a backlog/unstarted
+ * status or in another started status (e.g. In Review). Records the move as the bot's activity and
+ * broadcasts the task. Returns true when it moved; the caller can then skip its own working-state publish,
+ * since this upsert carries the claim too.
+ */
+export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId: ObjectId): Promise<boolean> {
+  try {
+    const c = await cols();
+    const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1 } });
+    if (!task) return false;
+    const statuses = await c.statuses.find({ orgId }, { projection: { category: 1, order: 1 } }).sort({ order: 1 }).toArray();
+    const target = statuses.find((s) => s.category === "started");
+    const current = statuses.find((s) => s._id.equals(task.statusId));
+    if (!target || !current || current._id.equals(target._id) || !STARTABLE.has(current.category)) return false;
+    const now = new Date();
+    // Conditional on the status we read, so a concurrent move by a person wins.
+    const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId, statusId: current._id }, { $set: { statusId: target._id, updatedAt: now } }, { returnDocument: "after" });
+    if (!after) return false;
+    const act: ActivityDoc = { _id: new ObjectId(), orgId, taskId, actorId: botId, kind: "status", from: current._id.toHexString(), to: target._id.toHexString(), note: "started_work", createdAt: now };
+    await c.activity.insertOne(act);
+    const project = await c.projects.findOne({ _id: after.projectId }, { projection: { key: 1 } });
+    const orgHex = orgId.toHexString();
+    const actorId = botId.toHexString();
+    await publish(orgHex, { type: "task.upsert", actorId, task: toTask(after, project?.key ?? "?") });
+    await publish(orgHex, { type: "feed.add", actorId, taskId: taskId.toHexString(), item: toFeed(act) });
+    return true;
+  } catch (err) {
+    // The pickup itself already happened; a failed status follow-up shouldn't fail it.
+    console.error("[tasks] markStartedByBot failed", err);
+    return false;
+  }
 }
 
 /**

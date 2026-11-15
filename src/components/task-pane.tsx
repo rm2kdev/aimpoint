@@ -650,6 +650,7 @@ function Feed({ feed }: { feed: FeedItem[] }) {
           <>
             moved from <b className="font-medium text-foreground">{statusById.get(f.from ?? "")?.name ?? "a removed status"}</b> to{" "}
             <b className="font-medium text-foreground">{statusById.get(f.to ?? "")?.name ?? "a removed status"}</b>
+            {f.note === "started_work" ? " (started work)" : null}
           </>
         );
       case "assignee":
