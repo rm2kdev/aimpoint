@@ -2,7 +2,7 @@
 
 import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
 import { toast } from "sonner";
-import { useOrg } from "@/components/org-provider";
+import { useOrgBase } from "@/components/org-provider";
 import { PRIORITY_OPTIONS, TYPE_OPTIONS, useAssigneeOptions, useStatusOptions, type Option } from "@/components/pickers";
 import {
   ContextMenu,
@@ -43,7 +43,7 @@ export function TaskContextMenu({
   /** Manual sort only: move to the top or bottom of its status group (creator or admin). */
   onMove?: (where: "top" | "bottom") => void;
 }) {
-  const { me, isAdmin, memberById } = useOrg();
+  const { me, isAdmin, memberById } = useOrgBase();
   const access = taskAccess(task, me.id, isAdmin);
   const canWork = access !== "comment";
   const creator = memberById.get(task.createdBy);

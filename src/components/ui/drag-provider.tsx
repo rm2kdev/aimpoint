@@ -131,6 +131,17 @@ function sameOver(a: DropOver | null, b: DropOver | null) {
   return a.listId === c.listId && a.gap === c.gap && a.lineTop === c.lineTop
 }
 
+/** Drags in progress across every store on the page (normally 0 or 1). */
+let activeDrags = 0
+
+/**
+ * True while any drag is in progress. Work that would re-render large parts of the page mid-drag (count
+ * refreshes, background fetches) can wait for it to finish instead (VEC-73).
+ */
+export function isDragActive() {
+  return activeDrags > 0
+}
+
 export type DragStore = ReturnType<typeof createDragStore>
 
 export function createDragStore() {
@@ -143,6 +154,31 @@ export function createDragStore() {
   let pendingFocus: { listId: string; id: string } | null = null
   let hover: { id: string; at: number; timer?: ReturnType<typeof setTimeout> } | null = null
   const endListeners = new Set<(item: DragItem, dropped: boolean) => void>()
+
+  // Layout reads during a pointer drag are cached until something can have moved: a scroll, a resize, a
+  // list re-rendering (new rows, a drop zone appearing) or a list/target (un)registering. Rows don't move
+  // while a drag hovers (the line marks the gap), so most pointermoves read no layout at all (VEC-73).
+  const rects = new Map<Element, DOMRect>()
+  const measured = new Map<HTMLUListElement, ReturnType<typeof measure>>()
+  const scrollers = new Map<HTMLElement, HTMLElement | null>()
+  const invalidate = () => {
+    rects.clear()
+    measured.clear()
+  }
+  const rectOf = (el: Element) => {
+    let r = rects.get(el)
+    if (!r) rects.set(el, (r = el.getBoundingClientRect()))
+    return r
+  }
+  const measureCached = (el: HTMLUListElement) => {
+    let m = measured.get(el)
+    if (!m) measured.set(el, (m = measure(el)))
+    return m
+  }
+  const scrollerOf = (el: HTMLElement) => {
+    if (!scrollers.has(el)) scrollers.set(el, scrollParent(el))
+    return scrollers.get(el) ?? null
+  }
 
   const emit = () => listeners.forEach((l) => l())
   /** Every drag ends here once: `dropped` is false for a cancel (Escape, release away from targets). */
@@ -205,6 +241,12 @@ export function createDragStore() {
     if (prev && next && prev.item === next.item && prev.mode === next.mode && sameOver(prev.over, next.over)) return
     const prevTarget = prev?.over?.kind === "target" ? prev.over.id : null
     const nextTarget = next?.over?.kind === "target" ? next.over.id : null
+    if (!prev && next) activeDrags++
+    else if (prev && !next) {
+      activeDrags--
+      invalidate()
+      scrollers.clear()
+    }
     snap = next
     if (prevTarget !== nextTarget && prev) {
       endHover(prev.item, false)
@@ -217,7 +259,7 @@ export function createDragStore() {
 
   const overList = (reg: ListRegistration, item: DragItem, y: number): DropOver => {
     const el = reg.el!
-    const m = measure(el)
+    const m = measureCached(el)
     const gap = gapFromPointer(m.spans, y - m.originY)
     const from = fromIndexIn(reg, item)
     const lineTop = isNoopDrop(from >= 0, from, gap) ? null : lineTopFor(el, m.spans, gap)
@@ -228,11 +270,11 @@ export function createDragStore() {
     for (const [id, ref] of targets) {
       const { el, opts } = ref.current
       if (!el?.isConnected || opts.disabled || (opts.accepts && !opts.accepts(item))) continue
-      const r = el.getBoundingClientRect()
+      const r = rectOf(el)
       if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { kind: "target", id }
     }
     const candidates = [...lists.values()].map((r) => r.current).filter((r) => accepts(r, item))
-    const i = pickBox(candidates.map((r) => r.el!.getBoundingClientRect()), x, y, OUTSIDE_MARGIN)
+    const i = pickBox(candidates.map((r) => rectOf(r.el!)), x, y, OUTSIDE_MARGIN)
     return i < 0 ? null : overList(candidates[i], item, y)
   }
 
@@ -310,6 +352,7 @@ export function createDragStore() {
     let timer: ReturnType<typeof setTimeout> | undefined
     let raf = 0
     let rehitRaf = 0
+    let moveRaf = 0
     let ghost: HTMLElement | null = null
     let offset = { x: 0, y: 0 }
     const prevBody = { userSelect: document.body.style.userSelect, cursor: document.body.style.cursor }
@@ -345,9 +388,19 @@ export function createDragStore() {
     }
 
     const update = () => {
+      if (moveRaf) {
+        cancelAnimationFrame(moveRaf)
+        moveRaf = 0
+      }
       if (!active) return
       set({ item, mode: "pointer", over: hitTest(item, lastX, lastY) })
       placeGhost()
+    }
+
+    // Pointermoves can outpace frames (high-rate mice, coalesced events): hit-test once per frame, with
+    // the latest position, instead of once per event.
+    const scheduleUpdate = () => {
+      if (!moveRaf) moveRaf = requestAnimationFrame(update)
     }
 
     const activate = () => {
@@ -360,10 +413,19 @@ export function createDragStore() {
       makeGhost()
       update()
       document.addEventListener("scroll", onScroll, { capture: true, passive: true })
+      window.addEventListener("resize", onResize)
       raf = requestAnimationFrame(autoScroll)
     }
 
-    const onScroll = () => update()
+    const onScroll = () => {
+      invalidate()
+      update()
+    }
+    const onResize = () => {
+      invalidate()
+      scrollers.clear()
+      scheduleUpdate()
+    }
 
     // Hold the pointer near the top or bottom edge of the scrolling container around the list
     // under it (or the source list) to scroll; stop once that list's end is in view.
@@ -372,16 +434,16 @@ export function createDragStore() {
       const over = snap?.over
       const reg = (over?.kind === "list" ? list(over.listId) : undefined) ?? list(item.listId)
       const listEl = reg?.el?.isConnected ? reg.el : null
-      const scroller = listEl ? scrollParent(listEl) : null
+      const scroller = listEl ? scrollerOf(listEl) : null
       if (listEl && scroller) {
-        const r = scroller.getBoundingClientRect()
+        const r = rectOf(scroller)
         const top = lastY - r.top
         const bottom = r.bottom - lastY
         const inX = lastX > r.left - OUTSIDE_MARGIN && lastX < r.right + OUTSIDE_MARGIN
         let dy = 0
         if (inX && top < AUTOSCROLL_EDGE && lastY > r.top - OUTSIDE_MARGIN) dy = -Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(top, 0) / AUTOSCROLL_EDGE))
         else if (inX && bottom < AUTOSCROLL_EDGE && lastY < r.bottom + OUTSIDE_MARGIN) dy = Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(bottom, 0) / AUTOSCROLL_EDGE))
-        const lb = listEl.getBoundingClientRect()
+        const lb = rectOf(listEl)
         if (dy > 0) dy = Math.min(dy, Math.max(0, Math.ceil(lb.bottom - r.bottom)))
         if (dy < 0) dy = Math.max(dy, Math.min(0, Math.floor(lb.top - r.top)))
         if (dy) scroller.scrollTop += dy // fires onScroll, which moves the line
@@ -393,7 +455,7 @@ export function createDragStore() {
       if (ev.pointerId !== pointerId) return
       lastX = ev.clientX
       lastY = ev.clientY
-      if (active) return update()
+      if (active) return scheduleUpdate()
       const dist = Math.hypot(lastX - startX, lastY - startY)
       if (touch) {
         if (dist > TOUCH_SLOP) cleanup() // a scroll or swipe, not a long-press
@@ -451,6 +513,7 @@ export function createDragStore() {
     // Lists or targets mounted or unmounted mid-drag (a route change, spring-loading): look
     // again under the still pointer so the new page's list lights up without a move.
     const rehit = () => {
+      invalidate()
       if (!active || rehitRaf) return
       rehitRaf = requestAnimationFrame(() => {
         rehitRaf = 0
@@ -462,7 +525,10 @@ export function createDragStore() {
       if (timer) clearTimeout(timer)
       if (raf) cancelAnimationFrame(raf)
       if (rehitRaf) cancelAnimationFrame(rehitRaf)
+      if (moveRaf) cancelAnimationFrame(moveRaf)
+      moveRaf = 0
       document.removeEventListener("scroll", onScroll, { capture: true })
+      window.removeEventListener("resize", onResize)
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
       window.removeEventListener("pointercancel", onCancel)
@@ -616,16 +682,21 @@ export function createDragStore() {
       return () => void endListeners.delete(fn)
     },
     announce,
+    /** Layout around the lists may have changed (a list re-rendered): re-measure on the next hit test. */
+    invalidate,
     registerList(listId: string, ref: Ref<ListRegistration>) {
       lists.set(listId, ref)
+      invalidate()
       pending?.rehit()
       return () => {
         if (lists.get(listId) === ref) lists.delete(listId)
+        invalidate()
         pending?.rehit()
       }
     },
     registerTarget(id: string, ref: Ref<TargetRegistration>) {
       targets.set(id, ref)
+      invalidate()
       pending?.rehit()
       return () => {
         if (targets.get(id) !== ref) return
@@ -634,6 +705,7 @@ export function createDragStore() {
           hover = null
         }
         targets.delete(id)
+        invalidate()
         pending?.rehit()
       }
     },
@@ -686,7 +758,25 @@ export function useDragStore() {
   return React.useContext(DragContext)
 }
 
-/** The current drag (item, pointer or keyboard, where it would drop), or null. */
+/**
+ * One value derived from the current drag. The component re-renders only when the selected value changes
+ * (compared with `Object.is`), not on every pointer move, so return primitives or objects that are stable
+ * for the whole drag (`snap.item`). Prefer this over `useDragState` anywhere that renders many rows: a list
+ * reading the whole snapshot re-renders on every gap change (VEC-73).
+ */
+export function useDragSelector<T>(select: (snap: DragSnapshot | null) => T): T {
+  const store = useDragStore()
+  return React.useSyncExternalStore(
+    store ? store.subscribe : noopSubscribe,
+    () => select(store ? store.get() : null),
+    () => select(null),
+  )
+}
+
+/**
+ * The current drag (item, pointer or keyboard, where it would drop), or null. Re-renders on every change of
+ * the drop position; use `useDragSelector` for anything that renders more than a few elements.
+ */
 export function useDragState(): DragSnapshot | null {
   const store = useDragStore()
   return React.useSyncExternalStore(
@@ -718,9 +808,11 @@ export function useDropTarget<E extends HTMLElement = HTMLElement>(id: string, o
     elRef.current = el
     regRef.current = { ...regRef.current, el }
   }, [])
-  const snap = useDragState()
-  const canDrop = !!snap && !options.disabled && (options.accepts ? options.accepts(snap.item) : true)
-  const isOver = snap?.over?.kind === "target" && snap.over.id === id
+  // Three narrow subscriptions: the target re-renders when a drag starts/ends or enters/leaves it, never
+  // for pointer moves elsewhere.
+  const item = useDragSelector((snap) => snap?.item ?? null)
+  const isOver = useDragSelector((snap) => snap?.over?.kind === "target" && snap.over.id === id)
+  const canDrop = !!item && !options.disabled && (options.accepts ? options.accepts(item) : true)
   const dwell = React.useCallback(() => store?.dwell(id) ?? null, [store, id])
-  return { ref, isOver, canDrop, item: snap?.item ?? null, dwell }
+  return { ref, isOver, canDrop, item, dwell }
 }

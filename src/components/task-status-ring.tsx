@@ -1,7 +1,7 @@
 "use client";
 
 import { StatusRing, STATUS_RING_WORKING_LABEL } from "@/components/bits";
-import { useOrg } from "@/components/org-provider";
+import { useOrgBase } from "@/components/org-provider";
 import type { Member } from "@/lib/types";
 
 /** "Hermes is working on this", "Hermes and Kev are working on this", "Hermes, Kev and 2 others are working on this". */
@@ -27,7 +27,7 @@ export function TaskStatusRing({
   size?: number;
   className?: string;
 }) {
-  const { statuses, statusById, memberById } = useOrg();
+  const { statuses, statusById, memberById } = useOrgBase();
   const botIds = task.workingBotIds ?? [];
   const working = botIds.length > 0;
   return (

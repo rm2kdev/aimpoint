@@ -5,7 +5,7 @@ import { CircleAlertIcon, HourglassIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { useOrg } from "@/components/org-provider";
+import { useOrgBase } from "@/components/org-provider";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Stalled, Task, TaskRef } from "@/lib/types";
@@ -33,7 +33,7 @@ export function TaskSearchPicker({
   children: React.ReactNode;
   label?: string;
 }) {
-  const { org } = useOrg();
+  const { org } = useOrgBase();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Task[]>([]);
@@ -118,7 +118,7 @@ export function stalledText(stalled: Stalled, botName: string | null) {
 
 /** Red "Stalled" chip for task rows: other tasks wait on this one and nobody is moving it. */
 export function StalledBadge({ stalled, className }: { stalled: Stalled; className?: string }) {
-  const { memberById } = useOrg();
+  const { memberById } = useOrgBase();
   const label = `Stalled, needs attention. ${stalledText(stalled, stalled.botId ? (memberById.get(stalled.botId)?.name ?? null) : null)}`;
   return (
     <span

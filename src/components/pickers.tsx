@@ -4,7 +4,7 @@ import { cloneElement, isValidElement, useState } from "react";
 import { CheckIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { useOrg } from "@/components/org-provider";
+import { useOrg, useOrgBase } from "@/components/org-provider";
 import { BotAvatar, PriorityIcon, ProjectDot, StatusRing, TypeSquare, UnassignedAvatar, UserAvatar } from "@/components/bits";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
 import { TASK_TYPES, type Priority, type TaskType } from "@/lib/types";
@@ -82,12 +82,12 @@ export function Picker<V extends string>({
 }
 
 export function useStatusOptions(): Option<string>[] {
-  const { statuses } = useOrg();
+  const { statuses } = useOrgBase();
   return statuses.map((s) => ({ value: s.id, label: s.name, icon: <StatusRing status={s} statuses={statuses} size={15} /> }));
 }
 
 export function useAssigneeOptions(): Option<string>[] {
-  const { members, me } = useOrg();
+  const { members, me } = useOrgBase();
   const people = members.filter((m) => m.kind === "user").sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
   const bots = members.filter((m) => m.kind === "bot");
   return [

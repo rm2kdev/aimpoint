@@ -9,6 +9,7 @@ import { getUnreadCount } from "@/app/actions/notifications";
 import { reorderProjectsAction } from "@/app/actions/project-order";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
 import type { Result } from "@/lib/result";
+import { isDragActive } from "@/components/ui/drag-provider";
 
 export interface OrgInfo {
   id: string;
@@ -55,11 +56,25 @@ interface Ctx {
   activeByBot: Map<string, number>;
 }
 
+/** The parts of the org context that change only on navigation or an org change, not with live counts. */
+export type OrgBase = Omit<Ctx, "counts" | "unread" | "setUnread" | "connected" | "online" | "workload" | "activeByBot">;
+
 const OrgCtx = createContext<Ctx | null>(null);
+const OrgBaseCtx = createContext<OrgBase | null>(null);
 
 export function useOrg() {
   const c = useContext(OrgCtx);
   if (!c) throw new Error("useOrg outside OrgProvider");
+  return c;
+}
+
+/**
+ * Like `useOrg`, without the live values (counts, unread, presence, bot workload). Components rendered per
+ * task row use this, so a count refresh or someone coming online doesn't re-render every row (VEC-73).
+ */
+export function useOrgBase() {
+  const c = useContext(OrgBaseCtx);
+  if (!c) throw new Error("useOrgBase outside OrgProvider");
   return c;
 }
 
@@ -154,14 +169,17 @@ export function OrgProvider({
     return () => void listeners.current.delete(fn);
   }, []);
 
-  // Count refresh + shell refresh, debounced.
+  // Count refresh + shell refresh, debounced. Held while a drag is in progress (teammates' edits arriving
+  // mid-drag would otherwise fire a server action and re-render the shell under the pointer, VEC-73).
   const countTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const refreshCounts = useCallback(() => {
     clearTimeout(countTimer.current);
-    countTimer.current = setTimeout(async () => {
+    const run = async () => {
+      if (isDragActive()) return void (countTimer.current = setTimeout(run, 400));
       const r = await getCounts(org.slug);
       if (r.ok && r.data) setCounts(r.data);
-    }, 400);
+    };
+    countTimer.current = setTimeout(run, 400);
   }, [org.slug]);
 
   useEffect(() => {
@@ -234,7 +252,7 @@ export function OrgProvider({
     return () => es.close();
   }, [org.id, org.slug, me.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts]);
 
-  const value = useMemo<Ctx>(
+  const base = useMemo<OrgBase>(
     () => ({
       org,
       orgs,
@@ -247,16 +265,26 @@ export function OrgProvider({
       reorderProjects,
       statuses,
       statusById: new Map(statuses.map((s) => [s.id, s])),
+      subscribe,
+    }),
+    [org, orgs, me, members, deletedMembers, projects, reorderProjects, statuses, subscribe],
+  );
+  const value = useMemo<Ctx>(
+    () => ({
+      ...base,
       counts,
       unread,
       setUnread,
-      subscribe,
       connected,
       online,
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
     }),
-    [org, orgs, me, members, deletedMembers, projects, reorderProjects, statuses, counts, unread, setUnread, subscribe, connected, online, workloadSnap],
+    [base, counts, unread, setUnread, connected, online, workloadSnap],
   );
-  return <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>;
+  return (
+    <OrgBaseCtx.Provider value={base}>
+      <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>
+    </OrgBaseCtx.Provider>
+  );
 }

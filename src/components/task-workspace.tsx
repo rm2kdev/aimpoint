@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, PlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
-import { useOrg, useOrgEvents } from "@/components/org-provider";
+import { useOrg, useOrgBase, useOrgEvents } from "@/components/org-provider";
 import { MobileNavButton, useShell } from "@/components/app-shell";
 import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
@@ -19,7 +19,8 @@ import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { SortableList, useDragState, useDropTarget, type DragItem, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { SortableList, useDragSelector, useDropTarget, type DragItem, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { useDragStore } from "@/components/ui/drag-provider";
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
@@ -62,8 +63,10 @@ export function TaskWorkspace({
   // older than a change we already applied (e.g. archive, then navigate): never let it roll that back.
   const latest = useRef(new Map<string, Task>());
 
-  // Rows a teammate changed live: id -> actor id. Cleared once seen (hovered or opened).
-  const [fresh, setFresh] = useState<Map<string, Fresh>>(new Map());
+  // Rows a teammate changed live: id -> actor id. Cleared once seen (hovered or opened). A small store each
+  // row subscribes to for its own id, so a highlight re-renders that row only (VEC-73).
+  const [freshStore] = useState(createFreshStore);
+  const setFresh = freshStore.update;
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   // Manual (shared drag order) is the default for project views and All; My tasks keeps priority.
   const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : scope.mine ? "priority" : "manual");
@@ -149,14 +152,17 @@ export function TaskWorkspace({
     return () => window.removeEventListener("vector:task", onLocal);
   }, [upsert]);
 
-  const seen = useCallback((id: string) => {
-    setFresh((f) => {
-      if (!f.has(id)) return f;
-      const n = new Map(f);
-      n.delete(id);
-      return n;
-    });
-  }, []);
+  const seen = useCallback(
+    (id: string) => {
+      setFresh((f) => {
+        if (!f.has(id)) return f;
+        const n = new Map(f);
+        n.delete(id);
+        return n;
+      });
+    },
+    [setFresh],
+  );
 
   const visible = useMemo(
     () => applyFilters([...tasks.values()].filter((t) => typeFilter === "all" || t.type === typeFilter), view),
@@ -189,20 +195,33 @@ export function TaskWorkspace({
   // Done and cancelled groups start folded until opened from their heading.
   const isFolded = (s: Status) => collapsed.get(s.id) ?? isClosed(s);
 
+  /* ----- selection & keyboard ----- */
+  // Tasks in folded groups are out of sight, so j/k skips them.
+  const flat = useMemo(
+    () => (scope.archived ? archivedList : shown.flatMap((g) => ((collapsed.get(g.status.id) ?? isClosed(g.status)) ? [] : g.tasks))),
+    [scope.archived, archivedList, shown, collapsed],
+  );
+
   /* ----- glide rows to their new position (FLIP) ----- */
+  // Runs only when the rendered order changes (rows moved, added, removed, a group folded), not on every
+  // render: measuring every row per render made each realtime edit and drag commit a full-list layout read
+  // (VEC-73). Mid-drag, positions are recorded without animating, so rows don't slide under the pointer.
+  const dragStore = useDragStore();
   const rowEls = useRef(new Map<string, HTMLElement>());
   const lastTop = useRef(new Map<string, number>());
   const scrollRef = useRef<HTMLDivElement>(null);
+  const order = useMemo(() => flat.map((t) => `${t.id}:${t.statusId}`).join(","), [flat]);
   useLayoutEffect(() => {
     const next = new Map<string, number>();
     // Position within the scrolled content, so scrolling between renders doesn't read as a move.
     const box = scrollRef.current;
     const origin = box ? box.getBoundingClientRect().top - box.scrollTop : 0;
+    const glide = !dragStore?.get() && !matchMedia("(prefers-reduced-motion: reduce)").matches;
     rowEls.current.forEach((el, id) => {
       const top = el.getBoundingClientRect().top - origin;
       next.set(id, top);
       const prev = lastTop.current.get(id);
-      if (prev !== undefined && Math.abs(prev - top) > 2 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      if (glide && prev !== undefined && Math.abs(prev - top) > 2) {
         el.animate([{ transform: `translateY(${prev - top}px)` }, { transform: "translateY(0)" }], {
           duration: 380,
           easing: "cubic-bezier(.2,.8,.2,1)",
@@ -210,14 +229,7 @@ export function TaskWorkspace({
       }
     });
     lastTop.current = next;
-  });
-
-  /* ----- selection & keyboard ----- */
-  // Tasks in folded groups are out of sight, so j/k skips them.
-  const flat = useMemo(
-    () => (scope.archived ? archivedList : shown.flatMap((g) => ((collapsed.get(g.status.id) ?? isClosed(g.status)) ? [] : g.tasks))),
-    [scope.archived, archivedList, shown, collapsed],
-  );
+  }, [order, dragStore]);
   const open = useCallback(
     (key: string | null) => {
       const q = new URLSearchParams(params.toString());
@@ -228,6 +240,8 @@ export function TaskWorkspace({
     },
     [params, pathname, router],
   );
+  // The pane re-renders on its own data, not whenever the list does (a live edit mid-drag, VEC-73).
+  const closePane = useCallback(() => open(null), [open]);
   /** Archive or restore with an optimistic move and an Undo toast. */
   const setArchived = async (task: Task, archived: boolean, undo = true) => {
     upsert({ ...task, archivedAt: archived ? new Date().toISOString() : null });
@@ -371,6 +385,72 @@ export function TaskWorkspace({
     } else if (r.data) upsert(r.data);
   };
 
+  /** Row menu "Move to top/bottom" of its status group. */
+  const moveToEdge = (task: Task, where: "top" | "bottom") => {
+    const g = shown.find((x) => x.status.id === task.statusId);
+    if (!g) return;
+    const i = g.tasks.findIndex((x) => x.id === task.id);
+    const first = g.tasks[0];
+    const last = g.tasks[g.tasks.length - 1];
+    if (where === "top" && i > 0) void moveTask(task, { beforeKey: first.key });
+    if (where === "bottom" && i >= 0 && i < g.tasks.length - 1) void moveTask(task, { afterKey: last.key });
+  };
+
+  // Rows are memoised (VEC-73): give them callbacks with one identity for the view's lifetime, which call
+  // the latest version of each action through a ref.
+  const actions = useRef({ patchTask, setArchived, moveToEdge, open, seen, dragHint });
+  useLayoutEffect(() => {
+    actions.current = { patchTask, setArchived, moveToEdge, open, seen, dragHint };
+  });
+  const rowActions = useMemo<RowActions>(
+    () => ({
+      seen: (id) => actions.current.seen(id),
+      open: (key) => actions.current.open(key),
+      patch: (t, p) => void actions.current.patchTask(t, p),
+      archive: (t, a) => void actions.current.setArchived(t, a),
+      move: (t, where) => actions.current.moveToEdge(t, where),
+      dragHint: (t, canEdit) => actions.current.dragHint(t, canEdit),
+      rowRef: (id, el) => {
+        if (el) rowEls.current.set(id, el);
+        else rowEls.current.delete(id);
+      },
+      fresh: freshStore,
+    }),
+    [freshStore],
+  );
+
+  // Dependency keys by task id. Rebuilt only when some key changes (not on every edit), so the row
+  // renderers below keep their identity through live updates and memoised rows stay put (VEC-73).
+  const keySig = useMemo(() => [...tasks.values()].map((t) => `${t.id}:${t.key}`).join(","), [tasks]);
+  const keyById = useMemo(() => new Map(keySig ? keySig.split(",").map((p) => p.split(":") as [string, string]) : []), [keySig]);
+
+  /** A status group's rows. Two variants (with or without the menu's Move to top/bottom), both stable. */
+  const renderRow = useCallback(
+    (t: Task, { handleProps, isDragging }: { handleProps: SortableHandleProps; isDragging: boolean }, movable: boolean) => (
+      <TaskRow
+        task={t}
+        selected={t.key === selectedKey}
+        showProject={showProject}
+        waitingKeys={t.waitingOn.map((id) => keyById.get(id) ?? null)}
+        sort={view.sort}
+        href={`${pathname}?task=${t.key}`}
+        actions={rowActions}
+        handleProps={manual ? handleProps : undefined}
+        dragging={isDragging}
+        dragHints
+        movable={movable}
+      />
+    ),
+    [selectedKey, showProject, keyById, view.sort, pathname, rowActions, manual],
+  );
+  const renderers = useMemo(
+    () => ({
+      movable: (t: Task, state: { handleProps: SortableHandleProps; isDragging: boolean }) => renderRow(t, state, true),
+      fixed: (t: Task, state: { handleProps: SortableHandleProps; isDragging: boolean }) => renderRow(t, state, false),
+    }),
+    [renderRow],
+  );
+
   return (
     <div className="flex min-w-0 flex-1">
       <section className={cn("flex min-w-0 flex-1 flex-col", selectedKey && "max-lg:hidden")} aria-label={title}>
@@ -440,19 +520,10 @@ export function TaskWorkspace({
                 <TaskRow
                   task={t}
                   selected={t.key === selectedKey}
-                  fresh={fresh.get(t.id)}
                   showProject={showProject}
                   sort={view.sort}
                   href={`${pathname}?task=${t.key}`}
-                  onSeen={() => seen(t.id)}
-                  onStatus={(s) => patchTask(t, { statusId: s })}
-                  onPatch={(p) => patchTask(t, p)}
-                  onOpen={() => open(t.key)}
-                  onArchive={(a) => setArchived(t, a)}
-                  refCb={(el) => {
-                    if (el) rowEls.current.set(t.id, el);
-                    else rowEls.current.delete(t.id);
-                  }}
+                  actions={rowActions}
                 />
                 </li>
               ))}
@@ -509,39 +580,7 @@ export function TaskWorkspace({
                       const keyOf = (id?: string) => (id ? g.tasks.find((x) => x.id === id)?.key : undefined);
                       void moveTask(t, { afterKey: keyOf(ids[toIndex - 1]), beforeKey: keyOf(ids[toIndex + 1]) });
                     }}
-                    renderItem={(t, { index: i, handleProps, isDragging }) => (
-                      <TaskRow
-                        task={t}
-                        selected={t.key === selectedKey}
-                        fresh={fresh.get(t.id)}
-                        showProject={showProject}
-                        waitingKeys={t.waitingOn.map((id) => tasks.get(id)?.key ?? null)}
-                        sort={view.sort}
-                        href={`${pathname}?task=${t.key}`}
-                        onSeen={() => seen(t.id)}
-                        onStatus={(s) => patchTask(t, { statusId: s })}
-                        onPatch={(p) => patchTask(t, p)}
-                        onOpen={() => open(t.key)}
-                        onArchive={(a) => setArchived(t, a)}
-                        handleProps={manual ? handleProps : undefined}
-                        dragging={isDragging}
-                        onDragHint={(canEdit) => dragHint(t, canEdit)}
-                        onMove={
-                          manual && g.tasks.length > 1
-                            ? (where) => {
-                                const first = g.tasks[0];
-                                const last = g.tasks[g.tasks.length - 1];
-                                if (where === "top" && i > 0) void moveTask(t, { beforeKey: first.key });
-                                if (where === "bottom" && i < g.tasks.length - 1) void moveTask(t, { afterKey: last.key });
-                              }
-                            : undefined
-                        }
-                        refCb={(el) => {
-                          if (el) rowEls.current.set(t.id, el);
-                          else rowEls.current.delete(t.id);
-                        }}
-                      />
-                    )}
+                    renderItem={manual && g.tasks.length > 1 ? renderers.movable : renderers.fixed}
                   />
                   )}
                   {!folded && g.tasks.length === 0 && <EmptyGroup />}
@@ -553,10 +592,12 @@ export function TaskWorkspace({
         </div>
       </section>
 
-      {selectedKey && <TaskPane key={selectedKey} taskKey={selectedKey} onClose={() => open(null)} onTask={upsert} />}
+      {selectedKey && <MemoTaskPane key={selectedKey} taskKey={selectedKey} onClose={closePane} onTask={upsert} />}
     </div>
   );
 }
+
+const MemoTaskPane = memo(TaskPane);
 
 /**
  * A status group's heading: folds the group, and takes drops (the task goes to the top of the group), which
@@ -580,7 +621,7 @@ function GroupHeading({
   onToggle: () => void;
   onDrop: (item: DragItem) => void;
 }) {
-  const { statuses } = useOrg();
+  const { statuses } = useOrgBase();
   const { ref, isOver, canDrop: accepting } = useDropTarget<HTMLHeadingElement>(`status-heading:${status.id}`, {
     label: status.name,
     disabled: !canDrop,
@@ -623,53 +664,83 @@ function GroupHeading({
 
 /** An empty, unfolded group: a slim "No tasks" line, which the list's drop zone replaces during a drag. */
 function EmptyGroup() {
-  const drag = useDragState();
-  if (drag?.item.group === TASK_GROUP) return null;
+  const dragging = useDragSelector((d) => d?.item.group === TASK_GROUP);
+  if (dragging) return null;
   return <p className="flex h-9 items-center px-3 text-[12.5px] text-faint">No tasks</p>;
 }
 
-function TaskRow({
-  task,
-  selected,
-  fresh,
-  showProject,
-  waitingKeys,
-  sort,
-  href,
-  onSeen,
-  onStatus,
-  onArchive,
-  onPatch,
-  onOpen,
-  onMove,
-  handleProps,
-  dragging,
-  onDragHint,
-  refCb,
-}: {
+/** What a row can do. One object for the whole view (stable identity), so memoised rows skip re-rendering. */
+interface RowActions {
+  seen: (id: string) => void;
+  open: (key: string) => void;
+  patch: (task: Task, patch: TaskPatch) => void;
+  archive: (task: Task, archived: boolean) => void;
+  move: (task: Task, where: "top" | "bottom") => void;
+  dragHint: (task: Task, canEdit: boolean) => void;
+  rowRef: (id: string, el: HTMLDivElement | null) => void;
+  /** Teammates' live changes, by task id. */
+  fresh: FreshStore;
+}
+
+interface TaskRowProps {
   task: Task;
   selected: boolean;
-  fresh?: Fresh;
   showProject: boolean;
   /** Keys of the dependencies this task still waits on (null where this view doesn't have the task). */
   waitingKeys?: (string | null)[];
   sort: SortKey;
   href: string;
-  onSeen: () => void;
-  onStatus: (statusId: string) => void;
-  onArchive: (archived: boolean) => void;
-  onPatch: (patch: TaskPatch) => void;
-  onOpen: () => void;
-  onMove?: (where: "top" | "bottom") => void;
+  actions: RowActions;
   /** Manual sort: SortableList handle props. Spread on the row's link only if this person may move the task. */
   handleProps?: SortableHandleProps;
   /** Being dragged or lifted with the keyboard. */
   dragging?: boolean;
-  /** Someone tried to drag a row that can't be dragged here (wrong sort, or not theirs to move). */
-  onDragHint?: (canEdit: boolean) => void;
-  refCb: (el: HTMLDivElement | null) => void;
-}) {
-  const { statusById, memberById, projectById, me, isAdmin } = useOrg();
+  /** Explain a refused drag (wrong sort, or not theirs to move) when someone tries one on this row. */
+  dragHints?: boolean;
+  /** Offer "Move to top/bottom" in the row menu (Manual sort, more than one row in the group). */
+  movable?: boolean;
+}
+
+/** Shallow, except `waitingKeys`, which is rebuilt every render and compared by value. */
+function sameRowProps(a: TaskRowProps, b: TaskRowProps) {
+  for (const k of Object.keys(a) as (keyof TaskRowProps)[]) {
+    if (k === "waitingKeys") continue;
+    if (!Object.is(a[k], b[k])) return false;
+  }
+  if (Object.keys(a).length !== Object.keys(b).length) return false;
+  const wa = a.waitingKeys;
+  const wb = b.waitingKeys;
+  if (wa === wb) return true;
+  if (!wa || !wb || wa.length !== wb.length) return false;
+  return wa.every((k, i) => k === wb[i]);
+}
+
+/**
+ * One task row. Memoised (VEC-73): every row mounts a context menu, a status picker and a tooltip, so
+ * re-rendering a whole list per drag or live update was the main source of drag lag. It reads only the
+ * stable part of the org context for the same reason.
+ */
+const TaskRow = memo(function TaskRow({
+  task,
+  selected,
+  showProject,
+  waitingKeys,
+  sort,
+  href,
+  actions,
+  handleProps,
+  dragging,
+  dragHints,
+  movable,
+}: TaskRowProps) {
+  const { statusById, memberById, projectById, me, isAdmin } = useOrgBase();
+  const fresh = useSyncExternalStore(actions.fresh.subscribe, () => actions.fresh.get().get(task.id), () => undefined);
+  const onSeen = () => actions.seen(task.id);
+  const onArchive = (archived: boolean) => actions.archive(task, archived);
+  const onPatch = (patch: TaskPatch) => actions.patch(task, patch);
+  const onDragHint = dragHints ? (canEdit: boolean) => actions.dragHint(task, canEdit) : undefined;
+  const { rowRef } = actions;
+  const refCb = useCallback((el: HTMLDivElement | null) => rowRef(task.id, el), [rowRef, task.id]);
   const statusOptions = useStatusOptions();
   const access = taskAccess(task, me.id, isAdmin);
   const canEdit = access === "full";
@@ -681,7 +752,13 @@ function TaskRow({
   const hinted = useRef(false);
 
   return (
-    <TaskContextMenu task={task} onOpen={() => (onSeen(), onOpen())} onPatch={onPatch} onArchive={onArchive} onMove={onMove}>
+    <TaskContextMenu
+      task={task}
+      onOpen={() => (onSeen(), actions.open(task.key))}
+      onPatch={onPatch}
+      onArchive={onArchive}
+      onMove={movable ? (where) => actions.move(task, where) : undefined}
+    >
     <div
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
@@ -697,7 +774,7 @@ function TaskRow({
         label={`Status: ${status?.name ?? "none"}`}
         value={task.statusId}
         options={statusOptions}
-        onChange={onStatus}
+        onChange={(statusId) => onPatch({ statusId })}
         searchable={false}
       >
         <button className="relative z-10 -m-1 grid size-[26px] place-items-center rounded-full transition-transform enabled:hover:scale-110 enabled:active:scale-95 disabled:pointer-events-none">
@@ -805,7 +882,7 @@ function TaskRow({
     </div>
     </TaskContextMenu>
   );
-}
+}, sameRowProps);
 
 interface Fresh {
   actorId: string;
@@ -813,8 +890,28 @@ interface Fresh {
   at: number;
 }
 
+type FreshStore = ReturnType<typeof createFreshStore>;
+
+function createFreshStore() {
+  let map = new Map<string, Fresh>();
+  const listeners = new Set<() => void>();
+  return {
+    get: () => map,
+    update: (fn: (prev: Map<string, Fresh>) => Map<string, Fresh>) => {
+      const next = fn(map);
+      if (next === map) return;
+      map = next;
+      listeners.forEach((l) => l());
+    },
+    subscribe: (l: () => void) => {
+      listeners.add(l);
+      return () => void listeners.delete(l);
+    },
+  };
+}
+
 function FreshNote({ fresh }: { fresh: Fresh }) {
-  const { memberById } = useOrg();
+  const { memberById } = useOrgBase();
   const who = memberById.get(fresh.actorId);
   const [, tick] = useState(0);
   useEffect(() => {

@@ -80,6 +80,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
       setTask((t) => {
         if (!t) return t;
         const listed = t.dependents.some((d) => d.id === ref.id);
+        // Unrelated to this task: keep the same object, so the pane doesn't re-render for every edit in the org.
+        if (!dependsOnMe && !listed && !t.dependencies.some((d) => d.id === ref.id)) return t;
         const dependents = dependsOnMe ? (listed ? t.dependents.map((d) => (d.id === ref.id ? ref : d)) : [...t.dependents, ref]) : t.dependents.filter((d) => d.id !== ref.id);
         const dependencies = t.dependencies.map((d) => (d.id === ref.id ? ref : d));
         return { ...t, dependents, dependencies };

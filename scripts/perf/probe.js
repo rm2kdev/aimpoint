@@ -4,7 +4,8 @@
 // - frames: rAF deltas while recording
 // - longtasks / long animation frames (LoAF, with per-script forced style+layout time)
 // - pointermove handler time: window capture listener (start) to a window bubble listener added after the
-//   drag engine's own (end); React's synchronous re-render from useSyncExternalStore runs in between
+//   drag engine's own (end); React's synchronous re-render from useSyncExternalStore runs in between. rAF
+//   callbacks the handler requests (frame-coalesced hit testing) are timed and added to the same move
 // - React work: a minimal __REACT_DEVTOOLS_GLOBAL_HOOK__ that, in "count" mode, walks each commit and counts
 //   component fibers that actually rendered (PerformedWork flag), by component name
 // - getBoundingClientRect / getComputedStyle calls (count mode only, the wrapper costs a little)
@@ -139,6 +140,21 @@
   // Bubble phase on window runs after React's root listener, i.e. after the drag engine added its own
   // window pointermove listener, so this one is called after it on every move.
   addEventListener("pointerdown", () => addEventListener("pointermove", moveEnd));
+  // Work a pointermove defers to the next frame (the drag engine hit-tests once per rAF since VEC-73) still
+  // belongs to that move: time rAF callbacks requested inside a recorded handler and add them to its sample.
+  const raf = window.requestAnimationFrame.bind(window);
+  window.requestAnimationFrame = (cb) => {
+    if (!P.moveStart) return raf(cb);
+    const idx = P.moveMs.length; // moveEnd pushes this move's sample at this index
+    return raf((ts) => {
+      const t = performance.now();
+      try {
+        cb(ts);
+      } finally {
+        if (P.moveMs[idx] !== undefined) P.moveMs[idx] += performance.now() - t;
+      }
+    });
+  };
   addEventListener("pointerup", () => removeEventListener("pointermove", moveEnd));
   addEventListener("keydown", (e) => e.key === "Escape" && removeEventListener("pointermove", moveEnd), true);
 

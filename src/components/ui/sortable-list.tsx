@@ -3,12 +3,12 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import {
-  DragProvider, useDragState, useDragStore,
+  DragProvider, useDragSelector, useDragStore,
   type DragItem, type ListRegistration, type MoveDetail, type ReorderDetail,
 } from "@/components/ui/drag-provider"
 
 export {
-  DragProvider, useDropTarget, useDragState,
+  DragProvider, useDropTarget, useDragState, useDragSelector,
   type DragItem, type DragSnapshot, type DropTargetOptions, type MoveDetail, type ReorderDetail,
 } from "@/components/ui/drag-provider"
 
@@ -68,6 +68,13 @@ export {
  *   order: update `items` (optimistically) in the callback.
  * - `handleProps` must be spread on one focusable element per row: the row's link for
  *   whole-row dragging, or a grip button together with `handle` to drag from the grip only.
+ *
+ * Performance (VEC-73): the list subscribes only to the parts of the drag that change its own
+ * markup (drag starts/ends, the pointer enters/leaves it, which row is lifted), and each row is
+ * a memoised component, so a pointer move that only shifts the insertion line re-renders the
+ * line and nothing else. `renderItem` is called again only for rows whose item, index or drag
+ * state changed, or when `renderItem` itself changes identity; keep it (and what it closes
+ * over) stable when the rows are expensive, and memoise the row component it returns.
  */
 
 /** Spread on the row's focusable element (its link, or a grip button). */
@@ -129,50 +136,60 @@ export function SortableList<T>(props: SortableListProps<T>) {
   return <SortableListInner {...props} />
 }
 
-function SortableListInner<T>({
-  items,
-  getId,
-  renderItem,
-  onReorder,
-  getLabel,
-  getData,
-  listId: listIdProp,
-  group: groupProp,
-  onMove,
-  accepts,
-  emptyLabel = "Drop here",
-  handle = false,
-  disabled = false,
-  className,
-  itemClassName,
-  "aria-label": ariaLabel,
-}: SortableListProps<T>) {
+type RowHandlers = {
+  pointerDown: (e: React.PointerEvent<HTMLLIElement>, id: string) => void
+  keyDown: (e: React.KeyboardEvent<HTMLLIElement>, id: string, index: number) => void
+  blur: (e: React.FocusEvent<HTMLLIElement>, id: string) => void
+}
+
+function SortableListInner<T>(props: SortableListProps<T>) {
+  const {
+    items,
+    getId,
+    renderItem,
+    listId: listIdProp,
+    group: groupProp,
+    onMove,
+    accepts,
+    emptyLabel = "Drop here",
+    disabled = false,
+    className,
+    itemClassName,
+    "aria-label": ariaLabel,
+  } = props
   const store = useDragStore()!
   const uid = React.useId()
   const listId = listIdProp ?? uid
   const group = groupProp ?? `list:${listId}`
   const instructionsId = `${uid}-instructions`
   const listRef = React.useRef<HTMLUListElement>(null)
-  const drag = useDragState()
 
-  const reg = (): ListRegistration => ({
-    listId,
-    group,
-    label: ariaLabel ?? "the list",
-    disabled,
-    el: listRef.current,
-    ids: () => items.map(getId),
-    itemLabel: (id) => {
-      const item = items.find((it) => getId(it) === id)
-      return item !== undefined && getLabel ? getLabel(item) : undefined
-    },
-    onReorder,
-    onMove,
-    accepts,
-  })
-  const regRef = React.useRef<ListRegistration | null>(null)
+  // Narrow subscriptions: each re-renders the list only when its own value changes (VEC-73).
+  const inGroup = useDragSelector((d) => !!d && d.item.group === group)
+  const pointerInGroup = useDragSelector((d) => !!d && d.item.group === group && d.mode === "pointer")
+  const draggingId = useDragSelector((d) => (d && d.item.listId === listId ? d.item.id : null))
+  const keyboard = useDragSelector((d) => d?.mode === "keyboard")
+  const isOver = useDragSelector((d) => d?.over?.kind === "list" && d.over.listId === listId)
+  const accepting = useDragSelector((d) => !!d && (!accepts || accepts(d.item)))
+  const showEmpty = inGroup && items.length === 0 && !disabled && !!onMove && accepting
+
+  // The latest props, for the registration and the row event handlers (which keep one identity).
+  const latest = React.useRef({ props, listId, group })
   React.useLayoutEffect(() => {
-    regRef.current = reg()
+    latest.current = { props, listId, group }
+  })
+
+  const regRef = React.useRef<ListRegistration | null>(null)
+  const layoutSig = React.useRef("")
+  React.useLayoutEffect(() => {
+    regRef.current = registration(latest.current.props, listId, group, listRef.current)
+    // Rows added, moved or removed, or the drop zone shown: cached row positions are stale. A re-render that
+    // changed neither (a teammate edited a row's fields) keeps them, so live edits cost no layout reads.
+    const sig = `${showEmpty}|${items.map(getId).join(",")}`
+    if (sig !== layoutSig.current) {
+      layoutSig.current = sig
+      store.invalidate()
+    }
   })
   React.useLayoutEffect(
     () => store.registerList(listId, regRef as { readonly current: ListRegistration }),
@@ -184,56 +201,65 @@ function SortableListInner<T>({
     store.takeFocus(listId, listRef.current)
   }, [store, listId, items])
 
-  const itemFor = (id: string): DragItem => {
-    const item = items.find((it) => getId(it) === id)
+  // Row event handlers with a stable identity (they read the list's latest props), so memoised rows stay put.
+  const handlers = React.useMemo<RowHandlers>(() => {
+    const find = (id: string) => {
+      const { items, getId } = latest.current.props
+      return items.find((it) => getId(it) === id)
+    }
+    const itemFor = (id: string): DragItem => {
+      const { props: p, listId, group } = latest.current
+      const item = find(id)
+      return {
+        id,
+        listId,
+        group,
+        label: item !== undefined && p.getLabel ? p.getLabel(item) : id,
+        data: item !== undefined && p.getData ? p.getData(item) : undefined,
+      }
+    }
     return {
-      id,
-      listId,
-      group,
-      label: item !== undefined && getLabel ? getLabel(item) : id,
-      data: item !== undefined && getData ? getData(item) : undefined,
+      pointerDown(e, id) {
+        const { disabled, handle } = latest.current.props
+        if (disabled || store.get()) return
+        if (e.pointerType === "mouse" && e.button !== 0) return
+        const target = e.target as Element
+        if (target.closest(IGNORE)) return
+        if (handle && !target.closest("[data-sortable-handle]")) return
+        if (target.closest("li[data-sortable-id]") !== e.currentTarget) return // nested list
+        store.beginPointer(e, itemFor(id), e.currentTarget)
+      },
+      keyDown(e, id, index) {
+        const p = latest.current.props
+        const reg = regRef.current
+        if (p.disabled || !reg) return
+        const target = e.target as HTMLElement
+        if (!store.get()) {
+          if (!target.matches("[data-sortable-handle]")) return
+          if (target.closest("li[data-sortable-id]") !== e.currentTarget) return
+        }
+        const item = find(id)
+        const data = item !== undefined && p.getData ? p.getData(item) : undefined
+        if (store.keyDown(e.key, e.repeat, reg, id, index, data)) {
+          e.preventDefault()
+          e.stopPropagation()
+        }
+      },
+      blur(e, id) {
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+        store.blur(latest.current.listId, id)
+      },
     }
-  }
+  }, [store])
 
-  const onPointerDown = (e: React.PointerEvent<HTMLLIElement>, id: string) => {
-    if (disabled || store.get()) return
-    if (e.pointerType === "mouse" && e.button !== 0) return
-    const target = e.target as Element
-    if (target.closest(IGNORE)) return
-    if (handle && !target.closest("[data-sortable-handle]")) return
-    if (target.closest("li[data-sortable-id]") !== e.currentTarget) return // nested list
-    store.beginPointer(e, itemFor(id), e.currentTarget)
-  }
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLLIElement>, id: string, index: number) => {
-    if (disabled || !regRef.current) return
-    const target = e.target as HTMLElement
-    if (!store.get()) {
-      if (!target.matches("[data-sortable-handle]")) return
-      if (target.closest("li[data-sortable-id]") !== e.currentTarget) return
-    }
-    const item = items.find((it) => getId(it) === id)
-    const data = item !== undefined && getData ? getData(item) : undefined
-    if (store.keyDown(e.key, e.repeat, regRef.current, id, index, data)) {
-      e.preventDefault()
-      e.stopPropagation()
-    }
-  }
-
-  const onBlur = (e: React.FocusEvent<HTMLLIElement>, id: string) => {
-    if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-    store.blur(listId, id)
-  }
-
-  const handleProps: SortableHandleProps = {
-    "data-sortable-handle": "",
-    "aria-roledescription": "sortable",
-    "aria-describedby": instructionsId,
-  }
-
-  const inGroup = !!drag && drag.item.group === group
-  const over = drag?.over?.kind === "list" && drag.over.listId === listId ? drag.over : null
-  const showEmpty = inGroup && items.length === 0 && !disabled && !!onMove && (!accepts || accepts(drag.item))
+  const handleProps = React.useMemo<SortableHandleProps>(
+    () => ({
+      "data-sortable-handle": "",
+      "aria-roledescription": "sortable",
+      "aria-describedby": instructionsId,
+    }),
+    [instructionsId],
+  )
 
   return (
     <>
@@ -243,37 +269,29 @@ function SortableListInner<T>({
         aria-label={ariaLabel}
         data-sortable-list=""
         data-list-id={listId}
-        data-dragging={drag && drag.item.listId === listId ? "" : undefined}
-        data-drop-over={over ? "" : undefined}
-        className={cn("relative", className)}
+        data-dragging={draggingId !== null ? "" : undefined}
+        data-drop-over={isOver ? "" : undefined}
+        // Rows under the pointer shouldn't hover-wash or show a link cursor mid-drag: one rule on the list
+        // instead of a class on every row.
+        className={cn("relative", pointerInGroup && "[&>li]:pointer-events-none", className)}
         onDragStart={disabled ? undefined : (e) => e.preventDefault()}
       >
         {items.map((item, index) => {
           const id = getId(item)
-          const isDragging = drag?.item.id === id && drag.item.listId === listId
+          const isDragging = draggingId === id
           return (
-            <li
+            <SortableRow
               key={id}
-              data-sortable-id={id}
-              data-dragging={isDragging ? "" : undefined}
-              className={cn(
-                "transition-opacity duration-150 motion-reduce:transition-none",
-                isDragging && "opacity-45",
-                // Rows under the pointer shouldn't hover-wash or show a link cursor mid-drag.
-                inGroup && drag.mode === "pointer" && "pointer-events-none",
-                itemClassName,
-              )}
-              onPointerDown={(e) => onPointerDown(e, id)}
-              onKeyDown={(e) => onKeyDown(e, id, index)}
-              onBlur={(e) => onBlur(e, id)}
-            >
-              {renderItem(item, {
-                index,
-                isDragging,
-                isKeyboardDragging: isDragging && drag?.mode === "keyboard",
-                handleProps,
-              })}
-            </li>
+              id={id}
+              item={item}
+              index={index}
+              isDragging={isDragging}
+              isKeyboardDragging={isDragging && keyboard}
+              handleProps={handleProps}
+              renderItem={renderItem}
+              handlers={handlers}
+              className={itemClassName}
+            />
           )
         })}
         {showEmpty && (
@@ -283,21 +301,13 @@ function SortableListInner<T>({
             data-sortable-empty=""
             className={cn(
               "flex h-9 items-center justify-center rounded-lg border border-dashed text-[12px] text-faint transition-colors duration-100 motion-reduce:transition-none",
-              over ? "border-brand bg-brand/5 text-brand" : "border-input",
+              isOver ? "border-brand bg-brand/5 text-brand" : "border-input",
             )}
           >
             {emptyLabel}
           </li>
         )}
-        {over && over.lineTop !== null && (
-          <li
-            aria-hidden
-            role="presentation"
-            data-sortable-indicator=""
-            className="pointer-events-none absolute inset-x-0 h-0.5 -translate-y-1/2 rounded-full bg-brand transition-[top] duration-100 ease-out motion-reduce:transition-none"
-            style={{ top: over.lineTop }}
-          />
-        )}
+        <InsertionLine listId={listId} />
       </ul>
       <span id={instructionsId} className="sr-only">
         {group.startsWith("list:")
@@ -305,5 +315,81 @@ function SortableListInner<T>({
           : "To move, press Space to pick up, use the up and down arrow keys to move within a list and left and right to move to another list, then Space or Enter to drop, or Escape to cancel."}
       </span>
     </>
+  )
+}
+
+function registration<T>(p: SortableListProps<T>, listId: string, group: string, el: HTMLUListElement | null): ListRegistration {
+  return {
+    listId,
+    group,
+    label: p["aria-label"] ?? "the list",
+    disabled: !!p.disabled,
+    el,
+    ids: () => p.items.map(p.getId),
+    itemLabel: (id) => {
+      const item = p.items.find((it) => p.getId(it) === id)
+      return item !== undefined && p.getLabel ? p.getLabel(item) : undefined
+    },
+    onReorder: p.onReorder,
+    onMove: p.onMove,
+    accepts: p.accepts,
+  }
+}
+
+type SortableRowProps<T> = {
+  id: string
+  item: T
+  index: number
+  isDragging: boolean
+  isKeyboardDragging: boolean
+  handleProps: SortableHandleProps
+  renderItem: (item: T, state: SortableItemState) => React.ReactNode
+  handlers: RowHandlers
+  className?: string
+}
+
+/** One row. Memoised: a drag re-renders only the lifted row, not its siblings. */
+const SortableRow = React.memo(function SortableRow<T>({
+  id,
+  item,
+  index,
+  isDragging,
+  isKeyboardDragging,
+  handleProps,
+  renderItem,
+  handlers,
+  className,
+}: SortableRowProps<T>) {
+  return (
+    <li
+      data-sortable-id={id}
+      data-dragging={isDragging ? "" : undefined}
+      className={cn(
+        "transition-opacity duration-150 motion-reduce:transition-none",
+        isDragging && "opacity-45",
+        className,
+      )}
+      onPointerDown={(e) => handlers.pointerDown(e, id)}
+      onKeyDown={(e) => handlers.keyDown(e, id, index)}
+      onBlur={(e) => handlers.blur(e, id)}
+    >
+      {renderItem(item, { index, isDragging, isKeyboardDragging, handleProps })}
+    </li>
+  )
+}) as <T>(props: SortableRowProps<T>) => React.ReactElement
+
+/** The 2px insertion line. Its own subscriber: a gap change re-renders this element only. */
+function InsertionLine({ listId }: { listId: string }) {
+  const lineTop = useDragSelector((d) => (d?.over?.kind === "list" && d.over.listId === listId ? d.over.lineTop : null))
+  if (lineTop === null) return null
+  return (
+    <li
+      aria-hidden
+      role="presentation"
+      data-sortable-indicator=""
+      // Positioned with a transform (composited) rather than `top`, so gliding between gaps never relayouts the list.
+      className="pointer-events-none absolute inset-x-0 top-0 h-0.5 rounded-full bg-brand transition-transform duration-100 ease-out motion-reduce:transition-none"
+      style={{ transform: `translateY(calc(${lineTop}px - 50%))` }}
+    />
   )
 }
