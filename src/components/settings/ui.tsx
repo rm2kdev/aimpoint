@@ -7,9 +7,10 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
-import { StatusRing } from "@/components/bits";
+import { TaskStatusRing } from "@/components/task-status-ring";
 import type { Task } from "@/lib/types";
 import { MobileNavButton } from "@/components/app-shell";
+import { orgPath, taskPath } from "@/lib/paths";
 
 /* ---------------- shell ---------------- */
 
@@ -19,13 +20,13 @@ export const SETTINGS_TABS = [
   ["statuses", "Statuses"],
   ["members", "Members"],
   ["bots", "Bots"],
+  ["roles", "Bot roles"],
 ] as const;
 
 /** Header + tab bar shared by every settings page. Tabs are real routes, so detail pages keep their tab lit. */
 export function SettingsFrame({ children }: { children: React.ReactNode }) {
   const { org, isAdmin } = useOrg();
   const pathname = usePathname();
-  const base = `/${org.slug}/settings`;
   return (
     <section className="flex min-w-0 flex-1 flex-col" aria-label="Settings">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
@@ -33,7 +34,7 @@ export function SettingsFrame({ children }: { children: React.ReactNode }) {
         <h1 className="text-[15px] font-semibold tracking-[-0.01em]">Settings</h1>
         <nav className="ml-4 flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Settings sections">
           {SETTINGS_TABS.map(([t, label]) => {
-            const href = `${base}/${t}`;
+            const href = orgPath(org.slug, "settings", t);
             const active = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
@@ -167,19 +168,20 @@ export function DetailHeader({
 }
 
 /** Open tasks assigned to a person or bot. */
-export function WorkList({ tasks, emptyText }: { tasks: Task[]; emptyText: string }) {
-  const { org, statuses, statusById } = useOrg();
+export function WorkList({ tasks, emptyText, note }: { tasks: Task[]; emptyText: string; note?: (t: Task) => string | undefined }) {
+  const { org } = useOrg();
   if (!tasks.length) return <p className="text-[13px] text-muted-foreground">{emptyText}</p>;
   return (
     <ul className="grid gap-1">
       {tasks.map((t) => (
         <li key={t.id}>
           <Link
-            href={`/${org.slug}/${t.archivedAt ? "archived" : "all"}?task=${t.key}`}
+            href={taskPath(org.slug, t.key, t.archivedAt ? "archived" : "all")}
             className="-mx-3 flex h-9 items-center gap-3 rounded-[9px] px-3 text-[13.5px] transition-colors hover:bg-accent"
           >
-            <StatusRing status={statusById.get(t.statusId)} statuses={statuses} size={16} />
+            <TaskStatusRing task={t} size={16} />
             <span className="truncate">{t.title}</span>
+            {note?.(t) && <span className="shrink-0 rounded-[4px] bg-chip px-1.5 py-px text-[11.5px] font-medium text-muted-foreground">{note(t)}</span>}
             <span className="tabular ml-auto font-mono text-[12px] text-faint">{t.key}</span>
           </Link>
         </li>

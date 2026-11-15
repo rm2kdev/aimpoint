@@ -22,23 +22,53 @@ function arc(fraction: number, r: number, c: number) {
   return `M ${c} ${c - r} A ${r} ${r} 0 ${f > 0.5 ? 1 : 0} 1 ${x.toFixed(3)} ${y.toFixed(3)}`;
 }
 
+/**
+ * "Working" overlay: a short arc orbiting just outside the ring (r 9.3, clear of the
+ * 8.3 outer edge of the track/arc and inside the 20-unit viewBox), so the status colour
+ * and progress arc stay readable and the icon never changes size. Spins via
+ * `.status-ring-working` in globals.css; reduced motion swaps it for a static faint halo.
+ */
+function WorkingOrbit({ color }: { color: string }) {
+  return (
+    <g className="status-ring-working">
+      <circle cx="10" cy="10" r="9.3" fill="none" stroke={color} strokeWidth="1.3" strokeLinecap="round" strokeDasharray="14.6 58.4" />
+    </g>
+  );
+}
+
+export const STATUS_RING_WORKING_LABEL = "A bot is working on this";
+
 export function StatusRing({
   status,
   statuses,
   size = 18,
   className,
+  working = false,
+  workingLabel = STATUS_RING_WORKING_LABEL,
 }: {
   status: Status | undefined;
   statuses: Status[];
   size?: number;
   className?: string;
+  /** Show the orbiting "a bot is working on this" indicator. */
+  working?: boolean;
+  workingLabel?: string;
 }) {
   const color = status?.color ?? "var(--faint)";
   const cat = status?.category ?? "unstarted";
-  const common = { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), "aria-hidden": true };
+  const common = working
+    ? { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), role: "img", "aria-label": workingLabel }
+    : { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), "aria-hidden": true };
+  const extra = working ? (
+    <>
+      <title>{workingLabel}</title>
+      <WorkingOrbit color={color} />
+    </>
+  ) : null;
   if (cat === "done") {
     return (
       <svg {...common}>
+        {extra}
         <circle cx="10" cy="10" r="8.5" fill={color} />
         <path d="m6.4 10.3 2.5 2.4 4.7-4.9" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -47,21 +77,26 @@ export function StatusRing({
   if (cat === "cancelled") {
     return (
       <svg {...common}>
+        {extra}
         <circle cx="10" cy="10" r="8.5" fill={color} opacity="0.9" />
         <path d="m7.2 7.2 5.6 5.6m0-5.6-5.6 5.6" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" />
       </svg>
     );
   }
-  if (cat === "backlog") {
+  if (cat === "backlog" || cat === "triage") {
+    // Dashed = not yet. Triage adds a centre dot: not yet, and waiting to be broken down.
     return (
       <svg {...common}>
+        {extra}
         <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" strokeDasharray="2.6 2.3" />
+        {cat === "triage" && <circle cx="10" cy="10" r="2.6" fill={color} />}
       </svg>
     );
   }
   const p = status ? ringProgress(status, statuses) : 0;
   return (
     <svg {...common}>
+      {extra}
       <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />
       <path d={arc(p, 7.5, 10)} fill="none" stroke={color} strokeWidth="3.4" style={{ transition: "d 300ms cubic-bezier(.2,.8,.2,1)" }} />
     </svg>

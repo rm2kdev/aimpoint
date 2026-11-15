@@ -193,7 +193,7 @@ Vector is a list you can leave open all day. A warm off-white sidebar sits besid
 
 The precision comes from Vercel: Geist Sans for UI, Geist Mono with tabular numerals for task keys and counts, 1px borders, a near-black primary button, and a true #0a0a0a dark mode rather than a grey one. The calm comes from Things 3: generous row height, one list per view, a detail pane that slides in beside the list rather than replacing it, and no visible grid lines between rows. Density is moderate; the list never turns into a table.
 
-Motion is small and causal. Rows glide to their new position when their status changes (FLIP, 380ms), the status ring's arc animates as it fills, and live highlights fade rather than snap. Nothing moves on its own. Under `prefers-reduced-motion` every transition collapses to near-zero.
+Motion is small and causal. Rows glide to their new position when their status changes (FLIP, 380ms), the status ring's arc animates as it fills, and live highlights fade rather than snap. Nothing moves on its own, with one exception: a status ring spins while a bot is working on the task. Under `prefers-reduced-motion` every transition collapses to near-zero.
 
 **Key Characteristics:**
 - Two-tone canvas: warm sidebar paper beside pure white work area; #0a0a0a / #111111 in dark.
@@ -345,6 +345,7 @@ An 18px SVG ring (14–20px depending on context) in the status's own colour.
 - **Unstarted and started:** a 1.6px track with a heavier 3.4px arc. The arc fills to (index + 1) / (active statuses + 1) of the way around, so progress reads across the org's own ordered workflow. The arc animates over 300ms.
 - **Done:** a filled disc with a white check.
 - **Cancelled:** a filled disc with a white cross.
+- **Working (any category, `working` prop):** a short 1.3px arc in the status colour orbits just outside the ring (r 9.3 of the 20-unit box) once every 1.1s, so the ring, its colour and its progress arc stay untouched underneath and the icon keeps its size. Labelled "A bot is working on this". Under `prefers-reduced-motion` the orbit stops and becomes a static faint full halo.
 
 The same ring heads every status group, every status picker and the detail pane title. The empty state reuses it at 44px, with a faint track and a blue quarter arc.
 

@@ -46,6 +46,7 @@ await db.collection("memberships").insertMany(
 
 const st = [
   ["Backlog", "#a3a3a3", "backlog"],
+  ["Triage", "#d6409f", "triage"],
   ["Todo", "#737373", "unstarted"],
   ["In Progress", "#e5a00d", "started"],
   ["In Review", "#8b5cf6", "started"],

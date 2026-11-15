@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, LinkIcon, LockIcon, MoreHorizontalIcon, Trash2Icon, XIcon } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { taskAccess } from "@/lib/access";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
-import { MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
+import { MemberAvatar, PriorityIcon, ProjectDot, UnassignedAvatar } from "@/components/bits";
+import { TaskStatusRing } from "@/components/task-status-ring";
 import {
   Picker,
   PRIORITY_OPTIONS,
@@ -17,6 +21,8 @@ import {
 import { RichEditor } from "@/components/rich-editor";
 import { CommentBody, MentionComposer } from "@/components/mentions";
 import { DueBadge, DuePicker } from "@/components/due-date";
+import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
+import { useShell } from "@/components/app-shell";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,13 +44,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
-import type { FeedItem, Priority, Task, TaskDetail } from "@/lib/types";
+import { isClosedCategory, type FeedItem, type Priority, type Task, type TaskDetail, type TaskRef } from "@/lib/types";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
 
 export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClose: () => void; onTask: (t: Task) => void }) {
-  const { org, me, isAdmin, statuses, statusById, memberById, projectById } = useOrg();
+  const { org, me, isAdmin, statusById, memberById, projectById } = useOrg();
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [error, setError] = useState<string>();
@@ -67,8 +73,25 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
 
   useOrgEvents((e) => {
     if (!task) return;
-    if (e.type === "task.upsert" && e.task.id === task.id) {
+    if (e.type === "task.upsert" && e.task.id !== task.id) {
+      // A dependency or dependent changed (status, title, key), or a task started or stopped depending on this one.
+      const ref = toRef(e.task);
+      const dependsOnMe = e.task.dependsOn.includes(task.id);
+      setTask((t) => {
+        if (!t) return t;
+        const listed = t.dependents.some((d) => d.id === ref.id);
+        const dependents = dependsOnMe ? (listed ? t.dependents.map((d) => (d.id === ref.id ? ref : d)) : [...t.dependents, ref]) : t.dependents.filter((d) => d.id !== ref.id);
+        const dependencies = t.dependencies.map((d) => (d.id === ref.id ? ref : d));
+        return { ...t, dependents, dependencies };
+      });
+    } else if (e.type === "task.upsert" && e.task.id === task.id) {
       setTask((t) => (t ? { ...t, ...e.task } : t));
+      // Someone else changed what this waits on: fetch the refs for the new list.
+      if (e.task.dependsOn.join() !== task.dependencies.map((d) => d.id).join()) {
+        getTaskDetail(org.slug, e.task.key).then((r) => {
+          if (r.ok) setTask((t) => (t ? { ...t, dependencies: r.data!.task.dependencies, dependents: r.data!.task.dependents } : t));
+        });
+      }
       if (e.descriptionChanged && e.actorId !== me.id) {
         getTaskDetail(org.slug, e.task.key).then((r) => {
           if (r.ok) {
@@ -89,6 +112,24 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     const before = task;
     setTask({ ...task, ...(p as Partial<TaskDetail>) });
     const r = await updateTask(org.slug, task.id, p);
+    if (!r.ok) {
+      setTask(before);
+      toast.error(r.error);
+      return;
+    }
+    if (r.data) {
+      onTask(r.data);
+      setTask((t) => (t ? { ...t, ...r.data } : t));
+    }
+  };
+
+  /** Replace the dependency list (optimistic). */
+  const setDependencies = async (refs: TaskRef[]) => {
+    if (!task) return;
+    const before = task;
+    const dependsOn = refs.map((d) => d.id);
+    setTask({ ...task, dependencies: refs, dependsOn });
+    const r = await updateTask(org.slug, task.id, { dependsOn });
     if (!r.ok) {
       setTask(before);
       toast.error(r.error);
@@ -127,7 +168,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
 
   const statusOptions = useStatusOptions();
   const assigneeOptions = useAssigneeOptions();
-  const projectOptions = useProjectOptions();
+  const projectOptions = useProjectOptions(task?.projectId);
+  const { newTask } = useShell();
 
   const shell = (children: React.ReactNode) => (
     <aside
@@ -171,8 +213,12 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const status = statusById.get(task.statusId);
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
   const project = projectById.get(task.projectId);
-  const canEdit = isAdmin || task.createdBy === me.id;
+  const access = taskAccess(task, me.id, isAdmin);
+  const canEdit = access === "full";
+  const canWork = access !== "comment";
   const creator = memberById.get(task.createdBy);
+  const closed = status?.category === "done" || status?.category === "cancelled";
+  const waiting = task.dependencies.filter((d) => !isClosedCategory(statusById.get(d.statusId)?.category));
 
   return shell(
     <>
@@ -211,9 +257,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-6 pt-5 pb-10">
           <div className="flex items-start gap-3">
-            <Picker disabled={!canEdit} label={`Status: ${status?.name}`} value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
+            <Picker disabled={!canWork} label={`Status: ${status?.name}`} value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
               <button className="-m-1 mt-0.5 grid size-7 shrink-0 place-items-center rounded-full transition-transform enabled:hover:scale-110">
-                <StatusRing status={status} statuses={statuses} size={20} />
+                <TaskStatusRing task={task} size={20} />
               </button>
             </Picker>
             <TitleField value={task.title} readOnly={!canEdit} onSave={(title) => patch({ title })} />
@@ -234,19 +280,45 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               )}
             </div>
           )}
+          {task.stalled && !closed && !task.archivedAt && (
+            <p role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+              <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
+              <span>
+                <span className="font-medium">Stalled, needs attention.</span>{" "}
+                {stalledText(task.stalled, task.stalled.botId ? (memberById.get(task.stalled.botId)?.name ?? null) : null)}
+              </span>
+            </p>
+          )}
+          {waiting.length > 0 && !closed && !task.archivedAt && (
+            <p className="mt-3 flex items-start gap-2 rounded-lg border border-live-border bg-live px-3 py-2 text-[12.5px] text-foreground/80">
+              <HourglassIcon className="mt-px size-3.5 shrink-0" />
+              <span>
+                Waiting on {waiting.map((d) => d.key).join(", ")}.{" "}
+                {assignee
+                  ? assignee.id === me.id
+                    ? "You'll be notified when it's ready to work on."
+                    : assignee.kind === "bot"
+                      ? `${assignee.name} gets it once ${waiting.length === 1 ? "that's" : "they're"} done.`
+                      : `${assignee.name} will be notified when it's ready.`
+                  : `Whoever it's assigned to hears about it once ${waiting.length === 1 ? "that's" : "they're"} done.`}
+              </span>
+            </p>
+          )}
           {!canEdit && (
             <p className="mt-3 flex items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground">
               <LockIcon className="size-3.5 shrink-0" />
-              Only {creator?.name ?? "the creator"} or an admin can edit this task. You can still comment.
+              {canWork
+                ? `You're the assignee, so you can move it and change its details. Only ${creator?.name ?? "the creator"} or an admin can edit the title and description.`
+                : `Only ${creator?.name ?? "the creator"}, the assignee or an admin can change this task. You can still comment.`}
             </p>
           )}
 
           <dl className="mt-5 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[13px]">
             <dt className="text-faint">Status</dt>
             <dd>
-              <Picker disabled={!canEdit} label="Status" value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
+              <Picker disabled={!canWork} label="Status" value={task.statusId} options={statusOptions} onChange={(statusId) => patch({ statusId })} searchable={false}>
                 <button className={propBtn}>
-                  <StatusRing status={status} statuses={statuses} size={14} />
+                  <TaskStatusRing task={task} size={14} />
                   {status?.name ?? "No status"}
                 </button>
               </Picker>
@@ -254,7 +326,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             <dt className="text-faint">Assignee</dt>
             <dd>
               <Picker
-                disabled={!canEdit}
+                disabled={!canWork}
                 label="Assignee"
                 value={task.assigneeId ?? "none"}
                 options={assigneeOptions}
@@ -269,7 +341,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
             <dt className="text-faint">Priority</dt>
             <dd>
-              <Picker disabled={!canEdit} label="Priority" value={`${task.priority}`} options={PRIORITY_OPTIONS} onChange={(v) => patch({ priority: Number(v) as Priority })} searchable={false}>
+              <Picker disabled={!canWork} label="Priority" value={`${task.priority}`} options={PRIORITY_OPTIONS} onChange={(v) => patch({ priority: Number(v) as Priority })} searchable={false}>
                 <button className={propBtn}>
                   <PriorityIcon priority={task.priority} />
                   <span className={cn(!task.priority && "text-muted-foreground")}>{PRIORITY_LABELS[task.priority]}</span>
@@ -278,7 +350,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
             <dt className="text-faint">Type</dt>
             <dd>
-              <Picker disabled={!canEdit} label="Type" value={task.type} options={TYPE_OPTIONS} onChange={(type) => patch({ type })} searchable={false}>
+              <Picker disabled={!canWork} label="Type" value={task.type} options={TYPE_OPTIONS} onChange={(type) => patch({ type })} searchable={false}>
                 <button className={propBtn}>
                   <span className={cn("size-2 rounded-[2px]", task.type === "issue" ? "bg-[#e5484d]" : "bg-[#30a46c]")} />
                   {task.type === "issue" ? "Issue" : "Feature request"}
@@ -296,14 +368,14 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
             <dt className="text-faint">Due date</dt>
             <dd>
-              <DuePicker disabled={!canEdit} value={task.dueDate} onChange={(dueDate) => patch({ dueDate })}>
+              <DuePicker disabled={!canWork} value={task.dueDate} onChange={(dueDate) => patch({ dueDate })}>
                 <button className={propBtn} aria-label={task.dueDate ? `Due ${formatDue(task.dueDate, true)}` : "Set due date"}>
                   {task.dueDate ? (
                     <DueBadge due={task.dueDate} long closed={status?.category === "done" || status?.category === "cancelled"} className="text-[13px]" />
                   ) : (
                     <>
                       <CalendarIcon className="size-3.5 text-faint" />
-                      <span className="text-muted-foreground">{canEdit ? "Set due date" : "None"}</span>
+                      <span className="text-muted-foreground">{canWork ? "Set due date" : "None"}</span>
                     </>
                   )}
                 </button>
@@ -329,6 +401,13 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               </time>
             </dd>
           </dl>
+
+          <Dependencies
+            task={task}
+            canEdit={canEdit}
+            onChange={setDependencies}
+            onNewDependent={() => newTask({ projectId: task.projectId, dependsOn: [toRef(task)] })}
+          />
 
           <div className="mt-6 border-t border-border pt-5">
             <RichEditor
@@ -389,6 +468,105 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
         </AlertDialogContent>
       </AlertDialog>
     </>,
+  );
+}
+
+/** "Depends on" (editable by the creator or an admin) and "Blocks" (read-only: edit it from the other task). */
+function Dependencies({
+  task,
+  canEdit,
+  onChange,
+  onNewDependent,
+}: {
+  task: TaskDetail;
+  canEdit: boolean;
+  onChange: (refs: TaskRef[]) => void;
+  onNewDependent: () => void;
+}) {
+  const hasAny = task.dependencies.length > 0 || task.dependents.length > 0;
+  if (!hasAny && !canEdit) return null;
+  return (
+    <section className="mt-5 border-t border-border pt-4" aria-label="Dependencies">
+      <div className="flex h-7 items-center">
+        <h3 className="text-[12.5px] font-semibold">Depends on</h3>
+        {canEdit && (
+          <TaskSearchPicker exclude={[task.id, ...task.dependencies.map((d) => d.id)]} onPick={(t) => onChange([...task.dependencies, toRef(t)])}>
+            <button className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+              <PlusIcon className="size-3.5" /> Add
+            </button>
+          </TaskSearchPicker>
+        )}
+      </div>
+      {task.dependencies.length ? (
+        <ul className="mt-1 flex flex-col">
+          {task.dependencies.map((d) => (
+            <RefRow key={d.id} refTask={d} onRemove={canEdit ? () => onChange(task.dependencies.filter((x) => x.id !== d.id)) : undefined} />
+          ))}
+        </ul>
+      ) : (
+        <p className="py-1 text-[12.5px] text-faint">Nothing. It&rsquo;s ready to work on whenever.</p>
+      )}
+
+      {(task.dependents.length > 0 || canEdit) && (
+        <>
+          <div className="mt-3 flex h-7 items-center">
+            <h3 className="text-[12.5px] font-semibold">Blocks</h3>
+            <button
+              onClick={onNewDependent}
+              className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Create a task that starts once this one is done"
+            >
+              <PlusIcon className="size-3.5" /> Next task
+            </button>
+          </div>
+          {task.dependents.length ? (
+            <ul className="mt-1 flex flex-col">
+              {task.dependents.map((d) => (
+                <RefRow key={d.id} refTask={d} />
+              ))}
+            </ul>
+          ) : (
+            <p className="py-1 text-[12.5px] text-faint">No task waits for this one.</p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function RefRow({ refTask, onRemove }: { refTask: TaskRef; onRemove?: () => void }) {
+  const { statusById, memberById } = useOrg();
+  const status = statusById.get(refTask.statusId);
+  const assignee = refTask.assigneeId ? memberById.get(refTask.assigneeId) : undefined;
+  const done = status?.category === "done";
+  const pathname = usePathname();
+  return (
+    <li className="group/ref -mx-2 flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] hover:bg-accent">
+      <TaskStatusRing task={refTask} size={14} />
+      <Link
+        href={`${pathname}?task=${encodeURIComponent(refTask.key)}`}
+        replace
+        scroll={false}
+        className={cn("min-w-0 flex-1 truncate", done && "text-faint line-through decoration-faint/50")}
+        title={`${refTask.key} · ${status?.name ?? ""}`}
+      >
+        {refTask.title}
+      </Link>
+      {refTask.archived && <span className="shrink-0 rounded-[4px] bg-chip px-1.5 text-[11px] text-muted-foreground">Archived</span>}
+      <span className="shrink-0 text-[12px] text-faint max-sm:hidden">{status?.name}</span>
+      {assignee && <MemberAvatar member={assignee} id={assignee.id} size={16} />}
+      <span className="tabular shrink-0 font-mono text-[11.5px] text-faint">{refTask.key}</span>
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          aria-label={`Remove dependency on ${refTask.key}`}
+          title="Remove dependency"
+          className="-mr-1 grid size-6 shrink-0 place-items-center rounded text-faint opacity-0 transition-opacity group-hover/ref:opacity-100 hover:bg-background hover:text-foreground focus-visible:opacity-100"
+        >
+          <XIcon className="size-3.5" />
+        </button>
+      )}
+    </li>
   );
 }
 
@@ -505,6 +683,26 @@ function Feed({ feed }: { feed: FeedItem[] }) {
           <>
             moved this to <b className="font-medium text-foreground">{projectById.get(f.to ?? "")?.name ?? "another project"}</b>
           </>
+        );
+      case "dependency_added":
+        return (
+          <>
+            made this depend on <b className="font-medium text-foreground">{f.to ?? "another task"}</b>
+          </>
+        );
+      case "dependency_removed":
+        return (
+          <>
+            removed the dependency on <b className="font-medium text-foreground">{f.to ?? "another task"}</b>
+          </>
+        );
+      case "unblocked":
+        return f.from ? (
+          <>
+            closed <b className="font-medium text-foreground">{f.from}</b>, so this is ready to work on
+          </>
+        ) : (
+          "cleared what this was waiting on, so it's ready to work on"
         );
       default:
         return null;

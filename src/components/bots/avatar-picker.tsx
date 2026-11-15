@@ -47,10 +47,10 @@ export function AvatarPicker({
   };
 
   return (
-    <div className="flex flex-wrap items-start gap-5">
-      <BotAvatar avatar={value} name={name || "New bot"} size={72} className={cn(uploading && "opacity-50")} />
-      <div className="grid min-w-0 gap-3">
-        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Shape">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <BotAvatar avatar={value} name={name || "New bot"} size={64} className={cn(uploading && "opacity-50")} />
+      <div className="grid min-w-0 flex-1 gap-2">
+        <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Shape">
           {SHAPES.map((s) => (
             <button
               key={s}
@@ -72,7 +72,7 @@ export function AvatarPicker({
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Colour">
+        <div className="flex flex-wrap items-center gap-1" role="radiogroup" aria-label="Colour">
           {COLORS.map((c) => (
             <button
               key={c}

@@ -1,5 +1,5 @@
 import "server-only";
-import { MongoClient, type Db, type Collection } from "mongodb";
+import { MongoClient, ObjectId, type Db, type Collection } from "mongodb";
 import type {
   UserDoc,
   OrgDoc,
@@ -11,6 +11,10 @@ import type {
   ActivityDoc,
   InviteDoc,
   BotDoc,
+  BotRoleDoc,
+  AgentClaimDoc,
+  BotMentionDoc,
+  NotificationDoc,
 } from "./types";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
@@ -49,6 +53,10 @@ export async function cols() {
     activity: db.collection<ActivityDoc>("activity"),
     invites: db.collection<InviteDoc>("invites"),
     bots: db.collection<BotDoc>("bots"),
+    botRoles: db.collection<BotRoleDoc>("botRoles"),
+    agentClaims: db.collection<AgentClaimDoc>("agentClaims"),
+    botMentions: db.collection<BotMentionDoc>("botMentions"),
+    notifications: db.collection<NotificationDoc>("notifications"),
   };
 }
 export type Cols = Awaited<ReturnType<typeof cols>>;
@@ -66,11 +74,51 @@ async function ensureIndexes(db: Db) {
     db.collection("tasks").createIndex({ orgId: 1, updatedAt: -1 }),
     db.collection("tasks").createIndex({ orgId: 1, assigneeId: 1 }),
     db.collection("tasks").createIndex({ orgId: 1, title: "text" }),
+    db.collection("tasks").createIndex({ orgId: 1, dependsOn: 1 }),
     db.collection("comments").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("activity").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("invites").createIndex({ token: 1 }, { unique: true }),
     db.collection("invites").createIndex({ orgId: 1 }),
     db.collection("bots").createIndex({ keyHash: 1 }, { unique: true }),
     db.collection("bots").createIndex({ orgId: 1 }),
+    db.collection("botRoles").createIndex({ orgId: 1, name: 1 }, { unique: true }),
+    db.collection("agentClaims").createIndex({ botId: 1, taskId: 1 }, { unique: true }),
+    db.collection("agentClaims").createIndex({ taskId: 1 }),
+    // One bot triages a task at a time: the claim is the lock.
+    db.collection("agentClaims").createIndex({ taskId: 1, kind: 1 }, { unique: true, partialFilterExpression: { kind: "triage" }, name: "one_triage_claim_per_task" }),
+    db.collection("botMentions").createIndex({ botId: 1, deliveredAt: 1, createdAt: 1 }),
+    db.collection("botMentions").createIndex({ taskId: 1 }),
+    db.collection("notifications").createIndex({ orgId: 1, userId: 1, createdAt: -1 }),
+    db.collection("notifications").createIndex({ orgId: 1, userId: 1, readAt: 1 }),
+    db.collection("notifications").createIndex({ taskId: 1 }),
   ]);
+  await migrate(db);
+}
+
+/**
+ * One-off data migrations, each recorded in `migrations` so it runs once per database
+ * (an admin who later deletes what a migration added keeps it deleted).
+ */
+async function migrate(db: Db) {
+  const done = db.collection<{ _id: string; at: Date }>("migrations");
+  const once = async (id: string, run: () => Promise<void>) => {
+    if (await done.findOne({ _id: id })) return;
+    await run();
+    await done.updateOne({ _id: id }, { $setOnInsert: { at: new Date() } }, { upsert: true });
+  };
+
+  // Organisations created before the Triage stage existed get a Triage status right after their backlog.
+  await once("2026-11-triage-status", async () => {
+    const statuses = db.collection<StatusDoc>("statuses");
+    for (const orgId of await statuses.distinct("orgId")) {
+      if (await statuses.findOne({ orgId, category: "triage" })) continue;
+      const list = await statuses.find({ orgId }).sort({ order: 1 }).toArray();
+      const lastBacklog = list.findLastIndex((s) => s.category === "backlog");
+      const at = lastBacklog + 1;
+      // Renumber 0..n with the new status at `at` (orders can have gaps after deletes).
+      const ops = list.map((s, i) => ({ updateOne: { filter: { _id: s._id }, update: { $set: { order: i < at ? i : i + 1 } } } }));
+      if (ops.length) await statuses.bulkWrite(ops);
+      await statuses.insertOne({ _id: new ObjectId(), orgId, name: "Triage", color: "#d6409f", category: "triage", order: at });
+    }
+  });
 }

@@ -9,6 +9,7 @@ import {
   BotIcon,
   CheckIcon,
   ChevronsUpDownIcon,
+  InboxIcon,
   LayersIcon,
   LogOutIcon,
   MonitorIcon,
@@ -32,11 +33,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { logoutAction } from "@/app/actions/auth";
+import { orgPath, projectPath } from "@/lib/paths";
 
 export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
-  const { org, orgs, me, projects, counts, isAdmin } = useOrg();
+  const { org, orgs, me, projects, counts, isAdmin, unread } = useOrg();
   const pathname = usePathname();
-  const base = `/${org.slug}`;
 
   return (
     <nav aria-label="Main" className="flex h-full flex-col bg-sidebar px-2.5 pt-3 pb-2">
@@ -51,16 +52,19 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
       </button>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <NavItem href={`${base}/my`} active={pathname === `${base}/my`} icon={<UserIcon />} count={counts.my} onNavigate={onNavigate}>
+        <NavItem href={orgPath(org.slug, "inbox")} active={pathname === orgPath(org.slug, "inbox")} icon={<InboxIcon />} count={unread} badge onNavigate={onNavigate}>
+          Inbox
+        </NavItem>
+        <NavItem href={orgPath(org.slug, "my")} active={pathname === orgPath(org.slug, "my")} icon={<UserIcon />} count={counts.my} onNavigate={onNavigate}>
           My Tasks
         </NavItem>
-        <NavItem href={`${base}/all`} active={pathname === `${base}/all`} icon={<LayersIcon />} count={counts.all} onNavigate={onNavigate}>
+        <NavItem href={orgPath(org.slug, "all")} active={pathname === orgPath(org.slug, "all")} icon={<LayersIcon />} count={counts.all} onNavigate={onNavigate}>
           All Tasks
         </NavItem>
 
-        <SectionLabel action={isAdmin ? { href: `${base}/settings/projects?new=1`, label: "New project" } : undefined}>Projects</SectionLabel>
-        {projects.map((p) => {
-          const href = `${base}/p/${p.key}`;
+        <SectionLabel action={isAdmin ? { href: `${orgPath(org.slug, "settings", "projects")}?new=1`, label: "New project" } : undefined}>Projects</SectionLabel>
+        {projects.filter((p) => !p.archived).map((p) => {
+          const href = projectPath(org.slug, p.key);
           return (
             <NavItem
               key={p.id}
@@ -76,21 +80,21 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
         })}
 
         <div className="mt-3">
-          <NavItem href={`${base}/archived`} active={pathname === `${base}/archived`} icon={<ArchiveIcon />} count={counts.archived} quiet onNavigate={onNavigate}>
+          <NavItem href={orgPath(org.slug, "archived")} active={pathname === orgPath(org.slug, "archived")} icon={<ArchiveIcon />} count={counts.archived} quiet onNavigate={onNavigate}>
             Archive
           </NavItem>
         </div>
 
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
-        <NavItem href={`${base}/settings/members`} active={pathname.startsWith(`${base}/settings/members`)} icon={<UsersIcon />} onNavigate={onNavigate}>
+        <NavItem href={orgPath(org.slug, "settings", "members")} active={pathname.startsWith(orgPath(org.slug, "settings", "members"))} icon={<UsersIcon />} onNavigate={onNavigate}>
           Members
         </NavItem>
-        <NavItem href={`${base}/settings/bots`} active={pathname.startsWith(`${base}/settings/bots`)} icon={<BotIcon />} onNavigate={onNavigate}>
+        <NavItem href={orgPath(org.slug, "settings", "bots")} active={pathname.startsWith(orgPath(org.slug, "settings", "bots")) || pathname.startsWith(orgPath(org.slug, "settings", "roles"))} icon={<BotIcon />} onNavigate={onNavigate}>
           Bots
         </NavItem>
         <NavItem
-          href={`${base}/settings/general`}
-          active={["general", "projects", "statuses"].some((t) => pathname.startsWith(`${base}/settings/${t}`))}
+          href={orgPath(org.slug, "settings", "general")}
+          active={["general", "projects", "statuses"].some((t) => pathname.startsWith(orgPath(org.slug, "settings", t)))}
           icon={<SettingsIcon />}
           onNavigate={onNavigate}
         >
@@ -116,6 +120,7 @@ function NavItem({
   icon,
   count,
   quiet,
+  badge,
   children,
   onNavigate,
 }: {
@@ -125,6 +130,8 @@ function NavItem({
   count?: number;
   /** count is informational, not "to do": render it fainter */
   quiet?: boolean;
+  /** count is unread: render it as a brand pill */
+  badge?: boolean;
   children: React.ReactNode;
   onNavigate?: () => void;
 }) {
@@ -140,9 +147,13 @@ function NavItem({
     >
       <span className={cn("flex", active ? "text-selected-foreground" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{children}</span>
-      {count !== undefined && count > 0 && (
+      {count !== undefined && count > 0 && badge ? (
+        <span className="tabular ml-auto grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand px-1.5 font-mono text-[11px] font-medium text-white" aria-label={`${count} unread`}>
+          {count > 99 ? "99+" : count}
+        </span>
+      ) : count !== undefined && count > 0 ? (
         <span className={cn("tabular ml-auto font-mono text-[11.5px]", active ? "text-selected-foreground/80" : quiet ? "text-faint/70" : "text-faint")}>{count}</span>
-      )}
+      ) : null}
     </Link>
   );
 }
@@ -180,7 +191,7 @@ function OrgSwitcher() {
       <DropdownMenuContent align="start" className="w-60">
         <DropdownMenuLabel className="text-xs font-normal text-faint">Organisations</DropdownMenuLabel>
         {orgs.map((o) => (
-          <DropdownMenuItem key={o.id} onSelect={() => router.push(`/${o.slug}/my`)} className="gap-2.5">
+          <DropdownMenuItem key={o.id} onSelect={() => router.push(orgPath(o.slug, "my"))} className="gap-2.5">
             <span className="grid size-5 place-items-center rounded-[5px] bg-foreground text-[10.5px] font-semibold text-background">
               {o.name[0]?.toUpperCase()}
             </span>

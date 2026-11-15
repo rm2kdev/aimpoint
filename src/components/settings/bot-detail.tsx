@@ -2,17 +2,19 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshCwIcon, Trash2Icon } from "lucide-react";
+import Link from "next/link";
+import { Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
 import { DetailHeader, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
 import { BotAvatar } from "@/components/bits";
 import { AvatarPicker } from "@/components/bots/avatar-picker";
-import { KeyReveal } from "@/components/bots/key-reveal";
+import { BotConnection } from "@/components/bots/connect-wizard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,29 +25,52 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { deleteBot, rerollBotKey, updateBot } from "@/app/actions/bots";
+import { deleteBot, updateBot } from "@/app/actions/bots";
+import { setBotRole } from "@/app/actions/bot-roles";
+import { MCP_TOOLS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
-import type { Bot, BotAvatar as BotAvatarData, Task } from "@/lib/types";
+import type { Bot, BotAvatar as BotAvatarData, BotRole, Task } from "@/lib/types";
+import { orgPath } from "@/lib/paths";
 
 const Row = SettingsRow;
 
-export function BotDetail({ bot: initial, assigned, createdCount }: { bot: Bot; assigned: Task[]; createdCount: number }) {
-  const { org, isAdmin, memberById, projects } = useOrg();
+export function BotDetail({
+  bot: initial,
+  assigned,
+  createdCount,
+  roles,
+  pickedUp,
+}: {
+  bot: Bot;
+  assigned: Task[];
+  createdCount: number;
+  roles: BotRole[];
+  /** Ids of assigned tasks the bot has picked up over MCP. */
+  pickedUp: string[];
+}) {
+  const { org, isAdmin, memberById } = useOrg();
   const router = useRouter();
   const [bot, setBot] = useState(initial);
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
   const [avatar, setAvatar] = useState<BotAvatarData>(initial.avatar);
-  const [newKey, setNewKey] = useState<string>();
-  const [confirmReroll, setConfirmReroll] = useState(false);
+  // The bot's key, when this page has it in hand: just created (handed over by the New bot dialog) or made in the connection setup.
+  const [newKey, setNewKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [origin, setOrigin] = useState("https://your-vector-host");
   const [pending, start] = useTransition();
-  useEffect(() => setOrigin(window.location.origin), []);
+  useEffect(() => {
+    const k = `vector:new-bot-key:${initial.id}`;
+    const key = sessionStorage.getItem(k);
+    if (key) {
+      sessionStorage.removeItem(k);
+      setNewKey(key);
+    }
+  }, [initial.id]);
 
   const dirty = name !== bot.name || description !== bot.description || JSON.stringify(avatar) !== JSON.stringify(bot.avatar);
   const creator = memberById.get(bot.createdBy);
-  const sampleProject = projects[0]?.key ?? "WEB";
+  const role = roles.find((r) => r.id === bot.roleId);
+  const picked = new Set(pickedUp);
 
   const save = () =>
     start(async () => {
@@ -59,12 +84,24 @@ export function BotDetail({ bot: initial, assigned, createdCount }: { bot: Bot; 
   return (
     <>
       <DetailHeader
-        back={{ href: `/${org.slug}/settings/bots`, label: "Bots" }}
+        back={{ href: orgPath(org.slug, "settings", "bots"), label: "Bots" }}
         avatar={<BotAvatar avatar={bot.avatar} name={bot.name} size={44} />}
         name={bot.name}
         tags={<Tag>Bot</Tag>}
         subtitle={bot.description || "No description"}
       />
+
+          <Row
+            title="Backend"
+            desc={
+              <>
+                What runs {bot.name}. When it&rsquo;s assigned a task or @mentioned, Vector sends the task and its thread to this backend, and the agent works on
+                the ticket through Vector&rsquo;s tools.
+              </>
+            }
+          >
+            <BotConnection bot={bot} setBot={setBot} apiKey={newKey} setApiKey={(k) => setNewKey(k)} />
+          </Row>
 
           <Row
             title="Profile"
@@ -108,42 +145,53 @@ export function BotDetail({ bot: initial, assigned, createdCount }: { bot: Bot; 
           </Row>
 
           <Row
-            title="API key"
-            desc="Send it as a Bearer token. Rerolling creates a new key and stops the old one immediately."
+            title="Role"
+            desc={
+              <>
+                Which MCP tools {bot.name} can use. Without a role it can use all of them except triage; give it a role with Check for triage on to make it a triage bot.{" "}
+                <Link href={orgPath(org.slug, "settings", "roles")} className="underline underline-offset-2 hover:text-foreground">
+                  Manage roles
+                </Link>
+              </>
+            }
           >
-            <div className="grid max-w-xl gap-3">
-              <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border px-3.5 py-2.5">
-                <code className="font-mono text-[13px]">{bot.keyHint}</code>
-                <span className="text-[12.5px] text-faint">
-                  Issued {timeAgo(bot.keyRotatedAt)} · {bot.lastUsedAt ? `last used ${timeAgo(bot.lastUsedAt)}` : "never used"}
-                </span>
-                {isAdmin && (
-                  <Button variant="outline" size="sm" className="ml-auto" onClick={() => setConfirmReroll(true)}>
-                    <RefreshCwIcon /> Reroll key
-                  </Button>
-                )}
-              </div>
-              {newKey && <KeyReveal apiKey={newKey} />}
+            <div className="grid max-w-xl gap-2">
+              <Select
+                value={bot.roleId ?? "none"}
+                disabled={!isAdmin || pending}
+                onValueChange={(v) =>
+                  start(async () => {
+                    const roleId = v === "none" ? null : v;
+                    const r = await setBotRole(org.slug, bot.id, roleId);
+                    if (!r.ok) return void toast.error(r.error);
+                    setBot((b) => ({ ...b, roleId }));
+                    toast.success(roleId ? `${bot.name} is now ${roles.find((x) => x.id === roleId)?.name}` : `${bot.name} can use every tool except triage`);
+                    router.refresh();
+                  })
+                }
+              >
+                <SelectTrigger className="w-full max-w-xs" aria-label="Bot role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No role (every tool except triage)</SelectItem>
+                  {roles.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[12.5px] text-faint">
+                {role
+                  ? `${MCP_TOOLS.filter((t) => role.tools[t.name]).length} of ${MCP_TOOLS.length} tools: ${MCP_TOOLS.filter((t) => role.tools[t.name]).map((t) => t.title.toLowerCase()).join(", ") || "none"}.`
+                  : `${MCP_TOOLS.filter((t) => !t.optIn).length} of ${MCP_TOOLS.length} tools: everything except triage.`}
+              </p>
             </div>
           </Row>
 
-          <Row title="Using the API" desc={<>Bots can create tasks, update the tasks they created, comment on any task and be assigned work.</>}>
-            <pre className="max-w-full overflow-x-auto rounded-[10px] border border-border bg-sidebar px-4 py-3 font-mono text-[12px] leading-relaxed text-foreground">
-              {`curl ${origin}/api/v1/tasks \\
-  -H "Authorization: Bearer ${newKey ?? "vec_…"}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"project":"${sampleProject}","title":"Checkout fails on Safari","type":"issue","assignee":"me"}'`}
-            </pre>
-            <ul className="mt-3 grid gap-1 font-mono text-[12px] text-muted-foreground">
-              <li>GET /api/v1/me · /projects · /statuses · /members</li>
-              <li>GET /api/v1/tasks?project=WEB&amp;assignee=me&amp;status=Todo</li>
-              <li>POST /api/v1/tasks · GET|PATCH /api/v1/tasks/WEB-12</li>
-              <li>POST /api/v1/tasks/WEB-12/comments</li>
-            </ul>
-          </Row>
-
           <Row title="Work" desc={`Open tasks assigned to ${bot.name}. It has created ${createdCount} task${createdCount === 1 ? "" : "s"}.`}>
-            <WorkList tasks={assigned} emptyText={`Nothing is assigned to ${bot.name} right now.`} />
+            <WorkList tasks={assigned} emptyText={`Nothing is assigned to ${bot.name} right now.`} note={(t) => (picked.has(t.id) ? "Picked up" : undefined)} />
           </Row>
 
           {isAdmin && (
@@ -153,30 +201,6 @@ export function BotDetail({ bot: initial, assigned, createdCount }: { bot: Bot; 
               </Button>
             </Row>
           )}
-
-      <AlertDialog open={confirmReroll} onOpenChange={setConfirmReroll}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reroll {bot.name}&rsquo;s key?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Anything using {bot.keyHint} stops working immediately. You&rsquo;ll see the new key once.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep current key</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={async () => {
-                const r = await rerollBotKey(org.slug, bot.id);
-                if (!r.ok) return void toast.error(r.error);
-                setBot(r.data!.bot);
-                setNewKey(r.data!.key);
-              }}
-            >
-              Reroll key
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>
@@ -194,7 +218,7 @@ export function BotDetail({ bot: initial, assigned, createdCount }: { bot: Bot; 
                 const r = await deleteBot(org.slug, bot.id);
                 if (!r.ok) return void toast.error(r.error);
                 toast.success(`Deleted ${bot.name}`);
-                router.push(`/${org.slug}/settings/bots`);
+                router.push(orgPath(org.slug, "settings", "bots"));
               }}
             >
               Delete bot

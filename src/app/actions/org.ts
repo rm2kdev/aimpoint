@@ -10,19 +10,19 @@ import { DEFAULT_STATUSES, PROJECT_COLORS } from "@/lib/data";
 import { requireOrg, requireUser } from "@/lib/session";
 import { guard, UserError, deriveKey, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
-import type { Role, StatusCategory } from "@/lib/types";
-
-const RESERVED = new Set(["login", "signup", "api", "invite", "onboarding", "_next", "settings"]);
+import { detachDeleted, recomputeOrg } from "@/lib/dependencies";
+import { isClosedCategory, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory } from "@/lib/types";
+import { orgPath } from "@/lib/paths";
 
 function slugify(s: string) {
-  const slug =
+  return (
     s
       .toLowerCase()
       .normalize("NFKD")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "org";
-  return RESERVED.has(slug) ? `${slug}-team` : slug;
+      .slice(0, 40) || "org"
+  );
 }
 
 const keySchema = z
@@ -59,7 +59,7 @@ export async function createOrgAction(_: OnboardState, form: FormData): Promise<
     nextNumber: 1,
     createdAt: now,
   });
-  redirect(`/${slug}/my`);
+  redirect(orgPath(slug, "my"));
 }
 
 export async function renameOrg(slug: string, name: string): Promise<Result> {
@@ -70,13 +70,13 @@ export async function renameOrg(slug: string, name: string): Promise<Result> {
     const c = await cols();
     await c.orgs.updateOne({ _id: org._id }, { $set: { name } });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 
 /* ---------------- projects ---------------- */
 
-export async function createProject(slug: string, input: { name: string; key?: string }): Promise<Result<{ key: string }>> {
+export async function createProject(slug: string, input: { name: string; key?: string }): Promise<Result<{ key: string; id: string }>> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
     const name = input.name.trim();
@@ -84,9 +84,13 @@ export async function createProject(slug: string, input: { name: string; key?: s
     const keyParsed = keySchema.safeParse(input.key?.trim() ? input.key : deriveKey(name));
     if (!keyParsed.success) throw new UserError(keyParsed.error.issues[0].message);
     const c = await cols();
+    if (await c.projects.findOne({ orgId: org._id, key: keyParsed.data }, { projection: { _id: 1 } })) {
+      throw new UserError(`${keyParsed.data} is already used by another project. Pick a different key.`);
+    }
     const count = await c.projects.countDocuments({ orgId: org._id });
+    const id = new ObjectId();
     await c.projects.insertOne({
-      _id: new ObjectId(),
+      _id: id,
       orgId: org._id,
       name,
       key: keyParsed.data,
@@ -95,46 +99,117 @@ export async function createProject(slug: string, input: { name: string; key?: s
       createdAt: new Date(),
     });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
-    return { key: keyParsed.data };
+    revalidatePath(orgPath(slug), "layout");
+    return { key: keyParsed.data, id: id.toHexString() };
   });
 }
 
-export async function updateProject(slug: string, projectId: string, input: { name?: string; color?: string }): Promise<Result> {
+const META_MAX = 50;
+const META_KEY_MAX = 64;
+const META_VALUE_MAX = 4000;
+
+/** Free-form key/value context for agents. Blank rows are dropped; keys must be unique (case-insensitive). */
+function cleanMetadata(input: unknown): ProjectMetaEntry[] {
+  if (!Array.isArray(input)) throw new UserError("Project context must be a list of key/value pairs.");
+  const out: ProjectMetaEntry[] = [];
+  const seen = new Set<string>();
+  for (const raw of input as { key?: unknown; value?: unknown }[]) {
+    const key = String(raw?.key ?? "").trim();
+    const value = String(raw?.value ?? "").replace(/\r\n?/g, "\n").trim();
+    if (!key && !value) continue;
+    if (!key) throw new UserError("Every value needs a key.");
+    if (key.length > META_KEY_MAX) throw new UserError(`Keys are up to ${META_KEY_MAX} characters.`);
+    if (value.length > META_VALUE_MAX) throw new UserError(`Values are up to ${META_VALUE_MAX.toLocaleString()} characters ("${key}" is too long).`);
+    if (seen.has(key.toLowerCase())) throw new UserError(`"${key}" is listed twice. Keys must be unique.`);
+    seen.add(key.toLowerCase());
+    out.push({ key, value });
+  }
+  if (out.length > META_MAX) throw new UserError(`A project can have up to ${META_MAX} context entries.`);
+  return out;
+}
+
+export async function updateProject(
+  slug: string,
+  projectId: string,
+  input: { name?: string; color?: string; metadata?: ProjectMetaEntry[] },
+): Promise<Result> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
-    const set: Record<string, string> = {};
+    const set: Partial<Pick<ProjectDoc, "name" | "color" | "metadata">> = {};
     if (input.name !== undefined) {
       const n = input.name.trim();
       if (!n || n.length > 60) throw new UserError("Project names are 1-60 characters.");
       set.name = n;
     }
     if (input.color && /^#[0-9a-f]{6}$/i.test(input.color)) set.color = input.color;
+    if (input.metadata !== undefined) set.metadata = cleanMetadata(input.metadata);
+    if (!Object.keys(set).length) return;
     const c = await cols();
-    await c.projects.updateOne({ _id: new ObjectId(projectId), orgId: org._id }, { $set: set });
+    const r = await c.projects.updateOne({ _id: oidOrThrow(projectId), orgId: org._id }, { $set: set });
+    if (!r.matchedCount) throw new UserError("This project no longer exists.");
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 
-export async function deleteProject(slug: string, projectId: string): Promise<Result> {
+export async function setProjectArchived(slug: string, projectId: string, archived: boolean): Promise<Result> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
     const c = await cols();
-    const pid = new ObjectId(projectId);
-    if ((await c.projects.countDocuments({ orgId: org._id })) <= 1) throw new UserError("An organisation needs at least one project.");
-    if (await c.tasks.countDocuments({ orgId: org._id, projectId: pid }, { limit: 1 })) {
-      throw new UserError("Move or delete this project's tasks before deleting it.");
+    const pid = oidOrThrow(projectId);
+    if (archived && (await c.projects.countDocuments({ orgId: org._id, archivedAt: null, _id: { $ne: pid } })) < 1) {
+      throw new UserError("An organisation needs at least one active project for new tasks.");
+    }
+    const r = await c.projects.updateOne({ _id: pid, orgId: org._id }, { $set: { archivedAt: archived ? new Date() : null } });
+    if (!r.matchedCount) throw new UserError("This project no longer exists.");
+    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    revalidatePath(orgPath(slug), "layout");
+  });
+}
+
+/** Deletes a project and every task in it, with their comments and activity. `confirmKey` must match the project key. */
+export async function deleteProject(slug: string, projectId: string, confirmKey: string): Promise<Result> {
+  return guard(async () => {
+    const { org, user } = await requireOrg(slug, { admin: true });
+    const c = await cols();
+    const pid = oidOrThrow(projectId);
+    const project = await c.projects.findOne({ _id: pid, orgId: org._id });
+    if (!project) throw new UserError("This project no longer exists.");
+    if (confirmKey.trim().toUpperCase() !== project.key) throw new UserError(`Type ${project.key} to confirm.`);
+    if ((await c.projects.countDocuments({ orgId: org._id, archivedAt: null, _id: { $ne: pid } })) < 1) {
+      throw new UserError("An organisation needs at least one active project. Create or restore another one first.");
+    }
+    const taskIds = (await c.tasks.find({ orgId: org._id, projectId: pid }, { projection: { _id: 1 } }).toArray()).map((t) => t._id);
+    if (taskIds.length) {
+      // Tasks in other projects that waited on these stop waiting.
+      await detachDeleted(org._id, { id: user._id, name: async () => user.name }, taskIds);
+      await Promise.all([
+        c.notifications.deleteMany({ taskId: { $in: taskIds } }),
+        c.comments.deleteMany({ taskId: { $in: taskIds } }),
+        c.activity.deleteMany({ taskId: { $in: taskIds } }),
+        c.agentClaims.deleteMany({ taskId: { $in: taskIds } }),
+        c.botMentions.deleteMany({ taskId: { $in: taskIds } }),
+      ]);
+      await c.tasks.deleteMany({ orgId: org._id, projectId: pid });
     }
     await c.projects.deleteOne({ _id: pid, orgId: org._id });
-    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    const orgHex = org._id.toHexString();
+    const actorId = user._id.toHexString();
+    // Open task lists drop the tasks live; anything else catches up on the org refresh.
+    if (taskIds.length <= 200) for (const id of taskIds) await publish(orgHex, { type: "task.delete", actorId, taskId: id.toHexString() });
+    await publish(orgHex, { type: "org.changed", actorId });
+    revalidatePath(orgPath(slug), "layout");
   });
+}
+
+function oidOrThrow(id: string) {
+  if (!ObjectId.isValid(id)) throw new UserError("This project no longer exists.");
+  return new ObjectId(id);
 }
 
 /* ---------------- statuses ---------------- */
 
-const CATEGORIES: StatusCategory[] = ["backlog", "unstarted", "started", "done", "cancelled"];
+const CATEGORIES: StatusCategory[] = ["backlog", "triage", "unstarted", "started", "done", "cancelled"];
 
 export async function saveStatus(
   slug: string,
@@ -148,13 +223,15 @@ export async function saveStatus(
     if (!CATEGORIES.includes(input.category)) throw new UserError("Pick a stage.");
     const c = await cols();
     if (input.id) {
-      await c.statuses.updateOne({ _id: new ObjectId(input.id), orgId: org._id }, { $set: { name, color: input.color, category: input.category } });
+      const prev = await c.statuses.findOneAndUpdate({ _id: new ObjectId(input.id), orgId: org._id }, { $set: { name, color: input.color, category: input.category } });
+      // A status that starts or stops counting as closed (done or cancelled) releases or re-blocks the tasks that depend on its tasks.
+      if (prev && isClosedCategory(prev.category) !== isClosedCategory(input.category)) await recomputeOrg(org._id, { id: user._id, name: async () => user.name });
     } else {
       const last = await c.statuses.find({ orgId: org._id }).sort({ order: -1 }).limit(1).next();
       await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
     }
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 
@@ -166,7 +243,7 @@ export async function reorderStatuses(slug: string, ids: string[]): Promise<Resu
       ids.map((id, order) => ({ updateOne: { filter: { _id: new ObjectId(id), orgId: org._id }, update: { $set: { order } } } })),
     );
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 
@@ -178,10 +255,12 @@ export async function deleteStatus(slug: string, id: string, moveTo: string): Pr
     const target = await c.statuses.findOne({ _id: new ObjectId(moveTo), orgId: org._id });
     if (!target) throw new UserError("Pick a status to move tasks to.");
     const sid = new ObjectId(id);
+    const removed = await c.statuses.findOne({ _id: sid, orgId: org._id });
     await c.tasks.updateMany({ orgId: org._id, statusId: sid }, { $set: { statusId: target._id, updatedAt: new Date() } });
     await c.statuses.deleteOne({ _id: sid, orgId: org._id });
+    if (removed && isClosedCategory(removed.category) !== isClosedCategory(target.category)) await recomputeOrg(org._id, { id: user._id, name: async () => user.name });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 
@@ -211,7 +290,7 @@ export async function createInvite(slug: string, email: string, role: Role): Pro
       createdAt: now,
       expiresAt: new Date(now.getTime() + 14 * 864e5),
     });
-    revalidatePath(`/${slug}/settings/members`);
+    revalidatePath(orgPath(slug, "settings", "members"));
     return { url: `/invite/${token}` };
   });
 }
@@ -221,7 +300,7 @@ export async function revokeInvite(slug: string, inviteId: string): Promise<Resu
     const { org } = await requireOrg(slug, { admin: true });
     const c = await cols();
     await c.invites.deleteOne({ _id: new ObjectId(inviteId), orgId: org._id });
-    revalidatePath(`/${slug}/settings/members`);
+    revalidatePath(orgPath(slug, "settings", "members"));
   });
 }
 
@@ -243,7 +322,7 @@ export async function setMemberRole(slug: string, userId: string, role: Role): P
     }
     await c.memberships.updateOne({ _id: m._id }, { $set: { role } });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 
@@ -260,7 +339,7 @@ export async function removeMember(slug: string, userId: string): Promise<Result
     await c.memberships.deleteOne({ _id: m._id });
     await c.tasks.updateMany({ orgId: org._id, assigneeId: uid }, { $set: { assigneeId: null } });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
   });
 }
 

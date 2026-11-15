@@ -1,6 +1,7 @@
 import "server-only";
 import { EventEmitter } from "node:events";
 import Pusher from "pusher";
+import { withWorkingBots } from "@/lib/data";
 import type { RealtimeEvent } from "./events";
 
 /**
@@ -47,8 +48,13 @@ export function localPresence(orgId: string, userId: string, delta: 1 | -1) {
   localBus().emit(orgChannel(orgId), { type: "presence", userIds: [...org.keys()] });
 }
 
-export async function publish(orgId: string, event: RealtimeEvent) {
+/**
+ * A task.upsert always carries the task's current `workingBotIds` (looked up here, so callers can't send a
+ * stale or empty list). The task object is updated in place, so a caller returning it gets the same list.
+ */
+export async function publish(orgId: string, event: RealtimeEvent, opts: { workingLoaded?: boolean } = {}) {
   try {
+    if (event.type === "task.upsert" && !opts.workingLoaded) await withWorkingBots([event.task]);
     if (realtimeDriver === "pusher") {
       await pusher().trigger(orgChannel(orgId), "event", event);
     } else {

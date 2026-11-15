@@ -7,10 +7,11 @@ import {
   resolveAssignee,
   resolveProject,
   resolveStatus,
+  resolveTaskRefs,
   toDescriptionHtml,
 } from "@/lib/bot-api";
 import { cols } from "@/lib/db";
-import { toTask } from "@/lib/data";
+import { toTask, withWorkingBots } from "@/lib/data";
 import { createTaskAs } from "@/lib/task-service";
 import type { TaskDoc } from "@/lib/types";
 
@@ -30,10 +31,10 @@ export const GET = botRoute(async (req, ctx) => {
     c.projects.find({ orgId: ctx.org._id }).toArray(),
   ]);
   const keys = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
-  return { tasks: docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?")) };
-});
+  return { tasks: await withWorkingBots(docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"))) };
+}, "list_tasks");
 
-/** POST /api/v1/tasks  { title, project, type?, description?, status?, assignee?, priority?, dueDate? } */
+/** POST /api/v1/tasks  { title, project, type?, description?, status?, assignee?, priority?, dueDate?, dependsOn?: ["WEB-12"] } */
 export const POST = botRoute(async (req, ctx) => {
   const b = await readJson(req);
   const project = await resolveProject(ctx.org._id, b.project);
@@ -46,6 +47,7 @@ export const POST = botRoute(async (req, ctx) => {
     priority: parsePriority(b.priority),
     description: toDescriptionHtml(b.description),
     dueDate: b.dueDate == null ? null : String(b.dueDate),
+    dependsOn: await resolveTaskRefs(ctx.org._id, b.dependsOn),
   });
   return Response.json({ task }, { status: 201 });
-});
+}, "create_task");

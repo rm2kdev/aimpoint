@@ -120,7 +120,10 @@ export const TYPE_OPTIONS: Option<TaskType>[] = [
   { value: "feature", label: "Feature request", icon: <span className="ml-0.5 size-2 rounded-[2px] bg-[#30a46c]" /> },
 ];
 
-export function useProjectOptions(): Option<string>[] {
+/** Projects that take tasks. An archived `current` stays listed so a task already in it still shows its project. */
+export function useProjectOptions(current?: string): Option<string>[] {
   const { projects } = useOrg();
-  return projects.map((p) => ({ value: p.id, label: p.name, hint: p.key, icon: <ProjectDot color={p.color} /> }));
+  return projects
+    .filter((p) => !p.archived || p.id === current)
+    .map((p) => ({ value: p.id, label: p.archived ? `${p.name} (archived)` : p.name, hint: p.key, icon: <ProjectDot color={p.color} /> }));
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { Counts, Member, Project, Status } from "@/lib/types";
 import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
+import { getUnreadCount } from "@/app/actions/notifications";
 
 export interface OrgInfo {
   id: string;
@@ -30,6 +31,9 @@ interface Ctx {
   statuses: Status[];
   statusById: Map<string, Status>;
   counts: Counts;
+  /** Unread notifications for the signed-in person. */
+  unread: number;
+  setUnread: (fn: (n: number) => number) => void;
   subscribe: (fn: (e: RealtimeEvent) => void) => () => void;
   connected: boolean;
   /** Members who currently have this organisation open. */
@@ -62,6 +66,7 @@ export function OrgProvider({
   projects,
   statuses,
   counts: initialCounts,
+  unread: initialUnread,
   realtime,
   children,
 }: {
@@ -72,6 +77,7 @@ export function OrgProvider({
   projects: Project[];
   statuses: Status[];
   counts: Counts;
+  unread: number;
   realtime: { driver: "local" | "pusher"; key?: string; cluster?: string };
   children: React.ReactNode;
 }) {
@@ -81,6 +87,9 @@ export function OrgProvider({
   const [online, setOnline] = useState<string[]>([]);
   const [counts, setCounts] = useState(initialCounts);
   useEffect(() => setCounts(initialCounts), [initialCounts]);
+  const [unread, setUnreadState] = useState(initialUnread);
+  useEffect(() => setUnreadState(initialUnread), [initialUnread]);
+  const setUnread = useCallback((fn: (n: number) => number) => setUnreadState((n) => Math.max(0, fn(n))), []);
 
   const subscribe = useCallback((fn: (e: RealtimeEvent) => void) => {
     listeners.current.add(fn);
@@ -102,6 +111,12 @@ export function OrgProvider({
       if (e.type === "presence") return setOnline(e.userIds);
       if (e.type === "org.changed") router.refresh();
       if (e.type === "task.upsert" || e.type === "task.delete") refreshCounts();
+      if (e.type === "notification" || e.type === "notifications.read") {
+        if (e.userId !== me.id) return; // someone else's inbox
+        if (e.type === "notification") setUnreadState((n) => n + 1);
+        // Read in this tab or another one: take the server's count.
+        else getUnreadCount(org.slug).then((r) => r.ok && r.data !== undefined && setUnreadState(r.data));
+      }
       listeners.current.forEach((fn) => fn(e));
     };
 
@@ -150,7 +165,7 @@ export function OrgProvider({
       } catch {}
     };
     return () => es.close();
-  }, [org.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts]);
+  }, [org.id, org.slug, me.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts]);
 
   const value = useMemo<Ctx>(
     () => ({
@@ -165,11 +180,13 @@ export function OrgProvider({
       statuses,
       statusById: new Map(statuses.map((s) => [s.id, s])),
       counts,
+      unread,
+      setUnread,
       subscribe,
       connected,
       online,
     }),
-    [org, orgs, me, members, projects, statuses, counts, subscribe, connected, online],
+    [org, orgs, me, members, projects, statuses, counts, unread, setUnread, subscribe, connected, online],
   );
   return <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>;
 }

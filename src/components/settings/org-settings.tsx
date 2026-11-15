@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
-import { SettingsRow, useAction } from "@/components/settings/ui";
+import { EntityList, EntityRow, SettingsRow, Tag, useAction } from "@/components/settings/ui";
 import { ProjectDot, StatusRing } from "@/components/bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,15 +14,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createProject,
-  deleteProject,
   deleteStatus,
   removeMember,
   renameOrg,
   reorderStatuses,
   saveStatus,
-  updateProject,
 } from "@/app/actions/org";
 import type { Role, Status, StatusCategory } from "@/lib/types";
+import { orgPath } from "@/lib/paths";
 
 export interface InviteRow {
   id: string;
@@ -59,7 +58,7 @@ export function GeneralSettings() {
           )}
         </form>
         <p className="mt-2 text-[12px] text-faint">
-          URL: <span className="font-mono">/{org.slug}</span>
+          URL: <span className="font-mono">{orgPath(org.slug)}</span>
         </p>
       </Row>
       <Row title="Leave organisation" desc="You'll lose access to its tasks. An organisation always keeps at least one admin.">
@@ -81,24 +80,41 @@ export function GeneralSettings() {
 
 export function ProjectsSettings({ openNew }: { openNew: boolean }) {
   const { org, projects, isAdmin, counts } = useOrg();
+  const router = useRouter();
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
-  const { pending, run } = useAction();
+  const [pending, startCreate] = useTransition();
   const suggested = name
     .toUpperCase()
     .replace(/[^A-Z0-9 ]/g, "")
     .split(/\s+/)
     .filter(Boolean);
   const autoKey = suggested.length > 1 ? suggested.map((w) => w[0]).join("").slice(0, 5) : (suggested[0] ?? "").slice(0, 3);
+  const ordered = [...projects.filter((p) => !p.archived), ...projects.filter((p) => p.archived)];
 
   return (
     <>
-      <Row title="Projects" desc="Every task belongs to one project. Task IDs use the project key, like WEB-12.">
-        <ul className="divide-y divide-border rounded-[10px] border border-border">
-          {projects.map((p) => (
-            <ProjectRow key={p.id} id={p.id} name={p.name} pkey={p.key} color={p.color} open={counts.projects[p.id] ?? 0} canEdit={isAdmin} />
+      <Row
+        title="Projects"
+        desc="Every task belongs to one project. Task IDs use the project key, like WEB-12. Open a project to rename it, give agents context about it, or archive it."
+      >
+        <EntityList>
+          {ordered.map((p) => (
+            <EntityRow
+              key={p.id}
+              href={orgPath(org.slug, "settings", "projects", p.id)}
+              avatar={<ProjectTile color={p.color} />}
+              name={p.name}
+              tags={
+                <>
+                  <span className="shrink-0 font-mono text-[12px] font-normal text-faint">{p.key}</span>
+                  {p.archived && <Tag>Archived</Tag>}
+                </>
+              }
+              subtitle={p.archived ? "Archived: no new tasks, hidden from the sidebar" : `${counts.projects[p.id] ?? 0} open`}
+            />
           ))}
-        </ul>
+        </EntityList>
       </Row>
       {isAdmin && (
         <Row title="New project" desc="Keys are short and permanent: 2-10 letters or digits.">
@@ -106,14 +122,14 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
             className="grid max-w-md gap-3"
             onSubmit={(e) => {
               e.preventDefault();
-              run(async () => {
+              startCreate(async () => {
                 const r = await createProject(org.slug, { name, key: key || autoKey });
-                if (r.ok) {
-                  setName("");
-                  setKey("");
-                }
-                return r;
-              }, "Project created");
+                if (!r.ok) return void toast.error(r.error);
+                toast.success(`Created ${r.data!.key}`, { description: "Add context for agents, if it needs any." });
+                setName("");
+                setKey("");
+                router.push(orgPath(org.slug, "settings", "projects", r.data!.id));
+              });
             }}
           >
             <div className="grid gap-1.5">
@@ -144,42 +160,16 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
 
 const SWATCHES = ["#2f6fed", "#30a46c", "#e5a00d", "#8b5cf6", "#e5484d", "#0ea5b7", "#d6409f", "#737373"];
 
-function ProjectRow({ id, name, pkey, color, open, canEdit }: { id: string; name: string; pkey: string; color: string; open: number; canEdit: boolean }) {
-  const { org } = useOrg();
-  const [draft, setDraft] = useState(name);
-  const { pending, run } = useAction();
-  useEffect(() => setDraft(name), [name]);
+/** Project colour as a 32px tile, the project counterpart of an avatar. */
+export function ProjectTile({ color, size = 32 }: { color: string; size?: number }) {
   return (
-    <li className="flex flex-wrap items-center gap-3 px-3.5 py-2.5">
-      <ColorDots value={color} disabled={!canEdit} onChange={(c) => run(() => updateProject(org.slug, id, { color: c }))} />
-      <Input
-        value={draft}
-        disabled={!canEdit}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => draft.trim() && draft !== name && run(() => updateProject(org.slug, id, { name: draft }), "Project renamed")}
-        onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        aria-label={`Name of ${pkey}`}
-        className="h-8 max-w-[240px] flex-1 border-transparent bg-transparent shadow-none hover:border-input focus-visible:border-input dark:bg-transparent"
-      />
-      <span className="font-mono text-[12px] text-faint">{pkey}</span>
-      <span className="tabular ml-auto text-[12.5px] text-muted-foreground">{open} open</span>
-      {canEdit && (
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`Delete ${name}`}
-          className="text-faint hover:text-destructive"
-          disabled={pending}
-          onClick={() => confirm(`Delete project ${name}?`) && run(() => deleteProject(org.slug, id), "Project deleted")}
-        >
-          <Trash2Icon />
-        </Button>
-      )}
-    </li>
+    <span className="grid shrink-0 place-items-center rounded-lg" style={{ width: size, height: size, background: `${color}1f` }}>
+      <ProjectDot color={color} className={size > 36 ? "size-4" : "size-3"} />
+    </span>
   );
 }
 
-function ColorDots({ value, onChange, disabled }: { value: string; onChange: (c: string) => void; disabled?: boolean }) {
+export function ColorDots({ value, onChange, disabled }: { value: string; onChange: (c: string) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
@@ -218,6 +208,7 @@ function ColorDots({ value, onChange, disabled }: { value: string; onChange: (c:
 
 const STAGES: [StatusCategory, string][] = [
   ["backlog", "Backlog"],
+  ["triage", "Triage"],
   ["unstarted", "Not started"],
   ["started", "In progress"],
   ["done", "Done"],

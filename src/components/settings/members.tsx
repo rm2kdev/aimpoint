@@ -24,6 +24,7 @@ import { createInvite, removeMember, revokeInvite, setMemberRole } from "@/app/a
 import { formatDay } from "@/lib/dates";
 import type { Role, Task } from "@/lib/types";
 import type { InviteRow } from "@/components/settings/org-settings";
+import { orgPath } from "@/lib/paths";
 
 export interface MemberStats {
   assigned: number;
@@ -53,7 +54,7 @@ export function MembersSettings({ invites, stats }: { invites: InviteRow[]; stat
           {people.map((m) => (
             <EntityRow
               key={m.id}
-              href={`/${org.slug}/settings/members/${m.id}`}
+              href={orgPath(org.slug, "settings", "members", m.id)}
               avatar={<UserAvatar id={m.id} name={m.name} size={32} />}
               name={m.name}
               tags={
@@ -162,7 +163,7 @@ export function MemberDetail({
   const { pending, run } = useAction();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const self = member.id === me.id;
-  const back = `/${org.slug}/settings/members`;
+  const back = orgPath(org.slug, "settings", "members");
 
   return (
     <>

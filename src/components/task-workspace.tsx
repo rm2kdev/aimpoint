@@ -6,12 +6,15 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, PlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { taskAccess } from "@/lib/access";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
 import { MobileNavButton, useShell } from "@/components/app-shell";
 import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
+import { TaskStatusRing } from "@/components/task-status-ring";
 import { Picker, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
 import { DueBadge } from "@/components/due-date";
+import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -108,7 +111,8 @@ export function TaskWorkspace({
     if (e.type === "task.upsert") {
       const prev = tasks.get(e.task.id);
       upsert(e.task);
-      if (e.actorId !== me.id && matches(e.task) && e.task.key !== selectedKey) {
+      // A bot starting or stopping work isn't an edit: no "changed" highlight for that.
+      if (!e.workingOnly && e.actorId !== me.id && matches(e.task) && e.task.key !== selectedKey) {
         const verb = !prev
           ? "added this"
           : prev.statusId !== e.task.statusId
@@ -375,6 +379,7 @@ export function TaskWorkspace({
                         selected={t.key === selectedKey}
                         fresh={fresh.get(t.id)}
                         showProject={showProject}
+                        waitingKeys={t.waitingOn.map((id) => tasks.get(id)?.key ?? null)}
                         sort={view.sort}
                         href={`${pathname}?task=${t.key}`}
                         onSeen={() => seen(t.id)}
@@ -414,6 +419,7 @@ function TaskRow({
   selected,
   fresh,
   showProject,
+  waitingKeys,
   sort,
   href,
   onSeen,
@@ -425,6 +431,8 @@ function TaskRow({
   selected: boolean;
   fresh?: Fresh;
   showProject: boolean;
+  /** Keys of the dependencies this task still waits on (null where this view doesn't have the task). */
+  waitingKeys?: (string | null)[];
   sort: SortKey;
   href: string;
   onSeen: () => void;
@@ -432,9 +440,10 @@ function TaskRow({
   onArchive: (archived: boolean) => void;
   refCb: (el: HTMLLIElement | null) => void;
 }) {
-  const { statuses, statusById, memberById, projectById, me, isAdmin } = useOrg();
+  const { statusById, memberById, projectById, me, isAdmin } = useOrg();
   const statusOptions = useStatusOptions();
-  const canEdit = isAdmin || task.createdBy === me.id;
+  const access = taskAccess(task, me.id, isAdmin);
+  const canEdit = access === "full";
   const status = statusById.get(task.statusId);
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
   const project = projectById.get(task.projectId);
@@ -452,7 +461,7 @@ function TaskRow({
       )}
     >
       <Picker
-        disabled={!canEdit}
+        disabled={access === "comment"}
         label={`Status: ${status?.name ?? "none"}`}
         value={task.statusId}
         options={statusOptions}
@@ -460,7 +469,7 @@ function TaskRow({
         searchable={false}
       >
         <button className="relative z-10 -m-1 grid size-[26px] place-items-center rounded-full transition-transform enabled:hover:scale-110 enabled:active:scale-95 disabled:pointer-events-none">
-          <StatusRing status={status} statuses={statuses} size={18} />
+          <TaskStatusRing task={task} size={18} />
         </button>
       </Picker>
       <Link
@@ -491,6 +500,8 @@ function TaskRow({
             {timeAgo(task.updatedAt)}
           </span>
         ) : null}
+        {!closed && !task.archivedAt && task.stalled && <StalledBadge stalled={task.stalled} />}
+        {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className="max-sm:hidden" />}
         {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className="max-sm:hidden" />}
         {(
           <>

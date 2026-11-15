@@ -10,4 +10,4 @@ export const POST = botRoute<{ key: string }>(async (req, ctx, { key }) => {
   const b = await readJson(req);
   const comment = await addCommentAs(ctx.actor, found.task._id, String(b.body ?? ""));
   return Response.json({ comment }, { status: 201 });
-});
+}, "add_comment");

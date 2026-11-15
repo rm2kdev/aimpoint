@@ -44,12 +44,10 @@ export function CommentBody({ body }: { body: string }) {
 
 function MentionChip({ member, isMe }: { member: Member; isMe: boolean }) {
   if (member.kind === "bot") {
+    // Reads like a person mention (accent text in the line), with the bot's face standing in for the "@".
     return (
-      <span
-        className="mx-px inline-flex translate-y-[2px] items-center gap-1 rounded-[6px] border border-border bg-background py-px pr-1.5 pl-0.5 align-baseline text-[12.5px] leading-[18px] font-medium"
-        title={`${member.name} (bot)`}
-      >
-        <BotAvatar avatar={member.avatar} name={member.name} size={15} />
+      <span className="rounded-[4px] px-0.5 font-medium whitespace-nowrap text-selected-foreground" title={`${member.name} (bot)`}>
+        <BotAvatar avatar={member.avatar} name={member.name} size={14} className="mr-1 -translate-y-px align-middle" />
         {member.name}
       </span>
     );

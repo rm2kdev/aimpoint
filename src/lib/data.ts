@@ -6,26 +6,32 @@ import type {
   ActivityDoc,
   Bot,
   BotDoc,
+  BotRole,
+  BotRoleDoc,
   CommentDoc,
   Counts,
   FeedItem,
   Member,
   Project,
+  ProjectDetail,
   ProjectDoc,
   Status,
+  Stalled,
   StatusDoc,
   Task,
   TaskDetail,
   TaskDoc,
+  TaskRef,
 } from "@/lib/types";
 
 export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId">[] = [
   { name: "Backlog", color: "#a3a3a3", category: "backlog", order: 0 },
-  { name: "Todo", color: "#737373", category: "unstarted", order: 1 },
-  { name: "In Progress", color: "#e5a00d", category: "started", order: 2 },
-  { name: "In Review", color: "#8b5cf6", category: "started", order: 3 },
-  { name: "Done", color: "#2f6fed", category: "done", order: 4 },
-  { name: "Cancelled", color: "#a3a3a3", category: "cancelled", order: 5 },
+  { name: "Triage", color: "#d6409f", category: "triage", order: 1 },
+  { name: "Todo", color: "#737373", category: "unstarted", order: 2 },
+  { name: "In Progress", color: "#e5a00d", category: "started", order: 3 },
+  { name: "In Review", color: "#8b5cf6", category: "started", order: 4 },
+  { name: "Done", color: "#2f6fed", category: "done", order: 5 },
+  { name: "Cancelled", color: "#a3a3a3", category: "cancelled", order: 6 },
 ];
 
 export const PROJECT_COLORS = ["#2f6fed", "#30a46c", "#e5a00d", "#8b5cf6", "#e5484d", "#0ea5b7", "#d6409f", "#737373"];
@@ -38,11 +44,49 @@ export const toBot = (b: BotDoc): Bot => ({
   keyHint: b.keyHint,
   keyRotatedAt: b.keyRotatedAt.toISOString(),
   lastUsedAt: b.lastUsedAt?.toISOString() ?? null,
+  roleId: b.roleId?.toHexString() ?? null,
+  connection: b.connection
+    ? {
+        agent: b.connection.agent,
+        method: b.connection.method,
+        url: b.connection.url ?? null,
+        model: b.connection.model ?? null,
+        secretHint: b.connection.secretHint ?? null,
+        updatedAt: b.connection.updatedAt.toISOString(),
+        lastDelivery: b.connection.lastDelivery
+          ? {
+              at: b.connection.lastDelivery.at.toISOString(),
+              ok: b.connection.lastDelivery.ok,
+              reason: b.connection.lastDelivery.reason,
+              status: b.connection.lastDelivery.status ?? null,
+              error: b.connection.lastDelivery.error ?? null,
+            }
+          : null,
+      }
+    : null,
   createdBy: b.createdBy.toHexString(),
   createdAt: b.createdAt.toISOString(),
 });
 
-export const toProject = (p: ProjectDoc): Project => ({ id: p._id.toHexString(), name: p.name, key: p.key, color: p.color });
+export const toBotRole = (r: BotRoleDoc): BotRole => ({
+  id: r._id.toHexString(),
+  name: r.name,
+  description: r.description,
+  tools: r.tools,
+  createdAt: r.createdAt.toISOString(),
+  updatedAt: r.updatedAt.toISOString(),
+});
+
+export const toProject = (p: ProjectDoc): Project => ({ id: p._id.toHexString(), name: p.name, key: p.key, color: p.color, archived: !!p.archivedAt });
+export const toProjectDetail = (p: ProjectDoc): ProjectDetail => ({
+  ...toProject(p),
+  metadata: p.metadata ?? [],
+  createdAt: p.createdAt.toISOString(),
+  archivedAt: p.archivedAt?.toISOString() ?? null,
+});
+
+/** Project metadata as a plain object for agents. Keys are unique (enforced on save). */
+export const projectContext = (p: ProjectDoc): Record<string, string> => Object.fromEntries((p.metadata ?? []).map((m) => [m.key, m.value]));
 export const toStatus = (s: StatusDoc): Status => ({
   id: s._id.toHexString(),
   name: s.name,
@@ -51,7 +95,8 @@ export const toStatus = (s: StatusDoc): Status => ({
   order: s.order,
 });
 
-export function toTask(t: TaskDoc, projectKey: string): Task {
+/** `workingBotIds` defaults to none: lists fill it with withWorkingBots(), publish() fills it on task.upsert. */
+export function toTask(t: TaskDoc, projectKey: string, workingBotIds: string[] = []): Task {
   return {
     id: t._id.toHexString(),
     projectId: t.projectId.toHexString(),
@@ -65,15 +110,117 @@ export function toTask(t: TaskDoc, projectKey: string): Task {
     dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null,
     archivedAt: t.archivedAt?.toISOString() ?? null,
     archivedBy: t.archivedBy?.toHexString() ?? null,
+    dependsOn: (t.dependsOn ?? []).map((id) => id.toHexString()),
+    waitingOn: (t.waitingOn ?? []).map((id) => id.toHexString()),
+    workingBotIds,
+    stalled: null,
     createdBy: t.createdBy.toHexString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };
 }
-export const toTaskDetail = (t: TaskDoc, projectKey: string): TaskDetail => ({
-  ...toTask(t, projectKey),
+export const toTaskDetail = (
+  t: TaskDoc,
+  projectKey: string,
+  refs: { dependencies: TaskRef[]; dependents: TaskRef[] },
+  workingBotIds: string[] = [],
+): TaskDetail => ({
+  ...toTask(t, projectKey, workingBotIds),
   description: t.description,
+  ...refs,
 });
+
+/**
+ * Bots holding an in-progress claim (picked up as assignee, or triaging), per task id. One query for any
+ * number of tasks.
+ */
+export async function loadWorkingBots(taskIds: ObjectId[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (!taskIds.length) return out;
+  const c = await cols();
+  const claims = await c.agentClaims
+    .find({ taskId: { $in: taskIds }, state: "in_progress" }, { projection: { taskId: 1, botId: 1 } })
+    .sort({ claimedAt: 1 })
+    .toArray();
+  for (const cl of claims) {
+    const k = cl.taskId.toHexString();
+    const ids = out.get(k) ?? [];
+    const bot = cl.botId.toHexString();
+    if (!ids.includes(bot)) ids.push(bot);
+    out.set(k, ids);
+  }
+  return out;
+}
+
+/** Fills `workingBotIds` and `stalled` on these tasks (in place): one claims query, plus a few more only when some are stalled candidates. */
+export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> {
+  const working = await loadWorkingBots(tasks.map((t) => new ObjectId(t.id)));
+  for (const t of tasks) t.workingBotIds = working.get(t.id) ?? [];
+  const stalled = await loadStalled(tasks);
+  for (const t of tasks) t.stalled = stalled.get(t.id) ?? null;
+  return tasks;
+}
+
+/**
+ * Which of these tasks are stalled (see Stalled): open, not archived, nobody working on them, at least one
+ * open task waiting on them, and either unassigned or assigned to a bot that already finished its work.
+ */
+export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> {
+  const out = new Map<string, Stalled>();
+  const candidates = tasks.filter((t) => !t.archivedAt && !t.workingBotIds.length);
+  if (!candidates.length) return out;
+  const c = await cols();
+  const ids = candidates.map((t) => new ObjectId(t.id));
+  const statusIds = [...new Set(candidates.map((t) => t.statusId))].map((id) => new ObjectId(id));
+  const openStatus = new Set(
+    (await c.statuses.find({ _id: { $in: statusIds } }, { projection: { category: 1 } }).toArray())
+      .filter((s) => s.category !== "done" && s.category !== "cancelled" && s.category !== "triage")
+      .map((s) => s._id.toHexString()),
+  );
+  const open = candidates.filter((t) => openStatus.has(t.statusId));
+  if (!open.length) return out;
+  const openIds = new Set(open.map((t) => t.id));
+  const waiters = await c.tasks
+    .find({ waitingOn: { $in: ids.filter((id) => openIds.has(id.toHexString())) }, archivedAt: null }, { projection: { waitingOn: 1, projectId: 1, number: 1, statusId: 1, orgId: 1 } })
+    .toArray();
+  if (!waiters.length) return out;
+  // A cancelled or done task keeps its waitingOn, so only count waiters that are still open themselves.
+  const closed = new Set(
+    (await c.statuses.find({ _id: { $in: [...new Map(waiters.map((w) => [w.statusId.toHexString(), w.statusId])).values()] }, category: { $in: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray()).map((s) =>
+      s._id.toHexString(),
+    ),
+  );
+  const live = waiters.filter((w) => !closed.has(w.statusId.toHexString()));
+  if (!live.length) return out;
+  const projects = await c.projects.find({ _id: { $in: [...new Map(live.map((w) => [w.projectId.toHexString(), w.projectId])).values()] } }, { projection: { key: 1 } }).toArray();
+  const pk = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
+  const blocking = new Map<string, string[]>();
+  for (const w of live) {
+    const key = `${pk.get(w.projectId.toHexString()) ?? "?"}-${w.number}`;
+    for (const id of w.waitingOn ?? []) {
+      const k = id.toHexString();
+      if (!openIds.has(k)) continue;
+      blocking.set(k, [...(blocking.get(k) ?? []), key]);
+    }
+  }
+  const blocked = open.filter((t) => blocking.has(t.id));
+  if (!blocked.length) return out;
+  // Assigned to a bot that finished its work on it (complete_task) and left it open.
+  const assigned = blocked.filter((t) => t.assigneeId);
+  const finished = assigned.length
+    ? await c.agentClaims
+        .find({ taskId: { $in: assigned.map((t) => new ObjectId(t.id)) }, state: "done" }, { projection: { taskId: 1, botId: 1 } })
+        .toArray()
+    : [];
+  const finishedBy = new Set(finished.map((f) => `${f.taskId.toHexString()}:${f.botId.toHexString()}`));
+  const byKey = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
+  for (const t of blocked) {
+    const keys = blocking.get(t.id)!.sort(byKey);
+    if (!t.assigneeId) out.set(t.id, { reason: "unassigned", botId: null, blocking: keys });
+    else if (finishedBy.has(`${t.id}:${t.assigneeId}`)) out.set(t.id, { reason: "finished", botId: t.assigneeId, blocking: keys });
+  }
+  return out;
+}
 
 export function toFeed(doc: CommentDoc | ActivityDoc): FeedItem {
   if ("body" in doc) {
@@ -204,7 +351,7 @@ export async function loadOpenAssigned(orgId: ObjectId, assigneeId: ObjectId, li
     c.projects.find({ orgId }, { projection: { key: 1 } }).toArray(),
   ]);
   const keys = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
-  return docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"));
+  return withWorkingBots(docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?")));
 }
 
 /* ---------------- tasks ---------------- */
@@ -226,7 +373,7 @@ export async function listTasks(orgId: ObjectId, scope: TaskScope): Promise<Task
     c.projects.find({ orgId }, { projection: { key: 1 } }).toArray(),
   ]);
   const keys = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
-  return docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"));
+  return withWorkingBots(docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?")));
 }
 
 /** Resolve "WEB-12" within an org. */

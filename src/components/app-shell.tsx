@@ -1,12 +1,17 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { MenuIcon } from "lucide-react";
+import { toast } from "sonner";
+import { useOrg, useOrgEvents } from "@/components/org-provider";
+import { notificationHeadline } from "@/lib/notification-text";
+import { markNotificationsRead } from "@/app/actions/notifications";
 import { Sidebar } from "@/components/sidebar";
 import { CommandMenu } from "@/components/command-menu";
 import { NewTaskDialog, type NewTaskDefaults } from "@/components/new-task-dialog";
 import { cn } from "@/lib/utils";
+import { orgPath, taskPath } from "@/lib/paths";
 
 interface ShellCtx {
   newTask: (defaults?: NewTaskDefaults) => void;
@@ -81,10 +86,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </aside>
         <div className="flex min-w-0 flex-1">{children}</div>
       </div>
+      <NotificationToasts />
       <CommandMenu open={search} onOpenChange={setSearch} />
       <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} />
     </Ctx.Provider>
   );
+}
+
+/** A live toast for each new notification, unless the inbox is already on screen. */
+function NotificationToasts() {
+  const { org, me, memberById, setUnread } = useOrg();
+  const router = useRouter();
+  const pathname = usePathname();
+  useOrgEvents((e) => {
+    if (e.type !== "notification" || e.userId !== me.id || pathname === orgPath(org.slug, "inbox")) return;
+    const n = e.notification;
+    const actor = n.actorId ? memberById.get(n.actorId) : undefined;
+    toast(notificationHeadline(n, actor?.name ?? null), {
+      description: n.detail && n.kind !== "mentioned" ? `${n.taskTitle} · ${n.detail}` : n.taskTitle,
+      action: {
+        label: "Open",
+        onClick: () => {
+          setUnread((c) => c - 1);
+          void markNotificationsRead(org.slug, [n.id]);
+          router.push(taskPath(org.slug, n.taskKey, "inbox"));
+        },
+      },
+    });
+  });
+  return null;
 }
 
 export function MobileNavButton() {

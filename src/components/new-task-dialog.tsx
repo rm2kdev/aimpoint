@@ -17,16 +17,19 @@ import {
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
 import { DueBadge, DuePicker } from "@/components/due-date";
-import { CalendarIcon } from "lucide-react";
+import { CalendarIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS } from "@/lib/format";
-import type { Priority, Task, TaskType } from "@/lib/types";
+import type { Priority, Task, TaskRef, TaskType } from "@/lib/types";
+import { TaskSearchPicker, toRef } from "@/components/dependencies";
 
 export interface NewTaskDefaults {
   projectId?: string;
   statusId?: string;
   assigneeId?: string | null;
   type?: TaskType;
+  /** Start with these dependencies (e.g. "Next task" from a task's pane). */
+  dependsOn?: TaskRef[];
 }
 
 /** Local echo so the creator's list updates even before the real-time event lands. */
@@ -51,6 +54,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const [priority, setPriority] = useState<Priority>(0);
   const [type, setType] = useState<TaskType>("issue");
   const [dueDate, setDueDate] = useState<string | null>(null);
+  const [deps, setDeps] = useState<TaskRef[]>([]);
   const [error, setError] = useState<string>();
   const [pending, start] = useTransition();
   const [editorKey, setEditorKey] = useState(0);
@@ -59,12 +63,14 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
     if (!defaults) return;
     setTitle("");
     setDescription("");
-    setProjectId(defaults.projectId ?? projects[0]?.id ?? "");
+    const active = projects.filter((p) => !p.archived);
+    setProjectId(active.find((p) => p.id === defaults.projectId)?.id ?? active[0]?.id ?? "");
     setStatusId(defaults.statusId ?? firstOpen?.id ?? "");
     setAssigneeId(defaults.assigneeId ?? null);
     setPriority(0);
     setType(defaults.type ?? "issue");
     setDueDate(null);
+    setDeps(defaults.dependsOn ?? []);
     setError(undefined);
     setEditorKey((k) => k + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -80,7 +86,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const submit = () => {
     if (!title.trim()) return setError("Give the task a title.");
     start(async () => {
-      const r = await createTask(org.slug, { title, description, projectId, statusId, assigneeId, priority, type, dueDate });
+      const r = await createTask(org.slug, { title, description, projectId, statusId, assigneeId, priority, type, dueDate, dependsOn: deps.map((d) => d.id) });
       if (!r.ok) return setError(r.error);
       const t = r.data!;
       emitLocalTask(t);
@@ -178,6 +184,27 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
               )}
             </button>
           </DuePicker>
+          {deps.map((d) => (
+            <span key={d.id} className={`${chip} gap-1 pr-1 text-foreground`} title={`Depends on ${d.key}: ${d.title}`}>
+              <HourglassIcon className="size-3.5 text-faint" />
+              <span className="max-w-[180px] truncate">
+                <span className="tabular font-mono text-[11.5px] text-faint">{d.key}</span> {d.title}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDeps((list) => list.filter((x) => x.id !== d.id))}
+                aria-label={`Remove dependency on ${d.key}`}
+                className="grid size-5 place-items-center rounded text-faint hover:bg-accent hover:text-foreground"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </span>
+          ))}
+          <TaskSearchPicker exclude={deps.map((d) => d.id)} onPick={(t) => setDeps((list) => [...list, toRef(t)])}>
+            <button className={chip}>
+              <HourglassIcon className="size-3.5" /> {deps.length ? "Add" : "Depends on"}
+            </button>
+          </TaskSearchPicker>
         </div>
         <div className="flex items-center gap-3 border-t border-border px-5 py-3">
           <p role="alert" aria-live="polite" className="min-w-0 flex-1 truncate text-[13px] text-destructive">

@@ -6,9 +6,14 @@ import { cols } from "@/lib/db";
 import { requireOrg } from "@/lib/session";
 import { guard, UserError, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
-import { generateKey, validateAvatar } from "@/lib/bots";
+import { publishWorking } from "@/lib/claims";
+import { generateKey, hashKey, validateAvatar } from "@/lib/bots";
 import { toBot } from "@/lib/data";
-import type { Bot, BotAvatar } from "@/lib/types";
+import { METHOD_IDS, backendFor } from "@/lib/bot-connect";
+import { deliver, hermesProbe, providerProbe } from "@/lib/bot-dispatch";
+import { seal, secretHint, unseal } from "@/lib/secrets";
+import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMethod } from "@/lib/types";
+import { orgPath } from "@/lib/paths";
 
 export interface BotInput {
   name: string;
@@ -40,7 +45,7 @@ export async function createBot(slug: string, input: BotInput): Promise<Result<{
     const c = await cols();
     await c.bots.insertOne(doc);
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
     return { bot: toBot(doc), key };
   });
 }
@@ -53,7 +58,7 @@ export async function updateBot(slug: string, id: string, input: BotInput): Prom
     const bot = await c.bots.findOneAndUpdate({ _id: botId(id), orgId: org._id }, { $set: data }, { returnDocument: "after" });
     if (!bot) throw new UserError("This bot no longer exists.");
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
     return toBot(bot);
   });
 }
@@ -70,7 +75,11 @@ export async function rerollBotKey(slug: string, id: string): Promise<Result<{ b
       { returnDocument: "after" },
     );
     if (!bot) throw new UserError("This bot no longer exists.");
-    revalidatePath(`/${slug}/settings/bots/${id}`);
+    // Providers that call Vector on the bot's behalf hold a sealed copy of the key: keep it current.
+    if (bot.connection?.vectorKeySealed) {
+      await c.bots.updateOne({ _id: bot._id }, { $set: { "connection.vectorKeySealed": seal(key) } });
+    }
+    revalidatePath(orgPath(slug, "settings", "bots", id));
     return { bot: toBot(bot), key };
   });
 }
@@ -83,8 +92,164 @@ export async function deleteBot(slug: string, id: string): Promise<Result> {
     const _id = botId(id);
     const res = await c.bots.deleteOne({ _id, orgId: org._id });
     if (!res.deletedCount) throw new UserError("This bot no longer exists.");
+    // Tasks whose row changes for open clients: the bot's assigned ones and the ones it was working on.
+    const [assigned, working] = await Promise.all([
+      c.tasks.find({ orgId: org._id, assigneeId: _id }, { projection: { _id: 1 } }).toArray(),
+      c.agentClaims.find({ botId: _id, state: "in_progress" }, { projection: { taskId: 1 } }).toArray(),
+    ]);
     await c.tasks.updateMany({ orgId: org._id, assigneeId: _id }, { $set: { assigneeId: null, updatedAt: new Date() } });
+    await Promise.all([c.agentClaims.deleteMany({ botId: _id }), c.botMentions.deleteMany({ botId: _id })]);
+    const touched = new Map([...assigned.map((t) => t._id), ...working.map((w) => w.taskId)].map((id) => [id.toHexString(), id]));
+    await publishWorking(org._id, user._id, [...touched.values()], { workingOnly: false });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
-    revalidatePath(`/${slug}`, "layout");
+    revalidatePath(orgPath(slug), "layout");
+  });
+}
+
+
+/* ---------------- connection ---------------- */
+
+export interface ConnectionInput {
+  agent: BotAgent;
+  method: BotMethod;
+  url?: string;
+  model?: string;
+  /** New secret. Omit to keep the saved one (same method only). */
+  secret?: string;
+  /** The bot's Vector key, for methods that hand it to a provider. */
+  vectorKey?: string;
+  /** No key in hand: issue the bot a new one for the provider (the old one stops working). */
+  rotateKey?: boolean;
+  /** Vector's origin as the browser sees it. */
+  vectorUrl?: string;
+}
+
+const isPrivateHost = (h: string) =>
+  h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|\[?::1\]?$|\[?f[cd])/i.test(h);
+
+/** Checks an outbound URL. Link-local and cloud metadata hosts are never allowed; private hosts only off Vercel. */
+function cleanUrl(raw: string | undefined, label: string) {
+  const s = String(raw ?? "").trim();
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    throw new UserError(`${label} has to be a full URL, like https://example.com.`);
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new UserError(`${label} has to start with http:// or https://.`);
+  const h = u.hostname.toLowerCase();
+  if (/^169\.254\./.test(h) || h === "metadata.google.internal" || h.startsWith("[fe80")) throw new UserError(`${label} can't point at that address.`);
+  if (process.env.VERCEL && isPrivateHost(h)) throw new UserError(`Vector runs in the cloud and can't reach ${h}. Use a public address or a tunnel.`);
+  return u.toString().replace(/\/+$/, "");
+}
+
+export async function saveBotConnection(slug: string, id: string, input: ConnectionInput): Promise<Result<{ bot: Bot; key?: string }>> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug, { admin: true });
+    if (!METHOD_IDS.includes(input.method)) throw new UserError("Pick a backend.");
+    const m = backendFor(input.method);
+    if (m.agent !== input.agent) throw new UserError("Pick a backend.");
+    const c = await cols();
+    const bot = await c.bots.findOne({ _id: botId(id), orgId: org._id });
+    if (!bot) throw new UserError("This bot no longer exists.");
+    const prev = bot.connection?.method === input.method ? bot.connection : null;
+
+    const conn: BotConnectionDoc = { agent: input.agent, method: input.method, updatedAt: new Date() };
+    let issued: ReturnType<typeof generateKey> | null = null;
+    try {
+      const v = new URL(String(input.vectorUrl ?? ""));
+      if (v.protocol === "http:" || v.protocol === "https:") conn.vectorUrl = v.origin;
+    } catch {}
+    if (m.url) conn.url = cleanUrl(input.url, m.url.label);
+
+    let secret = input.secret?.trim() || null;
+    if (m.secret) {
+      if (secret) {
+        if (secret.length > 500) throw new UserError(`${m.secret.label} looks too long.`);
+        conn.secretSealed = seal(secret);
+        conn.secretHint = secretHint(secret);
+      } else if (prev?.secretSealed) {
+        conn.secretSealed = prev.secretSealed;
+        conn.secretHint = prev.secretHint;
+      } else throw new UserError(`Add the ${m.secret.label}.`);
+    }
+    if (m.model) {
+      const model = (input.model?.trim() || m.model.default || "").slice(0, 100);
+      if (!model) throw new UserError("Add the model id.");
+      conn.model = model;
+    }
+    if (m.needsVectorKey) {
+      if (!conn.vectorUrl || /^http:/.test(conn.vectorUrl) || isPrivateHost(new URL(conn.vectorUrl).hostname)) {
+        throw new UserError(`${m.title} calls Vector from its own servers, so Vector needs a public https:// address. This one is ${conn.vectorUrl ?? "unknown"}.`);
+      }
+      const vk = input.vectorKey?.trim();
+      if (vk) {
+        if (hashKey(vk) !== bot.keyHash) throw new UserError("That isn't this bot's current key.");
+        conn.vectorKeySealed = seal(vk);
+      } else if (prev?.vectorKeySealed) conn.vectorKeySealed = prev.vectorKeySealed;
+      else if (input.rotateKey) {
+        issued = generateKey();
+        conn.vectorKeySealed = seal(issued.key);
+      } else throw new UserError("This backend needs the bot's key.");
+    }
+
+    // Check push targets before saving, so a saved connection is a working one.
+    if (input.method === "hermes-api") {
+      const probe = await hermesProbe(conn.url!, secret ?? unseal(conn.secretSealed!) ?? "");
+      if (!probe.ok) throw new UserError(probe.error);
+    }
+    if ((input.method === "claude-api" || input.method === "openai-api") && secret) {
+      const probe = await providerProbe(input.method === "claude-api" ? "anthropic" : "openai", secret, conn.model!);
+      if (!probe.ok) throw new UserError(probe.error);
+    }
+    secret = null;
+
+    const set: Record<string, unknown> = { connection: conn };
+    if (issued) Object.assign(set, { keyHash: issued.hash, keyHint: issued.hint, keyRotatedAt: new Date() });
+    const saved = await c.bots.findOneAndUpdate({ _id: bot._id }, { $set: set }, { returnDocument: "after" });
+    revalidatePath(orgPath(slug, "settings", "bots"), "layout");
+    return { bot: toBot(saved!), key: issued?.key };
+  });
+}
+
+/** Sends a test wake-up through a push connection and returns the outcome. */
+export async function testBotConnection(slug: string, id: string): Promise<Result<Bot>> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug, { admin: true });
+    const c = await cols();
+    const bot = await c.bots.findOne({ _id: botId(id), orgId: org._id });
+    if (!bot?.connection) throw new UserError("Set up a connection first.");
+    await deliver(bot, org, { kind: "test" });
+    return toBot((await c.bots.findOne({ _id: bot._id }))!);
+  });
+}
+
+export async function disconnectBot(slug: string, id: string): Promise<Result> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug, { admin: true });
+    const res = await (await cols()).bots.updateOne({ _id: botId(id), orgId: org._id }, { $unset: { connection: "" } });
+    if (!res.matchedCount) throw new UserError("This bot no longer exists.");
+    revalidatePath(orgPath(slug, "settings", "bots"), "layout");
+  });
+}
+
+/** Is this the bot's current key? Lets the wizard reuse a key the admin kept. */
+export async function checkBotKey(slug: string, id: string, key: string): Promise<Result<boolean>> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug, { admin: true });
+    const bot = await (await cols()).bots.findOne({ _id: botId(id), orgId: org._id }, { projection: { keyHash: 1 } });
+    if (!bot) throw new UserError("This bot no longer exists.");
+    return hashKey(String(key ?? "").trim()) === bot.keyHash;
+  });
+}
+
+/** Last check-in and last wake-up, for the wizard's live check. */
+export async function getBotPulse(slug: string, id: string): Promise<Result<Pick<Bot, "lastUsedAt" | "connection">>> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug);
+    const bot = await (await cols()).bots.findOne({ _id: botId(id), orgId: org._id });
+    if (!bot) throw new UserError("This bot no longer exists.");
+    const b = toBot(bot);
+    return { lastUsedAt: b.lastUsedAt, connection: b.connection };
   });
 }

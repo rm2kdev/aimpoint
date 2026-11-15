@@ -3,7 +3,8 @@
 import { cols } from "@/lib/db";
 import { requireOrg, type OrgContext } from "@/lib/session";
 import { guard, UserError, type Result } from "@/lib/result";
-import { findTaskByKey, loadCounts, loadFeed, toTask, toTaskDetail } from "@/lib/data";
+import { findTaskByKey, loadCounts, loadFeed, toTask, toTaskDetail, withWorkingBots } from "@/lib/data";
+import { loadTaskRefs } from "@/lib/dependencies";
 import {
   addCommentAs,
   createTaskAs,
@@ -41,7 +42,9 @@ export async function getTaskDetail(slug: string, key: string): Promise<Result<{
     const { org } = await requireOrg(slug);
     const found = await findTaskByKey(org._id, key);
     if (!found) throw new UserError("This task no longer exists.");
-    return { task: toTaskDetail(found.task, found.project.key), feed: await loadFeed(found.task._id) };
+    const [refs, feed] = await Promise.all([loadTaskRefs(org._id, found.task), loadFeed(found.task._id)]);
+    const [task] = await withWorkingBots([toTaskDetail(found.task, found.project.key, refs)]);
+    return { task, feed };
   });
 }
 
@@ -52,12 +55,21 @@ export async function getCounts(slug: string): Promise<Result<Counts>> {
   });
 }
 
-export async function searchTasks(slug: string, q: string): Promise<Result<Task[]>> {
+/** Tasks by title or key. With `recentWhenEmpty`, an empty query returns recently updated unarchived tasks (for pickers). */
+export async function searchTasks(slug: string, q: string, opts: { recentWhenEmpty?: boolean } = {}): Promise<Result<Task[]>> {
   return guard(async () => {
     const { org } = await requireOrg(slug);
     const query = q.trim().slice(0, 100);
-    if (!query) return [];
     const c = await cols();
+    if (!query) {
+      if (!opts.recentWhenEmpty) return [];
+      const [docs, projects] = await Promise.all([
+        c.tasks.find({ orgId: org._id, archivedAt: null }, { projection: { description: 0 } }).sort({ updatedAt: -1 }).limit(20).toArray(),
+        c.projects.find({ orgId: org._id }, { projection: { key: 1 } }).toArray(),
+      ]);
+      const pk = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
+      return withWorkingBots(docs.map((d) => toTask(d as TaskDoc, pk.get(d.projectId.toHexString()) ?? "?")));
+    }
     const projects = await c.projects.find({ orgId: org._id }).toArray();
     const keys = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
     const keyMatch = /^([A-Za-z][A-Za-z0-9]*)-(\d+)$/.exec(query);
@@ -72,6 +84,6 @@ export async function searchTasks(slug: string, q: string): Promise<Result<Task[
       .sort({ updatedAt: -1 })
       .limit(20)
       .toArray();
-    return docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"));
+    return withWorkingBots(docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?")));
   });
 }

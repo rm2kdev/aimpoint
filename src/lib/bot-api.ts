@@ -1,7 +1,8 @@
 import "server-only";
 import { ObjectId } from "mongodb";
-import { authenticateBot } from "@/lib/bots";
+import { authenticateBot, toolsForBot } from "@/lib/bots";
 import { cols } from "@/lib/db";
+import { findTaskByKey } from "@/lib/data";
 import { UserError } from "@/lib/result";
 import type { Actor } from "@/lib/task-service";
 import type { BotDoc, OrgDoc } from "@/lib/types";
@@ -12,8 +13,12 @@ export interface BotCtx {
   actor: Actor;
 }
 
-/** Wraps a bot API handler: authenticates the Bearer key and maps errors to JSON. */
-export function botRoute<P>(handler: (req: Request, ctx: BotCtx, params: P) => Promise<unknown>) {
+/**
+ * Wraps a bot API handler: authenticates the Bearer key and maps errors to JSON.
+ * `tool` names the MCP tool this endpoint is equivalent to, so a bot role that denies the tool
+ * also denies the REST call.
+ */
+export function botRoute<P>(handler: (req: Request, ctx: BotCtx, params: P) => Promise<unknown>, tool?: string) {
   return async (req: Request, routeCtx: { params: Promise<P> }) => {
     const auth = await authenticateBot(req);
     if (!auth) {
@@ -22,8 +27,11 @@ export function botRoute<P>(handler: (req: Request, ctx: BotCtx, params: P) => P
         { status: 401, headers: { "WWW-Authenticate": "Bearer" } },
       );
     }
+    if (tool && !(await toolsForBot(auth.bot)).has(tool)) {
+      return Response.json({ error: `${auth.bot.name}'s role doesn't allow ${tool}.` }, { status: 403 });
+    }
     try {
-      const data = await handler(req, { ...auth, actor: { orgId: auth.org._id, id: auth.bot._id, isAdmin: false } }, await routeCtx.params);
+      const data = await handler(req, { ...auth, actor: { orgId: auth.org._id, id: auth.bot._id, isAdmin: false, isBot: true } }, await routeCtx.params);
       return data instanceof Response ? data : Response.json(data);
     } catch (err) {
       if (err instanceof UserError) {
@@ -98,6 +106,26 @@ export function parseType(v: unknown) {
   if (v === undefined) return undefined;
   if (v === "issue" || v === "feature") return v;
   throw new UserError("`type` is \"issue\" or \"feature\".");
+}
+
+/** `dependsOn`: a list of task keys ("WEB-12") or ids -> ids. Undefined when not provided; null clears. */
+export async function resolveTaskRefs(orgId: ObjectId, v: unknown): Promise<string[] | undefined> {
+  if (v === undefined) return undefined;
+  if (v === null) return [];
+  if (!Array.isArray(v)) throw new UserError("`dependsOn` is a list of task keys like [\"WEB-12\"].");
+  const c = await cols();
+  const out: string[] = [];
+  for (const raw of v) {
+    const s = String(raw).trim();
+    if (ObjectId.isValid(s) && s.length === 24 && (await c.tasks.findOne({ orgId, _id: new ObjectId(s) }, { projection: { _id: 1 } }))) {
+      out.push(s);
+      continue;
+    }
+    const found = await findTaskByKey(orgId, s);
+    if (!found) throw new UserError(`Unknown task "${s}" in \`dependsOn\`.`);
+    out.push(found.task._id.toHexString());
+  }
+  return out;
 }
 
 /** Plain text becomes paragraphs; HTML is passed through to the sanitiser. */
