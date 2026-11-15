@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "seed": "node scripts/seed.mjs",
+    "perf:drag": "node scripts/perf/drag.mjs",
     "test": "node --test \"src/**/*.test.mjs\""
   },
   "dependencies": {
