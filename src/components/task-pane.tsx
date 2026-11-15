@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
-import { MemberAvatar, PriorityIcon, ProjectDot, UnassignedAvatar } from "@/components/bits";
+import { MemberAvatar, PriorityIcon, ProjectDot, TypeSquare, UnassignedAvatar } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import {
   Picker,
@@ -43,8 +43,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
-import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
-import { isClosedCategory, type FeedItem, type Priority, type Task, type TaskDetail, type TaskRef } from "@/lib/types";
+import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
+import { isClosedCategory, type FeedItem, type Priority, type Task, type TaskDetail, type TaskRef, type TaskType } from "@/lib/types";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -352,8 +352,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             <dd>
               <Picker disabled={!canWork} label="Type" value={task.type} options={TYPE_OPTIONS} onChange={(type) => patch({ type })} searchable={false}>
                 <button className={propBtn}>
-                  <span className={cn("size-2 rounded-[2px]", task.type === "issue" ? "bg-[#e5484d]" : "bg-[#30a46c]")} />
-                  {task.type === "issue" ? "Issue" : "Feature request"}
+                  <TypeSquare type={task.type} />
+                  {TYPE_NAMES[task.type] ?? TYPE_NAMES.issue}
                 </button>
               </Picker>
             </dd>
@@ -664,7 +664,7 @@ function Feed({ feed }: { feed: FeedItem[] }) {
       case "priority":
         return <>set priority to {PRIORITY_LABELS[Number(f.to) as Priority].toLowerCase()}</>;
       case "type":
-        return <>changed the type to {f.to === "feature" ? "feature request" : "issue"}</>;
+        return <>changed the type to {(TYPE_NAMES[f.to as TaskType] ?? f.to ?? "issue").toLowerCase()}</>;
       case "title":
         return "renamed this task";
       case "due":

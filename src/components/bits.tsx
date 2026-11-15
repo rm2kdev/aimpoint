@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
-import { avatarColor, initials, PRIORITY_LABELS } from "@/lib/format";
+import { avatarColor, initials, PRIORITY_LABELS, TYPE_LABELS } from "@/lib/format";
 import type { BotAvatar as BotAvatarData, BotShape, Member, Priority, Status, TaskType } from "@/lib/types";
 
 /* ---------- Status ring (signature move) ---------- */
@@ -322,11 +322,22 @@ export function PriorityIcon({ priority, className }: { priority: Priority; clas
 
 /* ---------- Type tag ---------- */
 
+/** Square colour per type (DESIGN.md: issue-red, feature-green, task-slate). */
+export const TYPE_SWATCH: Record<TaskType, string> = {
+  issue: "bg-[#e5484d]",
+  feature: "bg-[#30a46c]",
+  task: "bg-[#8b8d98]",
+};
+
+export function TypeSquare({ type, className }: { type: TaskType; className?: string }) {
+  return <span aria-hidden className={cn("size-2 shrink-0 rounded-[2px]", TYPE_SWATCH[type] ?? TYPE_SWATCH.issue, className)} />;
+}
+
 export function TypeTag({ type, className }: { type: TaskType; className?: string }) {
   return (
     <span className={cn("inline-flex h-5 items-center gap-1.5 rounded-[5px] bg-chip px-1.5 text-[11.5px] text-muted-foreground", className)}>
-      <span className={cn("size-1.5 rounded-[2px]", type === "issue" ? "bg-[#e5484d]" : "bg-[#30a46c]")} />
-      {type === "issue" ? "Issue" : "Feature"}
+      <TypeSquare type={type} className="size-1.5" />
+      {TYPE_LABELS[type] ?? TYPE_LABELS.issue}
     </span>
   );
 }

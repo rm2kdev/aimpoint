@@ -24,3 +24,5 @@ export function timeAgo(iso: string, now = Date.now()) {
 
 export const PRIORITY_LABELS = ["No priority", "Low", "Medium", "High"] as const;
 export const TYPE_LABELS = { issue: "Issue", feature: "Feature", task: "Task" } as const;
+/** Longer names for pickers and the task pane ("Feature request" rather than the tag's "Feature"). */
+export const TYPE_NAMES = { issue: "Issue", feature: "Feature request", task: "Task" } as const;

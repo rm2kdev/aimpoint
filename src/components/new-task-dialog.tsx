@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useOrg } from "@/components/org-provider";
-import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
+import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeSquare, UnassignedAvatar } from "@/components/bits";
 import {
   Picker,
   PRIORITY_OPTIONS,
@@ -19,7 +19,7 @@ import { RichEditor } from "@/components/rich-editor";
 import { DueBadge, DuePicker } from "@/components/due-date";
 import { CalendarIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
-import { PRIORITY_LABELS } from "@/lib/format";
+import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
 import type { Priority, Task, TaskRef, TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
 
@@ -111,7 +111,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
         }}
       >
         <DialogTitle className="sr-only">New task</DialogTitle>
-        <DialogDescription className="sr-only">Capture an issue or feature request.</DialogDescription>
+        <DialogDescription className="sr-only">Capture an issue, feature request or task.</DialogDescription>
         <div className="flex items-center gap-2 px-5 pt-4 text-[12.5px] text-faint">
           <span>New task</span>
         </div>
@@ -163,8 +163,8 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
           </Picker>
           <Picker label="Type" value={type} options={TYPE_OPTIONS} onChange={setType} searchable={false}>
             <button className={chip}>
-              <span className={type === "issue" ? "size-2 rounded-[2px] bg-[#e5484d]" : "size-2 rounded-[2px] bg-[#30a46c]"} />
-              {type === "issue" ? "Issue" : "Feature request"}
+              <TypeSquare type={type} />
+              {TYPE_NAMES[type]}
             </button>
           </Picker>
           <Picker label="Project" value={projectId} options={projectOptions} onChange={setProjectId} placeholder="Move to project…">

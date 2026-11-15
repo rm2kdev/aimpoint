@@ -350,6 +350,7 @@ export function TaskWorkspace({
                 ["all", "All"],
                 ["issue", "Issues"],
                 ["feature", "Features"],
+                ["task", "Tasks"],
               ] as const
             ).map(([v, label]) => (
               <button
@@ -358,7 +359,7 @@ export function TaskWorkspace({
                 aria-checked={typeFilter === v}
                 onClick={() => setTypeFilter(v)}
                 className={cn(
-                  "h-[22px] rounded-full px-2.5 text-[12.5px] transition-colors",
+                  "h-[22px] rounded-full px-2 text-[12.5px] transition-colors",
                   typeFilter === v ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground",
                 )}
               >
@@ -377,7 +378,7 @@ export function TaskWorkspace({
               <Button onClick={() => newTask()} className="h-[30px] gap-2 rounded-lg px-3">
                 <PlusIcon className="size-3.5" />
                 <span className="max-sm:hidden">New task</span>
-                <Kbd className="border-transparent bg-white/15 text-current max-sm:hidden dark:bg-black/10">N</Kbd>
+                <Kbd className={cn("border-transparent bg-white/15 text-current max-sm:hidden dark:bg-black/10", selectedKey && "max-2xl:hidden")}>N</Kbd>
               </Button>
             )}
           </div>

@@ -5,9 +5,9 @@ import { CheckIcon } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useOrg } from "@/components/org-provider";
-import { BotAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
-import { PRIORITY_LABELS } from "@/lib/format";
-import type { Priority, TaskType } from "@/lib/types";
+import { BotAvatar, PriorityIcon, ProjectDot, StatusRing, TypeSquare, UnassignedAvatar, UserAvatar } from "@/components/bits";
+import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
+import { TASK_TYPES, type Priority, type TaskType } from "@/lib/types";
 
 export interface Option<V extends string> {
   value: V;
@@ -115,10 +115,11 @@ export const PRIORITY_OPTIONS: Option<`${Priority}`>[] = ([3, 2, 1, 0] as Priori
   icon: <PriorityIcon priority={p} />,
 }));
 
-export const TYPE_OPTIONS: Option<TaskType>[] = [
-  { value: "issue", label: "Issue", icon: <span className="ml-0.5 size-2 rounded-[2px] bg-[#e5484d]" /> },
-  { value: "feature", label: "Feature request", icon: <span className="ml-0.5 size-2 rounded-[2px] bg-[#30a46c]" /> },
-];
+export const TYPE_OPTIONS: Option<TaskType>[] = TASK_TYPES.map((t) => ({
+  value: t,
+  label: TYPE_NAMES[t],
+  icon: <TypeSquare type={t} className="ml-0.5" />,
+}));
 
 /** Projects that take tasks. An archived `current` stays listed so a task already in it still shows its project. */
 export function useProjectOptions(current?: string): Option<string>[] {

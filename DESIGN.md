@@ -21,6 +21,7 @@ colors:
   destructive: "#d93036"
   issue-red: "#e5484d"
   feature-green: "#30a46c"
+  task-slate: "#8b8d98"
   dark-paper: "#0a0a0a"
   dark-sidebar-paper: "#111111"
   dark-popover: "#141414"
@@ -231,7 +232,7 @@ A neutral, slightly warm stone palette with a single cobalt accent and one signa
 - **Destructive Red** (destructive / dark-destructive): validation errors and destructive actions, usually at 10–20% tint behind red text.
 
 ### Data colours (not chrome)
-- **Issue Red** (issue-red) and **Feature Green** (feature-green): the 6–8px square inside the type tag and type pickers.
+- **Issue Red** (issue-red), **Feature Green** (feature-green) and **Task Slate** (task-slate): the 6–8px square inside the type tag and type pickers. Task Slate is a neutral cool grey (Radix slate 9) for plain work items that are neither a bug nor a feature; it reads in both themes without competing with the two chromatic types. Every type picks its square from one `TYPE_SWATCH` map in `bits.tsx`, so a new type never falls through a two-way ternary.
 - Status colours are per-organisation data shown only inside status rings. The seeded defaults are Backlog #a3a3a3, Todo #737373, In Progress #e5a00d, In Review #8b5cf6, Done #2f6fed, Cancelled #a3a3a3.
 - Project dots and avatars draw from fixed eight-colour sets (see the sidecar). Avatars are hashed by user id, so a person keeps the same colour everywhere.
 
@@ -310,7 +311,7 @@ Refined and restrained; a near-black slab for the one thing you came to do, quie
 - **Destructive:** red text on a 10% red tint, 20% on hover. Never a solid red slab.
 
 ### Chips
-- **Type tag:** 20px tall, 5px radius, Stone Wash fill, 11.5px Muted Ink text, led by a 6px Issue Red or Feature Green square.
+- **Type tag:** 20px tall, 5px radius, Stone Wash fill, 11.5px Muted Ink text, led by a 6px Issue Red, Feature Green or Task Slate square.
 - **Property chip** (New Task dialog): 28px tall, 7.2px radius, hairline border on paper, 12.5px Muted Ink text with an icon (ring, avatar, priority bars, type square or project dot). Hover and open state fill with Hover Wash and lift the text to Ink.
 - **Type filter:** a pill outline (Input Stroke) holding 22px pill segments. The active segment is solid Ink with paper text; inactive segments are Muted Ink and darken on hover.
 
