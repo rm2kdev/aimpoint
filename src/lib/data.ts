@@ -268,6 +268,15 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
         .toArray()
     : [];
   const finishedBy = new Set(finished.map((f) => `${f.taskId.toHexString()}:${f.botId.toHexString()}`));
+  // ...nor while that bot (as the task's triager) has a close-out of it pending: Vector already woke it to wrap the
+  // task up, and VEC-85 kept its done claim for that (VEC-89). Once it handled the close-out, the rule applies again.
+  const maybeFinished = assigned.filter((t) => finishedBy.has(`${t.id}:${t.assigneeId}`));
+  const closingOut = maybeFinished.length
+    ? await c.tasks
+        .find({ _id: { $in: maybeFinished.map((t) => new ObjectId(t.id)) }, "closeout.botId": { $exists: true }, "closeout.resolvedAt": null }, { projection: { closeout: 1 } })
+        .toArray()
+    : [];
+  for (const d of closingOut) if (d.closeout) finishedBy.delete(`${d._id.toHexString()}:${d.closeout.botId.toHexString()}`);
   const byKey = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
   for (const t of blocked) {
     const keys = blocking.get(t.id)!.sort(byKey);

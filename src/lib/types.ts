@@ -122,9 +122,11 @@ export interface TaskDoc {
   /**
    * The umbrella became ready and its triager (`botId`, = triagedBy then) was asked to close it out.
    * `deliveredAt` is null until a push wake-up succeeds or check_for_work hands it out, so a polling
-   * triager finds it once. Replaced each time the task becomes ready again; cleared on re-triage.
+   * triager finds it once. `resolvedAt` is set once that bot has handled it (complete_task on the task, or a status
+   * change by it); until then the close-out is pending and the task isn't "finished" Stalled (VEC-89).
+   * Replaced each time the task becomes ready again; cleared on re-triage.
    */
-  closeout?: { botId: ObjectId; requestedAt: Date; deliveredAt: Date | null } | null;
+  closeout?: { botId: ObjectId; requestedAt: Date; deliveredAt: Date | null; resolvedAt?: Date | null } | null;
   /**
    * Manual order (VEC-57): fractional index key from lib/rank.ts, one key space per organisation, smaller =
    * higher. Backfilled once by the `2026-11-task-rank` migration; new tasks get one above everything else.

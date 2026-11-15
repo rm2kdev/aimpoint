@@ -156,16 +156,19 @@ async function reevaluate(orgId: ObjectId, by: By, tasks: TaskDoc[], opts: { fin
     if (depsChanged) set.dependsOn = deps;
     const after = await c.tasks.findOneAndUpdate({ _id: t._id, orgId }, { $set: set }, { returnDocument: "after" });
     if (!after) continue;
-    // Before the upsert, so the task never broadcasts as "finished" Stalled in between.
-    if ((t.waitingOn ?? []).length > 0 && !waiting.length) await reopenForHandOff(orgId, after);
+    // Before the upsert, so the task never broadcasts as "finished" Stalled in between (a pending close-out also
+    // keeps it from being Stalled, so it's recorded here too).
+    const nowReady = (t.waitingOn ?? []).length > 0 && !waiting.length;
+    if (nowReady) await reopenForHandOff(orgId, after);
+    const closer = nowReady ? await recordCloseout(orgId, after) : null;
     const pKey = await projectKey(after.projectId);
     const key = `${pKey}-${after.number}`;
     await publish(hex(orgId), { type: "task.upsert", actorId: hex(by.id), task: toTask(after, pKey) });
-    if ((t.waitingOn ?? []).length > 0 && !waiting.length) {
+    if (nowReady) {
       const ids = (t.dependsOn ?? []).filter((id) => finishedKeys.has(hex(id)));
       const finished = ids.map((id) => finishedKeys.get(hex(id))!);
       const cancelledKeys = ids.filter((id) => cancelled.has(hex(id))).map((id) => finishedKeys.get(hex(id))!);
-      await handOffReady(orgId, by, after, key, finished, opts.deleted ? "deleted" : "done", cancelledKeys);
+      await handOffReady(orgId, by, after, key, finished, opts.deleted ? "deleted" : "done", cancelledKeys, closer);
     }
   }
 }
@@ -235,6 +238,8 @@ export async function handOffReady(
   how: "done" | "deleted" | "removed" = "done",
   /** The subset of `finishedKeys` that was cancelled rather than done. */
   cancelledKeys: string[] = [],
+  /** The close-out the caller already recorded with recordCloseout (before its task.upsert); undefined records it here. */
+  recorded?: ObjectId | null,
 ) {
   const c = await cols();
   // `from` names what finished it; a removal is already logged as dependency_removed, so it stays empty then.
@@ -248,7 +253,8 @@ export async function handOffReady(
   const detail = readyDetail(finishedKeys, how, cancelledKeys);
 
   // A triaged umbrella: its triager is called back to close it out (on top of the assignee hearing about it).
-  const closer = await requestCloseout(orgId, by, task, key, detail);
+  const closer = recorded !== undefined ? recorded : await recordCloseout(orgId, task);
+  if (closer) wakeBots(orgId, [closer], { kind: "closeout", taskId: task._id, taskKey: key, title: task.title, by: await by.name(), detail });
 
   if (!task.assigneeId) return;
   // The triager is also the assignee: the close-out wake-up already covers it.
@@ -274,21 +280,33 @@ function readyDetail(keys: string[], how: "done" | "deleted" | "removed", cancel
 }
 
 /**
- * The task is ready and open. If a bot triaged it, record a pending close-out for that bot and wake it
- * (push bots now; polling bots find it on check_for_work). Returns the bot, or null for untriaged tasks.
- * The record is only written while the task is still ready, open-ended and triaged by that bot, so a
- * task closed or re-triaged in the meantime isn't handed out.
+ * The task is ready and open. If a bot triaged it, record a pending close-out for that bot (push bots are woken by
+ * handOffReady; polling bots find it on check_for_work). Returns the bot, or null for untriaged tasks.
+ * The record is only written while the task is still ready, open, unarchived and triaged by that bot, so a
+ * task closed or re-triaged in the meantime isn't handed out. Call it before the task's upsert: a pending
+ * close-out keeps the task from showing as "finished" Stalled (VEC-89), so the broadcast must already see it.
  */
-async function requestCloseout(orgId: ObjectId, by: By, task: TaskDoc, key: string, detail: string): Promise<ObjectId | null> {
+export async function recordCloseout(orgId: ObjectId, task: TaskDoc): Promise<ObjectId | null> {
   const botId = task.triagedBy;
-  if (!botId) return null;
+  if (!botId || task.archivedAt) return null;
   const c = await cols();
   if (!(await c.bots.findOne({ orgId, _id: botId }, { projection: { _id: 1 } }))) return null;
+  const status = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
+  if (!status || isClosedCategory(status.category)) return null;
   const res = await c.tasks.updateOne(
     { _id: task._id, orgId, triagedBy: botId, archivedAt: null, ...READY },
-    { $set: { closeout: { botId, requestedAt: new Date(), deliveredAt: null } } },
+    { $set: { closeout: { botId, requestedAt: new Date(), deliveredAt: null, resolvedAt: null } } },
   );
-  if (!res.matchedCount) return null;
-  wakeBots(orgId, [botId], { kind: "closeout", taskId: task._id, taskKey: key, title: task.title, by: await by.name(), detail });
-  return botId;
+  return res.matchedCount ? botId : null;
+}
+
+/**
+ * The bot handled its close-out of this task (complete_task, or moved its status): the close-out is no longer
+ * pending, so a task it left open with waiters shows as "finished" Stalled again. Returns whether one was pending;
+ * the caller republishes the task.
+ */
+export async function resolveCloseout(taskId: ObjectId, botId: ObjectId): Promise<boolean> {
+  const c = await cols();
+  const res = await c.tasks.updateOne({ _id: taskId, "closeout.botId": botId, "closeout.resolvedAt": null }, { $set: { "closeout.resolvedAt": new Date() } });
+  return res.modifiedCount > 0;
 }

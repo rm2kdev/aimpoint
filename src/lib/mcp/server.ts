@@ -5,7 +5,7 @@ import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { toolsForBot } from "@/lib/bots";
 import { addCommentAs, createTaskAs, markStartedByBot, moveTask, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
-import { READY, taskKeys } from "@/lib/dependencies";
+import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { notify } from "@/lib/notifications";
@@ -171,6 +171,7 @@ async function closeoutFilter(ctx: McpCtx) {
     triagedBy: ctx.bot._id,
     "closeout.botId": ctx.bot._id,
     "closeout.deliveredAt": null,
+    "closeout.resolvedAt": null,
     archivedAt: null,
     statusId: { $in: await openStatusIds(ctx.org._id) },
     ...READY,
@@ -519,7 +520,10 @@ const TOOLS: Record<string, ToolImpl> = {
         { $set: { state: "done", finishedAt: now }, $setOnInsert: { _id: new ObjectId(), orgId: ctx.org._id, claimedAt: now } },
         { upsert: true },
       );
-      if (claim?.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+      // Finishing is also the end of its close-out, if one was pending: the task can show as "finished" Stalled now (VEC-89).
+      const resolved = await resolveCloseout(task._id, ctx.bot._id);
+      // A new done claim (none before, or in progress) can also make it Stalled, so republish then as well.
+      if (claim?.state !== "done" || resolved) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
       const key = `${project.key}-${task.number}`;
       const handoff = await reviewHandoff(ctx, task._id, key, comment);
       return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${comment ? " Comment posted." : ""}${handoff}`)] };
