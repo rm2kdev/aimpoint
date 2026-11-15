@@ -63,6 +63,7 @@ export function TaskWorkspace({
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [showClosed, setShowClosed] = useState(false);
   const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : "priority");
+  const [collapsed, toggleGroup] = useCollapsedGroups(`vector:collapsed:${pathname}`);
 
   useEffect(() => {
     setViewDefaults({ projectId: scope.projectId, assigneeId: scope.mine ? me.id : undefined });
@@ -203,7 +204,11 @@ export function TaskWorkspace({
   });
 
   /* ----- selection & keyboard ----- */
-  const flat = useMemo(() => (scope.archived ? archivedList : shown.flatMap((g) => g.tasks)), [scope.archived, archivedList, shown]);
+  // Tasks in folded groups are out of sight, so j/k skips them.
+  const flat = useMemo(
+    () => (scope.archived ? archivedList : shown.flatMap((g) => (collapsed.has(g.status.id) ? [] : g.tasks))),
+    [scope.archived, archivedList, shown, collapsed],
+  );
   const open = useCallback(
     (key: string | null) => {
       const q = new URLSearchParams(params.toString());
@@ -363,14 +368,33 @@ export function TaskWorkspace({
               {openGroups.length === 0 && !showClosed && (
                 <EmptyState title="All clear" hint="Every task in this view is done. Nice." onNew={() => newTask()} compact />
               )}
-              {shown.map((g) => (
+              {shown.map((g) => {
+                const folded = collapsed.has(g.status.id);
+                return (
                 <div key={g.status.id} className="mt-4 first:mt-2">
-                  <h2 className="sticky top-0 z-10 flex h-8 items-center gap-2 bg-background px-3 text-[12.5px] font-semibold">
-                    <StatusRing status={g.status} statuses={statuses} size={15} />
-                    {g.status.name}
-                    <span className="tabular font-mono font-normal text-faint">{g.tasks.length}</span>
+                  <h2 className="sticky top-0 z-10 flex h-8 items-center bg-background px-1 text-[12.5px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(g.status.id)}
+                      aria-expanded={!folded}
+                      aria-controls={`group-${g.status.id}`}
+                      title={folded ? `Show ${g.status.name}` : `Hide ${g.status.name}`}
+                      className="group/heading flex h-7 items-center gap-2 rounded-md pr-2 pl-0.5 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+                    >
+                      <ChevronDownIcon
+                        aria-hidden
+                        className={cn(
+                          "size-3.5 text-faint transition-transform duration-200 group-hover/heading:text-foreground motion-reduce:transition-none",
+                          folded && "-rotate-90",
+                        )}
+                      />
+                      <StatusRing status={g.status} statuses={statuses} size={15} />
+                      {g.status.name}
+                      <span className="tabular font-mono font-normal text-faint">{g.tasks.length}</span>
+                    </button>
                   </h2>
-                  <ul className="flex flex-col gap-1">
+                  {!folded && (
+                  <ul id={`group-${g.status.id}`} className="flex flex-col gap-1">
                     {g.tasks.map((t) => (
                       <TaskRow
                         key={t.id}
@@ -391,8 +415,10 @@ export function TaskWorkspace({
                       />
                     ))}
                   </ul>
+                  )}
                 </div>
-              ))}
+                );
+              })}
               {closedCount > 0 && (
                 <button
                   onClick={() => setShowClosed((s) => !s)}
@@ -621,4 +647,37 @@ function EmptyState({
       </div>
     </div>
   );
+}
+
+/** Status groups folded away in this view, remembered per view in localStorage. */
+function useCollapsedGroups(storageKey: string) {
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    let ids: string[] = [];
+    try {
+      const raw: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
+      if (Array.isArray(raw)) ids = raw.filter((x): x is string => typeof x === "string");
+    } catch {}
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is client-only; read after hydration
+    setCollapsed(new Set(ids));
+    setLoadedKey(storageKey);
+  }, [storageKey]);
+
+  useEffect(() => {
+    if (loadedKey !== storageKey) return;
+    if (collapsed.size) localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+    else localStorage.removeItem(storageKey);
+  }, [collapsed, storageKey, loadedKey]);
+
+  const toggle = useCallback((id: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }, []);
+
+  return [collapsed, toggle] as const;
 }
