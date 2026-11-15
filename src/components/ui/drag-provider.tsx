@@ -527,11 +527,35 @@ export function createDragStore() {
       if (ev.pointerId === pointerId) cancel()
     }
 
+    // Escape cancels while the button is still down: the release that follows would click the row
+    // (or link) under the pointer, so eat that one click too, as onUp does after a drop (VEC-82).
+    const swallowNextRelease = () => {
+      const done = () => {
+        window.removeEventListener("pointerup", onLateUp, { capture: true })
+        window.removeEventListener("pointercancel", onLateEnd, { capture: true })
+        window.removeEventListener("pointerdown", onLateEnd, { capture: true })
+      }
+      const onLateUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId) return
+        done()
+        window.addEventListener("click", swallowClick, { capture: true, once: true })
+        setTimeout(() => window.removeEventListener("click", swallowClick, { capture: true }), 0)
+      }
+      // The release never came (lost outside the window, cancelled): stop waiting for it.
+      const onLateEnd = (ev: PointerEvent) => {
+        if (ev.pointerId === pointerId) done()
+      }
+      window.addEventListener("pointerup", onLateUp, { capture: true })
+      window.addEventListener("pointercancel", onLateEnd, { capture: true })
+      window.addEventListener("pointerdown", onLateEnd, { capture: true })
+    }
+
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key !== "Escape" || !active) return
       ev.preventDefault()
       ev.stopPropagation()
       cancel()
+      swallowNextRelease()
     }
 
     // Once a touch drag is live, stop the page from scrolling under the finger.
