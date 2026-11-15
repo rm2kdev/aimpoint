@@ -219,6 +219,13 @@ export const CLOSEOUT_STEPS = (key: string) =>
     `As its triager you can only comment on ${key} and move it to a closing status; anything else needs its creator, its assignee or an admin.`,
   ].join("\n");
 
+/**
+ * Work wake-ups (assigned, ready, and a mention that hands the work back): how a bot keeps the ticket
+ * posted while it works. Shared by the push prompt and check_for_work so the two can't drift.
+ */
+export const PROGRESS_HINT =
+  "Keep the ticket posted while you work, with add_comment: right after you pick it up, a short plan of what you're going to do; then an update at each meaningful milestone (finished investigating, change made, checks running, blocker hit) and at least every 10 minutes or so of work, saying what's done and what's next. Keep each update to a few lines of plain text (no Markdown) and don't post one for every tool call. If you're blocked or waiting on someone, say so straight away and @mention them (<@id>).";
+
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
 const STARTED_NOTE =
   "Vector moves it to In Progress for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and Done, or In Review only when a named person must check something.";
@@ -258,11 +265,11 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       : reason.kind === "closeout"
       ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey)}`
       : reason.kind === "assigned"
-      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE}`
+      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
-        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE}`
+        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE}\n\n${PROGRESS_HINT}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
-            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? RESUMED_NOTE : "Reply to it."
+            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE}\n\n${PROGRESS_HINT}` : "Reply to it."
           }`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
   const projectBlock = meta.length

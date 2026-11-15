@@ -6,7 +6,7 @@ import { findTaskByKey, projectContext } from "@/lib/data";
 import { toolsForBot } from "@/lib/bots";
 import { addCommentAs, createTaskAs, markStartedByBot, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, taskKeys } from "@/lib/dependencies";
-import { CLOSEOUT_STEPS, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
+import { CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
@@ -324,7 +324,7 @@ const TOOLS: Record<string, ToolImpl> = {
         const resumed = await resumeOnMention(ctx.org._id, ctx.bot._id, task._id);
         const fresh = resumed ? ((await c.tasks.findOne({ _id: task._id })) ?? task) : task;
         const resumeNote = resumed
-          ? ` You're its assignee, so this hands the work back to you: it's picked up by you again and Vector moved it back to In Progress (no need to set that yourself). Do what the comment asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment.`
+          ? ` You're its assignee, so this hands the work back to you: it's picked up by you again and Vector moved it back to In Progress (no need to set that yourself). Do what the comment asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment.\n\n${PROGRESS_HINT}`
           : "";
         return taskResult(
           ctx,
@@ -376,7 +376,7 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           task,
           project,
-          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to In Progress for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it, keep people posted with add_comment, and call complete_task when you're done (or release_task to hand it back). Finish with Done when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use In Review only when a named person must check or decide something, and @mention them.`,
+          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to In Progress for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back). Finish with Done when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use In Review only when a named person must check or decide something, and @mention them.\n\n${PROGRESS_HINT}`,
           { includeImages, extra: { kind: "assigned", queue: await queueCounts(ctx) } },
         );
       }
@@ -786,8 +786,9 @@ export const SERVER_INSTRUCTIONS = `You are a bot in a Vector issue tracker orga
 Typical loop: call check_for_work. It returns one item at a time:
 - kind "mention": someone tagged you in a comment. Read the task and thread, then reply with add_comment.
 - kind "closeout": a task you triaged whose sub-tasks are all done. Summarise what they delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
-- kind "assigned": a task assigned to you, now picked up by you and moved to In Progress for you. Do the work, post progress with add_comment, hand it on with assign_task if needed, then call complete_task with Done (releases the tasks waiting on it), or In Review only when a named person must check something (@mention them).
+- kind "assigned": a task assigned to you, now picked up by you and moved to In Progress for you. Do the work, hand it on with assign_task if needed, then call complete_task with Done (releases the tasks waiting on it), or In Review only when a named person must check something (@mention them).
 - kind "idle": nothing new.
+While you work an assigned task (or one a mention handed back to you), keep its ticket posted with add_comment: a short plan when you pick it up, then a few plain-text lines at each milestone and at least every ~10 minutes saying what's done and what's next, never one per tool call, and straight away when you're blocked or waiting on someone (@mention them). The assigned hand-out repeats the details.
 Call check_for_work again until it says idle. Use get_workspace for project keys, statuses and people's ids.
 If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task, chain them with \`depends_on\` so they run in a logical order, make the original depend on them, then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
 Tasks can depend on other tasks (\`depends_on\` on create_task / update_task). A task isn't offered or pushed to its assignee until everything it depends on is closed (a done or cancelled status; the ready message says which were cancelled); moving your task to a done or cancelled status (set_status or complete_task with a status) releases the tasks waiting on it.\nComments are plain text: write add_comment and complete_task comments without Markdown (no **bold**, headings or tables); plain "- " lists are fine. Task descriptions do accept Markdown.`;
