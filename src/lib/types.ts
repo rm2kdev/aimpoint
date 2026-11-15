@@ -18,6 +18,12 @@ export interface UserDoc {
   passwordHash: string;
   /** Profile picture URL (see saveAvatar); none = initials. */
   image?: string | null;
+  /** Bumped to revoke sessions: JWTs issued under an older version are refused (see lib/security.ts). */
+  sessionVersion?: number;
+  /** One-time nonce that lets the acting session move to the new sessionVersion after a revoke. */
+  sessionReissue?: { nonce: string; expiresAt: Date } | null;
+  /** Wrong-password counter for reauthenticate(). */
+  reauth?: { failures: number; lockedUntil: Date | null };
   createdAt: Date;
 }
 export interface OrgDoc {

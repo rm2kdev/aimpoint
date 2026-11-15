@@ -6,13 +6,14 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { signIn, signOut } from "@/auth";
 import { cols } from "@/lib/db";
+import { PASSWORD_HASH_COST, passwordSchema } from "@/lib/password";
 
 export type FormState = { error?: string; fields?: Record<string, string> } | undefined;
 
 const signupSchema = z.object({
   name: z.string().trim().min(1, "Enter your name.").max(80),
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
-  password: z.string().min(8, "Use at least 8 characters for your password.").max(200),
+  password: passwordSchema,
   next: z.string().optional(),
 });
 
@@ -34,7 +35,7 @@ export async function signupAction(_: FormState, form: FormData): Promise<FormSt
     _id: new ObjectId(),
     email,
     name,
-    passwordHash: await bcrypt.hash(password, 11),
+    passwordHash: await bcrypt.hash(password, PASSWORD_HASH_COST),
     createdAt: new Date(),
   });
   await signIn("credentials", { email, password, redirect: false });

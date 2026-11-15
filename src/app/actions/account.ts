@@ -8,6 +8,8 @@ import { AuthError, currentUser } from "@/lib/session";
 import { guard, UserError, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { ACCOUNT_PATH } from "@/lib/paths";
+import { passwordSchema } from "@/lib/password";
+import { hashPassword, reauthenticate, revokeSessions } from "@/lib/security";
 
 const DISPLAY_NAME_MAX = 80;
 
@@ -41,4 +43,49 @@ export async function updateDisplayName(raw: string): Promise<Result<{ name: str
     revalidatePath(ACCOUNT_PATH);
     return { name };
   });
+}
+
+const changePasswordSchema = z
+  .object({
+    current: z.string().min(1, "Enter your current password."),
+    next: passwordSchema,
+    confirm: z.string(),
+  })
+  .refine((v) => v.next === v.confirm, { message: "The new passwords don't match.", path: ["confirm"] })
+  .refine((v) => v.next !== v.current, { message: "Choose a new password that's different from your current one.", path: ["next"] });
+
+export type ChangePasswordField = "current" | "next" | "confirm";
+
+/**
+ * Change the signed-in user's password after checking the current one (rate-limited). Keeps this session
+ * signed in and signs out every other session on its next request.
+ */
+export async function changePassword(input: {
+  current: string;
+  next: string;
+  confirm: string;
+}): Promise<Result<void> & { field?: ChangePasswordField }> {
+  const parsed = changePasswordSchema.safeParse({
+    current: typeof input?.current === "string" ? input.current : "",
+    next: typeof input?.next === "string" ? input.next : "",
+    confirm: typeof input?.confirm === "string" ? input.confirm : "",
+  });
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    return { ok: false, error: issue.message, field: issue.path[0] as ChangePasswordField };
+  }
+  let wrongCurrent = false;
+  const r = await guard(async () => {
+    const user = await currentUser();
+    if (!user) throw new AuthError("You are signed out. Sign in and try again.");
+    try {
+      await reauthenticate(user._id, parsed.data.current);
+    } catch (e) {
+      wrongCurrent = true;
+      throw e;
+    }
+    // New hash and session-version bump in one write, so no window where the password changed but old sessions live on.
+    await revokeSessions(user._id, { set: { passwordHash: await hashPassword(parsed.data.next) } });
+  });
+  return !r.ok && wrongCurrent ? { ...r, field: "current" } : r;
 }

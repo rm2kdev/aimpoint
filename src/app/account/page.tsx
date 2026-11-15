@@ -7,6 +7,7 @@ import { SettingsRow } from "@/components/settings/ui";
 import { UserAvatar } from "@/components/bits";
 import { ProfileForm } from "./profile-form";
 import { PictureForm } from "./picture-form";
+import { PasswordForm } from "./password-form";
 
 export const metadata = { title: "Account" };
 
@@ -45,6 +46,9 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
         </SettingsRow>
         <SettingsRow title="Picture" desc="Shown next to your name on tasks, comments, mentions and member lists in every organisation you belong to.">
           <PictureForm key={user.image ?? "none"} id={id} name={user.name} image={user.image ?? null} />
+        </SettingsRow>
+        <SettingsRow title="Password" desc="Changing your password keeps you signed in here and signs you out on every other browser and device.">
+          <PasswordForm />
         </SettingsRow>
       </div>
     </main>
