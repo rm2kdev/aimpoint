@@ -21,7 +21,7 @@ import {
   ToolInputError,
   type ImageBlock,
 } from "@/lib/mcp/context";
-import { isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc } from "@/lib/types";
+import { isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc } from "@/lib/types";
 
 /* ---------------- types ---------------- */
 
@@ -258,21 +258,42 @@ async function triageQueue(ctx: McpCtx) {
 
 /* ---------------- tools ---------------- */
 
+/** The ids among `ids` whose task is still open (not done or cancelled, per its status's stage). */
+async function openDeps(orgId: ObjectId, ids: ObjectId[]): Promise<ObjectId[]> {
+  if (!ids.length) return [];
+  const c = await cols();
+  const deps = await c.tasks.find({ orgId, _id: { $in: ids } }, { projection: { statusId: 1 } }).toArray();
+  const closed = new Set(
+    (await c.statuses.find({ _id: { $in: deps.map((d) => d.statusId) } }, { projection: { category: 1 } }).toArray())
+      .filter((s) => isClosedCategory(s.category))
+      .map((s) => s._id.toHexString()),
+  );
+  return deps.filter((d) => !closed.has(d.statusId.toHexString())).map((d) => d._id);
+}
+
 /**
  * A bot finished its work on a task but left it in an open status (e.g. In Review) while other tasks wait
  * on it. They stay blocked until someone closes it, and no bot is working on it any more, so make sure a
  * person hears about it: the people the closing comment @mentioned (already notified), else the task's
  * creator when that's a person, else the organisation's admins. Returns a note for the tool reply, or "".
+ * Not when the task is itself waiting on open dependencies (the bot parked it behind them): that isn't a
+ * stall, and the task is handed on again when they close (VEC-90), so the reply only says so.
  */
 async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment: string | undefined | null): Promise<string> {
   const c = await cols();
   const orgId = ctx.org._id;
-  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1, createdBy: 1, archivedAt: 1 } });
+  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1, createdBy: 1, archivedAt: 1, waitingOn: 1, assigneeId: 1 } });
   if (!task || task.archivedAt) return "";
   const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1, name: 1 } });
-  if (!st || st.category === "done" || st.category === "cancelled") return "";
+  if (!st || isClosedCategory(st.category)) return "";
   const blocked = await c.tasks.find({ orgId, waitingOn: taskId, archivedAt: null }, { projection: { _id: 1 } }).toArray();
   if (!blocked.length) return "";
+  const ownDeps = await openDeps(orgId, task.waitingOn ?? []);
+  if (ownDeps.length) {
+    const depKeys = [...(await taskKeys(orgId, ownDeps)).values()].sort();
+    const back = task.assigneeId?.equals(ctx.bot._id) ? "you'll be handed it back" : "it becomes ready again";
+    return ` ${key} is waiting on ${depKeys.join(", ")}; ${back} when ${depKeys.length === 1 ? "it closes" : "they close"}.`;
+  }
   const keys = [...(await taskKeys(orgId, blocked.map((b) => b._id))).values()].sort();
   const waiting = `${keys.join(", ")} ${keys.length === 1 ? "is" : "are"} still waiting on ${key}`;
   const dir = await loadDirectory(orgId);
