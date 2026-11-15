@@ -27,6 +27,8 @@
 //   --json <file>       write every raw sample as JSON
 //   --keep-org          don't delete the throwaway org (prints its slug)
 //   PERF_DEBUG=1        log CDP calls and navigation to stderr
+//   PERF_PROFILE=<dir>  also save a CPU profile (.cpuprofile) of every timed run there; with a build that has
+//                       productionBrowserSourceMaps on, its frames map back to source (VEC-81)
 //
 // Dev vs production: build in a copy or worktree (never in the live :3200 checkout), `pnpm start --port 3290`
 // there with the same .env.local, then pass both targets. The prod server has its own in-process realtime bus,
@@ -489,7 +491,21 @@ async function runOnce(page, name, { count, drop, ctx = {} }) {
     page.net = { realtime: [], rsc: [], actions: [] };
     const m0 = await page.metrics();
     await page.eval(`window.__perf.start(${count})`);
+    // PERF_PROFILE=<dir>: also record a CPU profile of each timed run (open it in DevTools > Performance).
+    const profile = process.env.PERF_PROFILE && !count;
+    if (profile) {
+      await page.cdp.send("Profiler.enable");
+      await page.cdp.send("Profiler.setSamplingInterval", { interval: 100 });
+      await page.cdp.send("Profiler.start");
+    }
     await moves();
+    if (profile) {
+      const { profile: p } = await page.cdp.send("Profiler.stop");
+      fs.mkdirSync(process.env.PERF_PROFILE, { recursive: true });
+      const file = path.join(process.env.PERF_PROFILE, `${name}-${Date.now()}.cpuprofile`);
+      fs.writeFileSync(file, JSON.stringify(p));
+      debug("cpu profile", file);
+    }
     const r = await page.eval("window.__perf.stop()");
     const m1 = await page.metrics();
     const d = (k) => (m1[k] ?? 0) - (m0[k] ?? 0);

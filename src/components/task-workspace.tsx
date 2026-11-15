@@ -11,9 +11,9 @@ import { useOrg, useOrgBase, useOrgEvents } from "@/components/org-provider";
 import { MobileNavButton, useShell } from "@/components/app-shell";
 import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
-import { Picker, useStatusOptions } from "@/components/pickers";
+import { LazyPicker, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
-import { TaskContextMenu } from "@/components/task-context-menu";
+import { useTaskContextMenu } from "@/components/task-context-menu";
 import { DueBadge } from "@/components/due-date";
 import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
@@ -752,16 +752,18 @@ const TaskRow = memo(function TaskRow({
   const closed = status?.category === "done" || status?.category === "cancelled";
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hinted = useRef(false);
+  // The row's menus and tooltip mount on first use, not with the row (VEC-81).
+  const { rowProps, menu } = useTaskContextMenu({
+    task,
+    onOpen: () => (onSeen(), actions.open(task.key)),
+    onPatch,
+    onArchive,
+    onMove: movable ? (where) => actions.move(task, where) : undefined,
+  });
 
   return (
-    <TaskContextMenu
-      task={task}
-      onOpen={() => (onSeen(), actions.open(task.key))}
-      onPatch={onPatch}
-      onArchive={onArchive}
-      onMove={movable ? (where) => actions.move(task, where) : undefined}
-    >
     <div
+      {...rowProps}
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
@@ -771,7 +773,7 @@ const TaskRow = memo(function TaskRow({
         selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
       )}
     >
-      <Picker
+      <LazyPicker
         disabled={access === "comment"}
         label={`Status: ${status?.name ?? "none"}`}
         value={task.statusId}
@@ -782,7 +784,7 @@ const TaskRow = memo(function TaskRow({
         <button className="relative z-10 -m-1 grid size-[26px] place-items-center rounded-full transition-transform enabled:hover:scale-110 enabled:active:scale-95 disabled:pointer-events-none">
           <TaskStatusRing task={task} size={18} />
         </button>
-      </Picker>
+      </LazyPicker>
       <Link
         href={href}
         scroll={false}
@@ -861,30 +863,51 @@ const TaskRow = memo(function TaskRow({
           {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={20} /> : null}
         </span>
         <span className="tabular w-[64px] text-right font-mono text-[12px] text-faint max-sm:hidden">{task.key}</span>
-        {canEdit && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => onArchive(!task.archivedAt)}
-                aria-label={task.archivedAt ? `Restore ${task.key}` : `Archive ${task.key}`}
-                className={cn(
-                  "relative z-10 -mr-1.5 grid size-7 place-items-center rounded-md text-faint transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100",
-                  task.archivedAt ? "opacity-100" : "opacity-0 group-hover:opacity-100 max-md:hidden",
-                )}
-              >
-                {task.archivedAt ? <ArchiveRestoreIcon className="size-4" /> : <ArchiveIcon className="size-4" />}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {task.archivedAt ? "Restore" : "Archive"} <Kbd className="ml-1">E</Kbd>
-            </TooltipContent>
-          </Tooltip>
-        )}
+        {canEdit && <ArchiveButton task={task} onArchive={onArchive} />}
       </div>
+      {menu}
     </div>
-    </TaskContextMenu>
   );
 }, sameRowProps);
+
+/**
+ * A row's archive/restore button. Its tooltip mounts the first time a pointer or focus reaches the button
+ * (mouse hover or keyboard focus, VEC-81), so a list doesn't mount a Radix tooltip per row. Arming swaps the
+ * button for a new element, so focus that armed it is put back on the new one (which then shows the tooltip,
+ * as a focused trigger does).
+ */
+function ArchiveButton({ task, onArchive }: { task: Task; onArchive: (archived: boolean) => void }) {
+  const [armed, setArmed] = useState<false | "pointer" | "focus">(false);
+  const ref = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    if (armed === "focus" && document.activeElement !== ref.current) ref.current?.focus();
+  }, [armed]);
+  const button = (
+    <button
+      ref={ref}
+      onClick={() => onArchive(!task.archivedAt)}
+      onPointerEnter={armed ? undefined : (e) => e.pointerType === "mouse" && setArmed("pointer")}
+      // Keyboard focus only: a tap focuses the button too, and swapping it then would swallow the tap's click.
+      onFocus={armed ? undefined : (e) => e.currentTarget.matches(":focus-visible") && setArmed("focus")}
+      aria-label={task.archivedAt ? `Restore ${task.key}` : `Archive ${task.key}`}
+      className={cn(
+        "relative z-10 -mr-1.5 grid size-7 place-items-center rounded-md text-faint transition-opacity hover:bg-background hover:text-foreground focus-visible:opacity-100",
+        task.archivedAt ? "opacity-100" : "opacity-0 group-hover:opacity-100 max-md:hidden",
+      )}
+    >
+      {task.archivedAt ? <ArchiveRestoreIcon className="size-4" /> : <ArchiveIcon className="size-4" />}
+    </button>
+  );
+  if (!armed) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent>
+        {task.archivedAt ? "Restore" : "Archive"} <Kbd className="ml-1">E</Kbd>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 interface Fresh {
   actorId: string;
