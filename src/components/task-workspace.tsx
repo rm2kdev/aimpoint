@@ -19,6 +19,7 @@ import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SortableList, type SortableHandleProps } from "@/components/ui/sortable-list";
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
@@ -191,10 +192,14 @@ export function TaskWorkspace({
   /* ----- glide rows to their new position (FLIP) ----- */
   const rowEls = useRef(new Map<string, HTMLElement>());
   const lastTop = useRef(new Map<string, number>());
+  const scrollRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const next = new Map<string, number>();
+    // Position within the scrolled content, so scrolling between renders doesn't read as a move.
+    const box = scrollRef.current;
+    const origin = box ? box.getBoundingClientRect().top - box.scrollTop : 0;
     rowEls.current.forEach((el, id) => {
-      const top = el.offsetTop;
+      const top = el.getBoundingClientRect().top - origin;
       next.set(id, top);
       const prev = lastTop.current.get(id);
       if (prev !== undefined && Math.abs(prev - top) > 2 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -245,6 +250,8 @@ export function TaskWorkspace({
       const t = e.target as HTMLElement;
       if (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName) || e.metaKey || e.ctrlKey) return;
       if (document.querySelector("[role=dialog],[data-radix-popper-content-wrapper]")) return;
+      // A row lifted for a keyboard (or pointer) reorder owns the keys until it's dropped.
+      if (document.querySelector("[data-sortable-list][data-dragging]")) return;
       if (e.key === "Escape" && selectedKey) return open(null);
       if (e.key === "j" || e.key === "k" || e.key === "ArrowDown" || e.key === "ArrowUp") {
         if (!flat.length) return;
@@ -306,6 +313,19 @@ export function TaskWorkspace({
     return true;
   };
 
+  const manual = view.sort === "manual";
+  /** A drag attempt on a row that can't be dragged here: say why (once per gesture, deduped by id). */
+  const dragHint = (task: Task, canEdit: boolean) => {
+    if (!manual && !scope.archived) {
+      toast("Switch to Manual sort to drag tasks into order", {
+        id: "drag-hint",
+        action: { label: "Use Manual", onClick: () => setView((v) => ({ ...v, sort: "manual" })) },
+      });
+    } else if (manual && !canEdit) {
+      toast(`Only the creator of ${task.key} or an admin can reorder it`, { id: "drag-hint" });
+    }
+  };
+
   /** Optimistic edit from the row (status ring, right-click menu); rolls back with a toast if refused. */
   const patchTask = async (task: Task, patch: TaskPatch) => {
     upsert({ ...task, ...(patch as Partial<Task>) });
@@ -364,7 +384,7 @@ export function TaskWorkspace({
         </header>
         <FilterChips value={view} onChange={setView} />
 
-        <div className="relative min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-16 sm:px-4">
+        <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-16 sm:px-4">
           {tasks.size === 0 ? (
             scope.archived ? (
               <EmptyState title="Nothing archived" hint={emptyHint} icon="archive" />
@@ -380,8 +400,8 @@ export function TaskWorkspace({
           ) : scope.archived ? (
             <ul className="mt-2 flex flex-col gap-1">
               {archivedList.map((t) => (
+                <li key={t.id}>
                 <TaskRow
-                  key={t.id}
                   task={t}
                   selected={t.key === selectedKey}
                   fresh={fresh.get(t.id)}
@@ -398,6 +418,7 @@ export function TaskWorkspace({
                     else rowEls.current.delete(t.id);
                   }}
                 />
+                </li>
               ))}
             </ul>
           ) : (
@@ -431,10 +452,25 @@ export function TaskWorkspace({
                     </button>
                   </h2>
                   {!folded && (
-                  <ul id={`group-${g.status.id}`} className="flex flex-col gap-1">
-                    {g.tasks.map((t, i) => (
+                  <SortableList
+                    // Drag to reorder within the group (VEC-59): Manual sort only, creator or admin rows only.
+                    listId={g.status.id}
+                    aria-label={g.status.name}
+                    className="flex flex-col gap-1"
+                    items={g.tasks}
+                    getId={(t) => t.id}
+                    getLabel={(t) => `${t.key} ${t.title}`}
+                    getData={(t) => t}
+                    handle
+                    disabled={!manual}
+                    onReorder={(ids, { movedId, toIndex }) => {
+                      const t = g.tasks.find((x) => x.id === movedId);
+                      if (!t) return;
+                      const keyOf = (id?: string) => (id ? g.tasks.find((x) => x.id === id)?.key : undefined);
+                      void moveTask(t, { afterKey: keyOf(ids[toIndex - 1]), beforeKey: keyOf(ids[toIndex + 1]) });
+                    }}
+                    renderItem={(t, { index: i, handleProps, isDragging }) => (
                       <TaskRow
-                        key={t.id}
                         task={t}
                         selected={t.key === selectedKey}
                         fresh={fresh.get(t.id)}
@@ -444,11 +480,14 @@ export function TaskWorkspace({
                         href={`${pathname}?task=${t.key}`}
                         onSeen={() => seen(t.id)}
                         onStatus={(s) => patchTask(t, { statusId: s })}
-                  onPatch={(p) => patchTask(t, p)}
-                  onOpen={() => open(t.key)}
+                        onPatch={(p) => patchTask(t, p)}
+                        onOpen={() => open(t.key)}
                         onArchive={(a) => setArchived(t, a)}
+                        handleProps={manual ? handleProps : undefined}
+                        dragging={isDragging}
+                        onDragHint={(canEdit) => dragHint(t, canEdit)}
                         onMove={
-                          view.sort === "manual" && g.tasks.length > 1
+                          manual && g.tasks.length > 1
                             ? (where) => {
                                 const first = g.tasks[0];
                                 const last = g.tasks[g.tasks.length - 1];
@@ -462,8 +501,8 @@ export function TaskWorkspace({
                           else rowEls.current.delete(t.id);
                         }}
                       />
-                    ))}
-                  </ul>
+                    )}
+                  />
                   )}
                 </div>
                 );
@@ -492,6 +531,9 @@ function TaskRow({
   onPatch,
   onOpen,
   onMove,
+  handleProps,
+  dragging,
+  onDragHint,
   refCb,
 }: {
   task: Task;
@@ -508,7 +550,13 @@ function TaskRow({
   onPatch: (patch: TaskPatch) => void;
   onOpen: () => void;
   onMove?: (where: "top" | "bottom") => void;
-  refCb: (el: HTMLLIElement | null) => void;
+  /** Manual sort: SortableList handle props. Spread on the row's link only if this person may move the task. */
+  handleProps?: SortableHandleProps;
+  /** Being dragged or lifted with the keyboard. */
+  dragging?: boolean;
+  /** Someone tried to drag a row that can't be dragged here (wrong sort, or not theirs to move). */
+  onDragHint?: (canEdit: boolean) => void;
+  refCb: (el: HTMLDivElement | null) => void;
 }) {
   const { statusById, memberById, projectById, me, isAdmin } = useOrg();
   const statusOptions = useStatusOptions();
@@ -519,15 +567,17 @@ function TaskRow({
   const project = projectById.get(task.projectId);
   const closed = status?.category === "done" || status?.category === "cancelled";
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const hinted = useRef(false);
 
   return (
     <TaskContextMenu task={task} onOpen={() => (onSeen(), onOpen())} onPatch={onPatch} onArchive={onArchive} onMove={onMove}>
-    <li
+    <div
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
+        dragging && "cursor-grabbing",
         selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
       )}
     >
@@ -547,8 +597,39 @@ function TaskRow({
         href={href}
         scroll={false}
         replace
-        onClick={onSeen}
+        onClick={(e) => {
+          // The click that ends a refused drag gesture doesn't open the task.
+          if (hinted.current) {
+            hinted.current = false;
+            return e.preventDefault();
+          }
+          onSeen();
+        }}
         aria-current={selected ? "true" : undefined}
+        {...(canEdit ? handleProps : undefined)}
+        // Rows are dragged through SortableList only; never start the browser's own link drag.
+        onDragStart={(e) => e.preventDefault()}
+        onPointerDown={(e) => {
+          // A mouse drag on a row that can't be dragged here: explain why once the pointer travels.
+          if (!onDragHint || (canEdit && handleProps) || e.pointerType === "touch" || e.button !== 0) return;
+          hinted.current = false;
+          const x0 = e.clientX;
+          const y0 = e.clientY;
+          const move = (m: PointerEvent) => {
+            if (Math.hypot(m.clientX - x0, m.clientY - y0) < 8) return;
+            stop();
+            hinted.current = true;
+            onDragHint(canEdit);
+          };
+          const stop = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", stop);
+            window.removeEventListener("pointercancel", stop);
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", stop);
+          window.addEventListener("pointercancel", stop);
+        }}
         className={cn(
           "truncate text-[14px] outline-none after:absolute after:inset-0 after:rounded-[9px] focus-visible:after:ring-2 focus-visible:after:ring-ring",
           closed && "text-faint",
@@ -610,7 +691,7 @@ function TaskRow({
           </Tooltip>
         )}
       </div>
-    </li>
+    </div>
     </TaskContextMenu>
   );
 }
