@@ -38,6 +38,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [search, setSearch] = useState(false);
   const [creating, setCreating] = useState<NewTaskDefaults | null>(null);
   const [navOpen, setNavOpen] = useState(false);
+  // The drawer's sidebar copy is mounted the first time the drawer opens, then kept (so it slides out with
+  // its content). On desktop it never opens, so there's only one sidebar rendering, subscribing to drags
+  // and re-rendering on count refreshes (VEC-74).
+  const [drawerMounted, setDrawerMounted] = useState(false);
+  if (navOpen && !drawerMounted) setDrawerMounted(true);
+  const closeNav = useCallback(() => setNavOpen(false), []);
+  const openSearch = useCallback(() => setSearch(true), []);
   const pathname = usePathname();
   useEffect(() => setNavOpen(false), [pathname]);
 
@@ -72,7 +79,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {/* desktop sidebar */}
           <aside className="hidden w-[248px] shrink-0 border-r border-sidebar-border lg:block">
-            <Sidebar onSearch={() => setSearch(true)} />
+            <Sidebar onSearch={openSearch} />
           </aside>
           {/* mobile drawer */}
           <div
@@ -88,7 +95,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             aria-hidden={!navOpen}
             inert={!navOpen}
           >
-            <Sidebar onSearch={() => setSearch(true)} onNavigate={() => setNavOpen(false)} />
+            {drawerMounted && <Sidebar onSearch={openSearch} onNavigate={closeNav} />}
           </aside>
           <div className="flex min-w-0 flex-1">{children}</div>
         </div>

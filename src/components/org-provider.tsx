@@ -56,8 +56,15 @@ interface Ctx {
   activeByBot: Map<string, number>;
 }
 
-/** The parts of the org context that change only on navigation or an org change, not with live counts. */
-export type OrgBase = Omit<Ctx, "counts" | "unread" | "setUnread" | "connected" | "online" | "workload" | "activeByBot">;
+/**
+ * The parts of the org context that change only on navigation or an org change, not with live counts or the
+ * sidebar's project order (a reorder would otherwise re-render every task row through `projectById`, VEC-74).
+ * `projectById` is keyed by id, so it keeps its identity when only the order changes.
+ */
+export type OrgBase = Omit<
+  Ctx,
+  "counts" | "unread" | "setUnread" | "connected" | "online" | "workload" | "activeByBot" | "projects" | "reorderProjects"
+>;
 
 const OrgCtx = createContext<Ctx | null>(null);
 const OrgBaseCtx = createContext<OrgBase | null>(null);
@@ -252,6 +259,8 @@ export function OrgProvider({
     return () => es.close();
   }, [org.id, org.slug, me.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts]);
 
+  // From the server's list, not the ordered one: a reorder keeps the same map (and the same OrgBase).
+  const projectById = useMemo(() => new Map(serverProjects.map((p) => [p.id, p])), [serverProjects]);
   const base = useMemo<OrgBase>(
     () => ({
       org,
@@ -260,18 +269,18 @@ export function OrgProvider({
       isAdmin: me.role === "admin",
       members,
       memberById: new Map([...(deletedMembers ?? []), ...members].map((m) => [m.id, m])),
-      projects,
-      projectById: new Map(projects.map((p) => [p.id, p])),
-      reorderProjects,
+      projectById,
       statuses,
       statusById: new Map(statuses.map((s) => [s.id, s])),
       subscribe,
     }),
-    [org, orgs, me, members, deletedMembers, projects, reorderProjects, statuses, subscribe],
+    [org, orgs, me, members, deletedMembers, projectById, statuses, subscribe],
   );
   const value = useMemo<Ctx>(
     () => ({
       ...base,
+      projects,
+      reorderProjects,
       counts,
       unread,
       setUnread,
@@ -280,7 +289,7 @@ export function OrgProvider({
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
     }),
-    [base, counts, unread, setUnread, connected, online, workloadSnap],
+    [base, projects, reorderProjects, counts, unread, setUnread, connected, online, workloadSnap],
   );
   return (
     <OrgBaseCtx.Provider value={base}>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
   BotIcon,
@@ -34,7 +34,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SortableList, useDropTarget, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { SortableList, useDropTarget, type SortableHandleProps, type SortableItemState } from "@/components/ui/sortable-list";
 import { useDragStore } from "@/components/ui/drag-provider";
 import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
@@ -43,7 +43,8 @@ import { accountPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import type { Project, Task } from "@/lib/types";
 
-export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
+/** Memoised: the shell re-rendering (search, new-task dialog, drawer) doesn't re-render the sidebar. */
+export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
   const { org, orgs, counts, isAdmin, unread } = useOrg();
   const pathname = usePathname();
 
@@ -110,7 +111,7 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
       </div>
     </nav>
   );
-}
+});
 
 /**
  * Active projects in the person's own order; drag (or Space + arrows) to reorder (VEC-54). On the desktop
@@ -141,42 +142,72 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
     });
   }, [springs, store, router]);
 
-  const spring = (p: Project, task: Task) => {
-    if (origin.current === null) origin.current = location.pathname + location.search;
-    // Keep the task's pane open if it was; it follows the task to its new key on drop.
-    const paneOpen = new URLSearchParams(location.search).get("task") === task.key;
-    const href = projectPath(org.slug, p.key);
-    router.push(paneOpen ? withTask(href, task.key) : href, { scroll: false });
-  };
+  // One stable object for every row (VEC-74): with stable props the memoised ProjectRow skips re-rendering
+  // when only another row's count, the active page or the order changed.
+  const actions = useMemo<ProjectRowActions>(
+    () => ({
+      // Hovering a task over a closed project: fetch its page now so the dwell hides the request (prod only;
+      // the dev router doesn't prefetch).
+      prefetch: (p) => router.prefetch(projectPath(org.slug, p.key)),
+      spring: (p, task) => {
+        if (origin.current === null) origin.current = location.pathname + location.search;
+        // Keep the task's pane open if it was; it follows the task to its new key on drop.
+        const paneOpen = new URLSearchParams(location.search).get("task") === task.key;
+        const href = projectPath(org.slug, p.key);
+        router.push(paneOpen ? withTask(href, task.key) : href, { scroll: false });
+      },
+      /** Released on the row without waiting: top of the same status in that project, one write. */
+      quickDrop: async (p, task) => {
+        const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: t }));
+        const same = task.projectId === p.id;
+        echo({ ...task, projectId: p.id });
+        const r = await moveTaskAction(org.slug, task.key, { project: same ? undefined : p.id, toTop: true });
+        if (!r.ok) {
+          echo(task);
+          return void toast.error(r.error);
+        }
+        const moved = r.data ?? task;
+        if (r.data) echo(r.data);
+        const q = new URLSearchParams(location.search);
+        if (q.get("task") === task.key && moved.key !== task.key) {
+          q.set("task", moved.key);
+          router.replace(`${location.pathname}?${q}`, { scroll: false });
+        }
+        toast.success(same ? `Moved ${task.key} to the top` : `Moved ${task.key} to ${p.name} as ${moved.key}`, {
+          description: task.title,
+          action: { label: "Open", onClick: () => router.push(withTask(projectPath(org.slug, p.key), moved.key)) },
+        });
+      },
+    }),
+    [org.slug, router],
+  );
 
-  /** Released on the row without waiting: top of the same status in that project, one write. */
-  const quickDrop = async (p: Project, task: Task) => {
-    const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: t }));
-    const same = task.projectId === p.id;
-    echo({ ...task, projectId: p.id });
-    const r = await moveTaskAction(org.slug, task.key, { project: same ? undefined : p.id, toTop: true });
-    if (!r.ok) {
-      echo(task);
-      return void toast.error(r.error);
-    }
-    const moved = r.data ?? task;
-    if (r.data) echo(r.data);
-    const q = new URLSearchParams(location.search);
-    if (q.get("task") === task.key && moved.key !== task.key) {
-      q.set("task", moved.key);
-      router.replace(`${location.pathname}?${q}`, { scroll: false });
-    }
-    toast.success(same ? `Moved ${task.key} to the top` : `Moved ${task.key} to ${p.name} as ${moved.key}`, {
-      description: task.title,
-      action: { label: "Open", onClick: () => router.push(withTask(projectPath(org.slug, p.key), moved.key)) },
-    });
-  };
+  const projectCounts = counts.projects;
+  const renderItem = useCallback(
+    (p: Project, { handleProps, isDragging }: SortableItemState) => {
+      const href = projectPath(org.slug, p.key);
+      return (
+        <ProjectRow
+          project={p}
+          href={href}
+          active={pathname === href}
+          count={projectCounts[p.id] ?? 0}
+          onNavigate={onNavigate}
+          handleProps={handleProps}
+          dragging={isDragging}
+          springs={springs}
+          actions={actions}
+        />
+      );
+    },
+    [org.slug, pathname, projectCounts, onNavigate, springs, actions],
+  );
 
   return (
     <SortableList
       items={active}
-      getId={(p) => p.id}
-      getLabel={(p) => p.name}
+      getId={projectId}
+      getLabel={projectName}
       aria-label="Projects"
       onReorder={(ids) => {
         // Applied at once by the provider; it rolls back itself if the server refuses.
@@ -184,28 +215,22 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
           if (!r.ok) toast.error(r.error || "Couldn't save the project order.");
         });
       }}
-      renderItem={(p, { handleProps, isDragging }) => {
-        const href = projectPath(org.slug, p.key);
-        return (
-          <ProjectRow
-            project={p}
-            href={href}
-            active={pathname === href}
-            count={counts.projects[p.id] ?? 0}
-            onNavigate={onNavigate}
-            handleProps={handleProps}
-            dragging={isDragging}
-            springs={springs}
-            onSpring={(task) => spring(p, task)}
-            onQuickDrop={(task) => void quickDrop(p, task)}
-          />
-        );
-      }}
+      renderItem={renderItem}
     />
   );
 }
 
-function ProjectRow({
+const projectId = (p: Project) => p.id;
+const projectName = (p: Project) => p.name;
+
+interface ProjectRowActions {
+  prefetch: (p: Project) => void;
+  spring: (p: Project, task: Task) => void;
+  quickDrop: (p: Project, task: Task) => Promise<void>;
+}
+
+/** Memoised (VEC-74): a count refresh or a reorder re-renders only the rows whose own props changed. */
+const ProjectRow = memo(function ProjectRow({
   project: p,
   href,
   active,
@@ -214,8 +239,7 @@ function ProjectRow({
   handleProps,
   dragging,
   springs,
-  onSpring,
-  onQuickDrop,
+  actions,
 }: {
   project: Project;
   href: string;
@@ -225,8 +249,7 @@ function ProjectRow({
   handleProps?: SortableHandleProps;
   dragging?: boolean;
   springs: boolean;
-  onSpring: (task: Task) => void;
-  onQuickDrop: (task: Task) => void;
+  actions: ProjectRowActions;
 }) {
   const store = useDragStore();
   const [blink, setBlink] = useState(false);
@@ -244,6 +267,9 @@ function ProjectRow({
     // Tasks only: a project being reordered (its own list group) never lands here.
     accepts: (item) => item.group === TASK_DRAG_GROUP && !!item.data,
     dwellMs: SPRING_DELAY_MS,
+    onHoverStart: () => {
+      if (!active) actions.prefetch(p);
+    },
     onDwell: (item) => {
       if (active) return; // already open
       setBlink(true);
@@ -251,13 +277,13 @@ function ProjectRow({
         setBlink(false);
         // Still the same drag, still over this row (moving off cancels the timer through onHoverEnd).
         const snap = store?.get();
-        if (snap?.item.id === item.id && snap.over?.kind === "target" && snap.over.id === targetId) onSpring(item.data as Task);
+        if (snap?.item.id === item.id && snap.over?.kind === "target" && snap.over.id === targetId) actions.spring(p, item.data as Task);
       }, SPRING_BLINK_MS);
     },
     onHoverEnd: stopBlink,
     onDrop: (item) => {
       stopBlink();
-      onQuickDrop(item.data as Task);
+      void actions.quickDrop(p, item.data as Task);
     },
   });
   const over = target.isOver && target.canDrop;
@@ -276,7 +302,7 @@ function ProjectRow({
       {p.name}
     </NavItem>
   );
-}
+});
 
 function NavItem({
   href,
