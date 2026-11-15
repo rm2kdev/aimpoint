@@ -13,6 +13,7 @@ import { publish } from "@/lib/realtime/server";
 import { detachDeleted, recomputeOrg } from "@/lib/dependencies";
 import { isClosedCategory, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
+import { removeMembership } from "@/lib/membership";
 
 function slugify(s: string) {
   return (
@@ -331,14 +332,8 @@ export async function removeMember(slug: string, userId: string): Promise<Result
     const { org, user, isAdmin } = await requireOrg(slug);
     const self = user._id.toHexString() === userId;
     if (!self && !isAdmin) throw new UserError("Only admins can remove members.");
-    const c = await cols();
-    const uid = new ObjectId(userId);
-    const m = await c.memberships.findOne({ orgId: org._id, userId: uid });
-    if (!m) throw new UserError("That person isn't a member.");
-    if (m.role === "admin" && (await adminCount(org._id)) <= 1) throw new UserError("An organisation needs at least one admin.");
-    await c.memberships.deleteOne({ _id: m._id });
-    await c.tasks.updateMany({ orgId: org._id, assigneeId: uid }, { $set: { assigneeId: null } });
-    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    if (!ObjectId.isValid(userId)) throw new UserError("That person isn't a member.");
+    await removeMembership(org._id, new ObjectId(userId), user._id);
     revalidatePath(orgPath(slug), "layout");
   });
 }

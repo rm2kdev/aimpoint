@@ -2,18 +2,21 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { ObjectId } from "mongodb";
 import { updateSession } from "@/auth";
 import { cols } from "@/lib/db";
 import { AuthError, currentUser } from "@/lib/session";
 import { guard, UserError, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { ACCOUNT_PATH } from "@/lib/paths";
+import { removeMembership } from "@/lib/membership";
 import { passwordSchema } from "@/lib/password";
 import { hashPassword, reauthenticate, revokeSessions } from "@/lib/security";
 import {
   beginSetup,
   confirmSetup,
   disableTwoFactor,
+  hasTwoFactor,
   regenerateRecoveryCodes,
   TwoFactorError,
   verifySecondFactor,
@@ -173,5 +176,97 @@ export async function regenerateTwoFactorRecoveryCodes(input: {
     const recoveryCodes = await twoFactorStep(() => regenerateRecoveryCodes(user._id));
     revalidatePath(ACCOUNT_PATH);
     return { recoveryCodes };
+  });
+}
+
+/* ---------------- email ---------------- */
+
+const emailSchema = z.string().trim().toLowerCase().max(254, "That email is too long.").email("Enter a valid email address.");
+
+export type ChangeEmailField = "email" | "password" | "code";
+
+/**
+ * Change the sign-in email after re-authentication (password, plus an authenticator or recovery code when
+ * 2FA is on). Normalised like signup/login (trimmed, lower-case) and unique: the users.email index refuses a
+ * clash. There's no mailer, so the address isn't verified. The old address stops working at once.
+ */
+export async function changeEmail(input: {
+  email: string;
+  password: string;
+  code?: string;
+}): Promise<Result<{ email: string }> & { field?: ChangeEmailField }> {
+  const parsed = emailSchema.safeParse(str(input?.email));
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0].message, field: "email" };
+  const email = parsed.data;
+  let field: ChangeEmailField | undefined;
+  const r = await guard(async () => {
+    const user = await signedInUser();
+    if (email === user.email) {
+      field = "email";
+      throw new UserError("That's already your email.");
+    }
+    if (!str(input?.password)) {
+      field = "password";
+      throw new UserError("Enter your current password.");
+    }
+    const twoFactor = hasTwoFactor(user);
+    if (twoFactor && !str(input?.code).trim()) {
+      field = "code";
+      throw new UserError("Enter a code from your authenticator app or a recovery code.");
+    }
+    field = "password";
+    await reauthenticate(user._id, str(input.password));
+    if (twoFactor) {
+      field = "code";
+      await twoFactorStep(() => verifySecondFactor(user._id, str(input.code)));
+    }
+    field = "email";
+    const c = await cols();
+    try {
+      await c.users.updateOne({ _id: user._id }, { $set: { email } });
+    } catch (e) {
+      if ((e as { code?: number }).code === 11000) throw new UserError("Another account already uses that email.");
+      throw e;
+    }
+    field = undefined;
+    // The jwt callback re-reads name/email from the database on update.
+    await updateSession({});
+    // Member lists show emails: refresh every org this user is in.
+    const memberships = await c.memberships.find({ userId: user._id }, { projection: { orgId: 1 } }).toArray();
+    const actorId = user._id.toHexString();
+    await Promise.all(memberships.map((m) => publish(m.orgId.toHexString(), { type: "org.changed", actorId })));
+    revalidatePath(ACCOUNT_PATH);
+    return { email };
+  });
+  return !r.ok && field ? { ...r, field } : r;
+}
+
+/* ---------------- sessions ---------------- */
+
+/** Sign out every other browser and device. This session stays signed in (see revokeSessions). */
+export async function signOutOtherSessions(): Promise<Result<void>> {
+  return guard(async () => {
+    const user = await signedInUser();
+    // No revalidatePath: nothing on the page changes, and a re-render in this request would still carry
+    // the pre-revoke cookie.
+    await revokeSessions(user._id);
+  });
+}
+
+/* ---------------- organisations ---------------- */
+
+/** Leave an organisation from the account page. Refused for its last admin; open tasks become unassigned. */
+export async function leaveOrganisation(orgId: string): Promise<Result<{ name: string }>> {
+  return guard(async () => {
+    const user = await signedInUser();
+    if (!ObjectId.isValid(str(orgId))) throw new UserError("You aren't a member of that organisation.");
+    const c = await cols();
+    const org = await c.orgs.findOne({ _id: new ObjectId(orgId) });
+    if (!org || !(await c.memberships.findOne({ orgId: org._id, userId: user._id }))) {
+      throw new UserError("You aren't a member of that organisation.");
+    }
+    await removeMembership(org._id, user._id, user._id);
+    revalidatePath(ACCOUNT_PATH);
+    return { name: org.name };
   });
 }

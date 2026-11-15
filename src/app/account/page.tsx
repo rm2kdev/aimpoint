@@ -9,6 +9,10 @@ import { ProfileForm } from "./profile-form";
 import { PictureForm } from "./picture-form";
 import { PasswordForm } from "./password-form";
 import { TwoFactorForm } from "./two-factor-form";
+import { EmailForm } from "./email-form";
+import { SessionsForm } from "./sessions-form";
+import { OrganisationsList, type AccountOrg } from "./organisations-list";
+import { isClosedCategory } from "@/lib/types";
 import { RECOVERY_CODE_COUNT, twoFactorStatus } from "@/lib/two-factor";
 import { format } from "date-fns";
 
@@ -24,6 +28,39 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
   const back = orgs.find((o) => o.slug === from) ?? orgs.find((o) => o._id.equals(memberships[0]?.orgId));
   const id = user._id.toHexString();
   const tfa = twoFactorStatus(user);
+  const orgIds = memberships.map((m) => m.orgId);
+  const [admins, openStatuses] = await Promise.all([
+    c.memberships.aggregate<{ _id: typeof orgIds[number]; n: number }>([
+      { $match: { orgId: { $in: orgIds }, role: "admin" } },
+      { $group: { _id: "$orgId", n: { $sum: 1 } } },
+    ]).toArray(),
+    c.statuses.find({ orgId: { $in: orgIds } }, { projection: { category: 1 } }).toArray(),
+  ]);
+  const assigned = await c.tasks
+    .aggregate<{ _id: typeof orgIds[number]; n: number }>([
+      {
+        $match: {
+          orgId: { $in: orgIds },
+          assigneeId: user._id,
+          statusId: { $in: openStatuses.filter((s) => !isClosedCategory(s.category)).map((s) => s._id) },
+        },
+      },
+      { $group: { _id: "$orgId", n: { $sum: 1 } } },
+    ])
+    .toArray();
+  const count = (rows: { _id: typeof orgIds[number]; n: number }[], id: typeof orgIds[number]) => rows.find((r) => r._id.equals(id))?.n ?? 0;
+  const accountOrgs: AccountOrg[] = memberships.flatMap((m) => {
+    const o = orgs.find((x) => x._id.equals(m.orgId));
+    if (!o) return [];
+    return [{
+      id: o._id.toHexString(),
+      name: o.name,
+      slug: o.slug,
+      role: m.role,
+      lastAdmin: m.role === "admin" && count(admins, o._id) <= 1,
+      openAssigned: count(assigned, o._id),
+    }];
+  });
 
   return (
     <main className="flex min-h-dvh flex-col">
@@ -46,10 +83,20 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
           </div>
         </div>
         <SettingsRow title="Profile" desc="Your name is shown to everyone in your organisations: on tasks, comments, mentions and member lists.">
-          <ProfileForm name={user.name} email={user.email} />
+          <ProfileForm name={user.name} />
         </SettingsRow>
         <SettingsRow title="Picture" desc="Shown next to your name on tasks, comments, mentions and member lists in every organisation you belong to.">
           <PictureForm key={user.image ?? "none"} id={id} name={user.name} image={user.image ?? null} />
+        </SettingsRow>
+        <SettingsRow
+          title="Email"
+          desc={
+            tfa.enabled
+              ? "The address you sign in with. Changing it needs your password and a two-factor code."
+              : "The address you sign in with. Changing it needs your password."
+          }
+        >
+          <EmailForm key={user.email} email={user.email} twoFactor={tfa.enabled} />
         </SettingsRow>
         <SettingsRow title="Password" desc="Changing your password keeps you signed in here and signs you out on every other browser and device.">
           <PasswordForm />
@@ -64,6 +111,18 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
             recoveryCodesLeft={tfa.recoveryCodesLeft}
             total={RECOVERY_CODE_COUNT}
           />
+        </SettingsRow>
+        <SettingsRow
+          title="Sessions"
+          desc="Signed in somewhere you no longer use? Sign out every other browser and device. You stay signed in here."
+        >
+          <SessionsForm />
+        </SettingsRow>
+        <SettingsRow
+          title="Organisations"
+          desc="Organisations you belong to and your role in each. Leaving unassigns your open tasks there. An organisation always keeps at least one admin."
+        >
+          <OrganisationsList orgs={accountOrgs} />
         </SettingsRow>
       </div>
     </main>

@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { updateDisplayName } from "@/app/actions/account";
 
-export function ProfileForm({ name: saved, email }: { name: string; email: string }) {
+export function ProfileForm({ name: saved }: { name: string }) {
   const [name, setName] = useState(saved);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -58,11 +58,6 @@ export function ProfileForm({ name: saved, email }: { name: string; email: strin
           </p>
         )}
       </form>
-      <div className="grid gap-1.5">
-        <Label htmlFor="account-email" className="text-[13px]">Email</Label>
-        <Input id="account-email" value={email} readOnly disabled />
-        <p className="text-[12px] text-faint">Used to sign in. It can&rsquo;t be changed yet.</p>
-      </div>
     </div>
   );
 }
