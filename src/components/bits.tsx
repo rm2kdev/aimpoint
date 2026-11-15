@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { avatarColor, initials, PRIORITY_LABELS } from "@/lib/format";
 import type { BotAvatar as BotAvatarData, BotShape, Member, Priority, Status, TaskType } from "@/lib/types";
@@ -140,7 +141,36 @@ export function StatusRing({
 
 /* ---------- Avatar ---------- */
 
-export function UserAvatar({ id, name, size = 22, className }: { id: string; name: string; size?: number; className?: string }) {
+export function UserAvatar({
+  id,
+  name,
+  image,
+  size = 22,
+  className,
+}: {
+  id: string;
+  name: string;
+  /** Profile picture; initials when missing or when it fails to load. */
+  image?: string | null;
+  size?: number;
+  className?: string;
+}) {
+  const [failed, setFailed] = useState<string | null>(null);
+  if (image && failed !== image) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={image}
+        alt=""
+        title={name}
+        width={size}
+        height={size}
+        onError={() => setFailed(image)}
+        className={cn("inline-block shrink-0 rounded-full bg-chip object-cover", className)}
+        style={{ width: size, height: size }}
+      />
+    );
+  }
   return (
     <span
       title={name}
@@ -249,7 +279,7 @@ export function BotAvatar({ avatar, name, size = 22, className }: { avatar?: Bot
 /** Avatar for anyone who can own or be assigned a task: a person or a bot. */
 export function MemberAvatar({ member, id, size = 22, className }: { member?: Member; id: string; size?: number; className?: string }) {
   if (member?.kind === "bot") return <BotAvatar avatar={member.avatar} name={member.name} size={size} className={className} />;
-  return <UserAvatar id={id} name={member?.name ?? "?"} size={size} className={className} />;
+  return <UserAvatar id={id} name={member?.name ?? "?"} image={member?.image} size={size} className={className} />;
 }
 
 export function UnassignedAvatar({ size = 22 }: { size?: number }) {

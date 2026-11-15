@@ -24,7 +24,7 @@ export default async function MemberPage({ params }: PageProps<"/o/[org]/setting
   return (
     <MemberDetail
       key={id}
-      member={{ id, name: user.name, email: user.email, role: membership.role }}
+      member={{ id, name: user.name, email: user.email, role: membership.role, image: user.image ?? null }}
       stats={{ ...work[id], joinedAt: membership.createdAt.toISOString() }}
       assigned={assigned}
     />

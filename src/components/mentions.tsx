@@ -375,7 +375,7 @@ function Option({
       onClick={() => onPick(m)}
       className={cn("flex cursor-default items-center gap-2.5 rounded-[7px] px-2 py-1.5", idx === active && "bg-accent")}
     >
-      {bot ? <BotAvatar avatar={m.avatar} name={m.name} size={24} /> : <UserAvatar id={m.id} name={m.name} size={24} />}
+      {bot ? <BotAvatar avatar={m.avatar} name={m.name} size={24} /> : <UserAvatar id={m.id} name={m.name} image={m.image} size={24} />}
       <div className="min-w-0 flex-1 leading-tight">
         <div className="flex items-center gap-1.5 text-[13px]">
           <span className="truncate font-medium">{m.name}</span>

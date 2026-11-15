@@ -589,7 +589,7 @@ function Presence() {
       <TooltipTrigger asChild>
         <div className="flex items-center pl-1.5 max-sm:hidden" aria-label={`Also here: ${others.map((m) => m.name).join(", ")}`}>
           {shown.map((m) => (
-            <UserAvatar key={m.id} id={m.id} name={m.name} size={24} className="-ml-1.5 ring-2 ring-background" />
+            <UserAvatar key={m.id} id={m.id} name={m.name} image={m.image} size={24} className="-ml-1.5 ring-2 ring-background" />
           ))}
           {others.length > 3 && (
             <span className="tabular -ml-1.5 grid size-6 place-items-center rounded-full bg-chip text-[10.5px] font-medium text-muted-foreground ring-2 ring-background">

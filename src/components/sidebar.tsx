@@ -226,7 +226,7 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
         aria-label="Account menu"
         className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition-colors outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <UserAvatar id={me.id} name={me.name} size={24} />
+        <UserAvatar id={me.id} name={me.name} image={me.image} size={24} />
         <span className="min-w-0 flex-1 leading-tight">
           <span className="block truncate text-[13px] font-medium">{me.name}</span>
           <span className="block text-[11.5px] text-faint">{me.role === "admin" ? "Admin" : "Member"}</span>

@@ -17,6 +17,7 @@ export interface Me {
   name: string;
   email: string;
   role: "admin" | "member";
+  image?: string | null;
 }
 
 interface Ctx {

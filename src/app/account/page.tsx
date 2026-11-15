@@ -6,6 +6,7 @@ import { orgPath } from "@/lib/paths";
 import { SettingsRow } from "@/components/settings/ui";
 import { UserAvatar } from "@/components/bits";
 import { ProfileForm } from "./profile-form";
+import { PictureForm } from "./picture-form";
 
 export const metadata = { title: "Account" };
 
@@ -33,7 +34,7 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
       </header>
       <div className="max-w-[1100px] px-4 py-6 sm:px-7">
         <div className="mb-6 flex items-center gap-3.5">
-          <UserAvatar id={id} name={user.name} size={40} />
+          <UserAvatar id={id} name={user.name} image={user.image} size={40} />
           <div className="min-w-0 leading-tight">
             <h2 className="truncate text-[18px] font-semibold tracking-[-0.015em]">{user.name}</h2>
             <div className="mt-1 truncate text-[13px] text-muted-foreground">{user.email}</div>
@@ -41,6 +42,9 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
         </div>
         <SettingsRow title="Profile" desc="Your name is shown to everyone in your organisations: on tasks, comments, mentions and member lists.">
           <ProfileForm name={user.name} email={user.email} />
+        </SettingsRow>
+        <SettingsRow title="Picture" desc="Shown next to your name on tasks, comments, mentions and member lists in every organisation you belong to.">
+          <PictureForm key={user.image ?? "none"} id={id} name={user.name} image={user.image ?? null} />
         </SettingsRow>
       </div>
     </main>

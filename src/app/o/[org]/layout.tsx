@@ -22,7 +22,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
     <OrgProvider
       org={{ id: org._id.toHexString(), name: org.name, slug: org.slug }}
       orgs={orgs.map((o) => ({ id: o._id.toHexString(), name: o.name, slug: o.slug }))}
-      me={{ id: user._id.toHexString(), name: user.name, email: user.email, role: membership.role }}
+      me={{ id: user._id.toHexString(), name: user.name, email: user.email, role: membership.role, image: user.image ?? null }}
       members={shell.members}
       projects={shell.projects}
       statuses={shell.statuses}

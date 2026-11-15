@@ -16,6 +16,8 @@ export interface UserDoc {
   email: string;
   name: string;
   passwordHash: string;
+  /** Profile picture URL (see saveAvatar); none = initials. */
+  image?: string | null;
   createdAt: Date;
 }
 export interface OrgDoc {
@@ -277,6 +279,8 @@ export interface Member {
   role: Role;
   kind: "user" | "bot";
   avatar?: BotAvatar;
+  /** People only: profile picture URL. */
+  image?: string;
   description?: string;
   /** Bots only: max concurrent tasks. */
   maxTasks?: number;

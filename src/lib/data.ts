@@ -322,7 +322,7 @@ export async function loadShell(orgId: ObjectId, userId: ObjectId) {
   const members: Member[] = memberships
     .map((m): Member | null => {
       const u = byId.get(m.userId.toHexString());
-      return u ? { id: u._id.toHexString(), name: u.name, email: u.email, role: m.role, kind: "user" } : null;
+      return u ? { id: u._id.toHexString(), name: u.name, email: u.email, role: m.role, kind: "user", ...(u.image ? { image: u.image } : {}) } : null;
     })
     .filter((m): m is Member => !!m)
     .sort((a, b) => a.name.localeCompare(b.name));

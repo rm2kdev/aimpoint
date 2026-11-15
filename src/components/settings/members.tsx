@@ -55,7 +55,7 @@ export function MembersSettings({ invites, stats }: { invites: InviteRow[]; stat
             <EntityRow
               key={m.id}
               href={orgPath(org.slug, "settings", "members", m.id)}
-              avatar={<UserAvatar id={m.id} name={m.name} size={32} />}
+              avatar={<UserAvatar id={m.id} name={m.name} image={m.image} size={32} />}
               name={m.name}
               tags={
                 <>
@@ -154,7 +154,7 @@ export function MemberDetail({
   stats,
   assigned,
 }: {
-  member: { id: string; name: string; email: string; role: Role };
+  member: { id: string; name: string; email: string; role: Role; image?: string | null };
   stats: MemberStats;
   assigned: Task[];
 }) {
@@ -169,7 +169,7 @@ export function MemberDetail({
     <>
       <DetailHeader
         back={{ href: back, label: "Members" }}
-        avatar={<UserAvatar id={member.id} name={member.name} size={44} />}
+        avatar={<UserAvatar id={member.id} name={member.name} image={member.image} size={44} />}
         name={member.name}
         tags={
           <>

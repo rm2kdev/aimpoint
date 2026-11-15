@@ -97,7 +97,7 @@ export function useAssigneeOptions(): Option<string>[] {
       label: m.id === me.id ? `${m.name} (you)` : m.name,
       hint: m.email,
       group: bots.length ? "People" : undefined,
-      icon: <UserAvatar id={m.id} name={m.name} size={18} />,
+      icon: <UserAvatar id={m.id} name={m.name} image={m.image} size={18} />,
     })),
     ...bots.map((m) => ({
       value: m.id,
