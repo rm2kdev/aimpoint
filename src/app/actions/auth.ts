@@ -4,11 +4,19 @@ import { redirect } from "next/navigation";
 import { AuthError as NextAuthError } from "next-auth";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { signIn, signOut } from "@/auth";
+import { signIn, signOut, TwoFactorFailed, TwoFactorRequired } from "@/auth";
+import { createLoginChallenge } from "@/lib/two-factor";
 import { cols } from "@/lib/db";
 import { PASSWORD_HASH_COST, passwordSchema } from "@/lib/password";
 
-export type FormState = { error?: string; fields?: Record<string, string> } | undefined;
+export type FormState =
+  | {
+      error?: string;
+      fields?: Record<string, string>;
+      /** Set when the password was right and the account has 2FA on: the form switches to the code step. */
+      challenge?: string;
+    }
+  | undefined;
 
 const signupSchema = z.object({
   name: z.string().trim().min(1, "Enter your name.").max(80),
@@ -44,6 +52,8 @@ export async function signupAction(_: FormState, form: FormData): Promise<FormSt
 
 export async function loginAction(_: FormState, form: FormData): Promise<FormState> {
   const email = String(form.get("email") ?? "");
+  const challenge = form.get("challenge");
+  if (typeof challenge === "string" && challenge) return loginCodeStep(challenge, email, form);
   try {
     await signIn("credentials", {
       email,
@@ -51,7 +61,30 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
       redirect: false,
     });
   } catch (err) {
+    if (err instanceof TwoFactorRequired) {
+      // The password was right (authorize checked it). Hand the form a short-lived challenge for the code step,
+      // so the password isn't sent again.
+      const { users } = await cols();
+      const user = await users.findOne({ email: email.trim().toLowerCase() }, { projection: { _id: 1 } });
+      if (user) return { challenge: await createLoginChallenge(user._id), fields: { email } };
+    }
     if (err instanceof NextAuthError) return { error: "That email and password don't match an account.", fields: { email } };
+    throw err;
+  }
+  redirect(safeNext(form.get("next") as string | null));
+}
+
+/** Second sign-in step: the challenge from the password step plus an authenticator or recovery code. */
+async function loginCodeStep(challenge: string, email: string, form: FormData): Promise<FormState> {
+  try {
+    await signIn("credentials", { challenge, code: String(form.get("code") ?? ""), redirect: false });
+  } catch (err) {
+    if (err instanceof TwoFactorFailed) {
+      // An expired or used-up challenge goes back to the password step.
+      if (err.reason === "expired") return { error: err.userMessage, fields: { email } };
+      return { error: err.userMessage, challenge, fields: { email } };
+    }
+    if (err instanceof NextAuthError) return { error: "That code isn't right.", challenge, fields: { email } };
     throw err;
   }
   redirect(safeNext(form.get("next") as string | null));

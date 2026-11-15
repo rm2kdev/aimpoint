@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +23,9 @@ export function AuthForm({
 }) {
   const [state, formAction, pending] = useActionState(action, undefined);
   const nextQs = next ? `?next=${encodeURIComponent(next)}` : "";
+  if (mode === "login" && state?.challenge) {
+    return <CodeStep state={state} formAction={formAction} pending={pending} next={next} />;
+  }
   return (
     <main className="grid min-h-full place-items-center bg-sidebar px-4 py-16">
       <div className="w-full max-w-[360px]">
@@ -90,6 +93,72 @@ export function AuthForm({
             </>
           )}
         </p>
+      </div>
+    </main>
+  );
+}
+
+/** Second sign-in step for accounts with two-factor authentication on. */
+function CodeStep({
+  state,
+  formAction,
+  pending,
+  next,
+}: {
+  state: NonNullable<FormState>;
+  formAction: (f: FormData) => void;
+  pending: boolean;
+  next?: string;
+}) {
+  const [recovery, setRecovery] = useState(false);
+  const email = state.fields?.email ?? "";
+  const restart = `/login?${new URLSearchParams({ ...(email ? { email } : {}), ...(next ? { next } : {}) })}`;
+  return (
+    <main className="grid min-h-full place-items-center bg-sidebar px-4 py-16">
+      <div className="w-full max-w-[360px]">
+        <Logo className="mb-8" />
+        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Two-factor authentication</h1>
+        <p className="mt-1.5 text-[13.5px] text-muted-foreground">
+          {recovery
+            ? "Enter one of the recovery codes you saved when you turned on two-factor authentication. Each code works once."
+            : "Enter the 6-digit code from your authenticator app."}
+        </p>
+        <form action={formAction} className="mt-7 grid gap-4" noValidate>
+          <input type="hidden" name="challenge" value={state.challenge} />
+          <input type="hidden" name="email" value={email} />
+          {next && <input type="hidden" name="next" value={next} />}
+          <div className="grid gap-1.5">
+            <Label htmlFor="code">{recovery ? "Recovery code" : "Authentication code"}</Label>
+            <Input
+              key={recovery ? "recovery" : "totp"}
+              id="code"
+              name="code"
+              autoFocus
+              required
+              autoComplete={recovery ? "off" : "one-time-code"}
+              inputMode={recovery ? "text" : "numeric"}
+              pattern={recovery ? undefined : "[0-9]*"}
+              maxLength={recovery ? 11 : 6}
+              placeholder={recovery ? "xxxxx-xxxxx" : "123456"}
+              spellCheck={false}
+              className="h-9 bg-background font-mono tracking-[0.12em]"
+            />
+          </div>
+          <p role="alert" aria-live="polite" className="min-h-5 text-[13px] text-destructive">
+            {state.error}
+          </p>
+          <Button type="submit" size="lg" disabled={pending} className="-mt-2 h-9">
+            {pending ? "Verifying…" : "Verify"}
+          </Button>
+        </form>
+        <div className="mt-6 flex items-center justify-between text-[13px] text-muted-foreground">
+          <button type="button" className="font-medium text-foreground underline underline-offset-4" onClick={() => setRecovery((r) => !r)}>
+            {recovery ? "Use your authenticator app" : "Use a recovery code"}
+          </button>
+          <a className="hover:text-foreground" href={restart}>
+            Start over
+          </a>
+        </div>
       </div>
     </main>
   );

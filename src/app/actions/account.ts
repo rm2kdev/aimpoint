@@ -10,6 +10,14 @@ import { publish } from "@/lib/realtime/server";
 import { ACCOUNT_PATH } from "@/lib/paths";
 import { passwordSchema } from "@/lib/password";
 import { hashPassword, reauthenticate, revokeSessions } from "@/lib/security";
+import {
+  beginSetup,
+  confirmSetup,
+  disableTwoFactor,
+  regenerateRecoveryCodes,
+  TwoFactorError,
+  verifySecondFactor,
+} from "@/lib/two-factor";
 
 const DISPLAY_NAME_MAX = 80;
 
@@ -88,4 +96,82 @@ export async function changePassword(input: {
     await revokeSessions(user._id, { set: { passwordHash: await hashPassword(parsed.data.next) } });
   });
   return !r.ok && wrongCurrent ? { ...r, field: "current" } : r;
+}
+
+/* ---------------- two-factor authentication ---------------- */
+
+async function twoFactorStep<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof TwoFactorError) throw new UserError(e.message);
+    throw e;
+  }
+}
+
+async function signedInUser() {
+  const user = await currentUser();
+  if (!user) throw new AuthError("You are signed out. Sign in and try again.");
+  return user;
+}
+
+const str = (v: unknown) => (typeof v === "string" ? v : "");
+
+/**
+ * Step one of turning on 2FA: re-check the password, then return a fresh secret (QR code + manual key).
+ * Nothing is switched on until confirmTwoFactorSetup gets a valid code for it.
+ */
+export async function beginTwoFactorSetup(password: string): Promise<Result<{ secret: string; qrSvg: string; uri: string }>> {
+  return guard(async () => {
+    const user = await signedInUser();
+    if (!str(password)) throw new UserError("Enter your current password.");
+    await reauthenticate(user._id, str(password));
+    return twoFactorStep(() => beginSetup(user));
+  });
+}
+
+/** Step two: a valid code from the app switches 2FA on. Returns the recovery codes (shown once). */
+export async function confirmTwoFactorSetup(code: string): Promise<Result<{ recoveryCodes: string[] }>> {
+  return guard(async () => {
+    const user = await signedInUser();
+    if (!/^\d{6}$/.test(str(code).replace(/\s/g, ""))) throw new UserError("Enter the 6-digit code from your authenticator app.");
+    const recoveryCodes = await twoFactorStep(() => confirmSetup(user._id, str(code)));
+    // Sessions signed in with the password alone are signed out; this one stays. No revalidatePath here: the
+    // action's re-render would still see the pre-revoke cookie and bounce through /login, losing the recovery
+    // codes on screen. The client refreshes once they've been saved.
+    await revokeSessions(user._id);
+    return { recoveryCodes };
+  });
+}
+
+/** Turn 2FA off: needs the password and a current authenticator code (or an unused recovery code). */
+export async function turnOffTwoFactor(input: { password: string; code: string }): Promise<Result<void>> {
+  return guard(async () => {
+    const user = await signedInUser();
+    if (!user.twoFactor) throw new UserError("Two-factor authentication is already off.");
+    if (!str(input?.password)) throw new UserError("Enter your current password.");
+    if (!str(input?.code).trim()) throw new UserError("Enter a code from your authenticator app or a recovery code.");
+    await reauthenticate(user._id, str(input.password));
+    await twoFactorStep(() => verifySecondFactor(user._id, str(input.code)));
+    await disableTwoFactor(user._id);
+    revalidatePath(ACCOUNT_PATH);
+  });
+}
+
+/** New recovery codes (old ones stop working): needs the password or an authenticator code. */
+export async function regenerateTwoFactorRecoveryCodes(input: {
+  password?: string;
+  code?: string;
+}): Promise<Result<{ recoveryCodes: string[] }>> {
+  return guard(async () => {
+    const user = await signedInUser();
+    if (!user.twoFactor) throw new UserError("Two-factor authentication isn't on.");
+    const code = str(input?.code).replace(/\s/g, "");
+    if (str(input?.password)) await reauthenticate(user._id, str(input?.password));
+    else if (/^\d{6}$/.test(code)) await twoFactorStep(() => verifySecondFactor(user._id, code));
+    else throw new UserError("Enter your password or the 6-digit code from your authenticator app.");
+    const recoveryCodes = await twoFactorStep(() => regenerateRecoveryCodes(user._id));
+    revalidatePath(ACCOUNT_PATH);
+    return { recoveryCodes };
+  });
 }

@@ -8,6 +8,9 @@ import { UserAvatar } from "@/components/bits";
 import { ProfileForm } from "./profile-form";
 import { PictureForm } from "./picture-form";
 import { PasswordForm } from "./password-form";
+import { TwoFactorForm } from "./two-factor-form";
+import { RECOVERY_CODE_COUNT, twoFactorStatus } from "@/lib/two-factor";
+import { format } from "date-fns";
 
 export const metadata = { title: "Account" };
 
@@ -20,6 +23,7 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
   // Back to the org the user came from (if they're a member), else their first org.
   const back = orgs.find((o) => o.slug === from) ?? orgs.find((o) => o._id.equals(memberships[0]?.orgId));
   const id = user._id.toHexString();
+  const tfa = twoFactorStatus(user);
 
   return (
     <main className="flex min-h-dvh flex-col">
@@ -49,6 +53,17 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
         </SettingsRow>
         <SettingsRow title="Password" desc="Changing your password keeps you signed in here and signs you out on every other browser and device.">
           <PasswordForm />
+        </SettingsRow>
+        <SettingsRow
+          title="Two-factor authentication"
+          desc="Ask for a code from an authenticator app as well as your password when you sign in. Recovery codes get you in if you lose your phone."
+        >
+          <TwoFactorForm
+            enabled={tfa.enabled}
+            enabledLabel={tfa.enabledAt ? format(new Date(tfa.enabledAt), "d MMM yyyy") : null}
+            recoveryCodesLeft={tfa.recoveryCodesLeft}
+            total={RECOVERY_CODE_COUNT}
+          />
         </SettingsRow>
       </div>
     </main>

@@ -1,6 +1,8 @@
 import "server-only";
 import { cache } from "react";
 import { redirect, notFound } from "next/navigation";
+import { cookies, headers } from "next/headers";
+import { decode } from "next-auth/jwt";
 import { ObjectId } from "mongodb";
 import { auth } from "@/auth";
 import { cols } from "@/lib/db";
@@ -11,11 +13,38 @@ export class AuthError extends Error {}
 /** Current signed-in user (or null). Cached per request. */
 export const currentUser = cache(async (): Promise<UserDoc | null> => {
   const session = await auth();
-  const id = session?.user?.id;
+  const id = session?.user?.id ?? (await reissuedSessionUserId());
   if (!id || !ObjectId.isValid(id)) return null;
   const { users } = await cols();
   return users.findOne({ _id: new ObjectId(id) });
 });
+
+const SESSION_COOKIES = ["__Secure-authjs.session-token", "authjs.session-token"];
+
+/**
+ * A server action that revokes sessions (revokeSessions in lib/security.ts) re-issues the acting session's
+ * cookie, and Next then re-renders the page in the same request. `auth()` reads the request's Cookie
+ * header, which still holds the pre-revoke token, so without this the page would redirect to /login and
+ * the user would be bounced away mid-flow. `cookies()` reflects the re-issued value: when it differs from
+ * the header, validate it the same way the jwt callback does (decrypt + current sessionVersion).
+ */
+async function reissuedSessionUserId(): Promise<string | null> {
+  const [jar, hdrs] = await Promise.all([cookies(), headers()]);
+  const raw = hdrs.get("cookie") ?? "";
+  for (const name of SESSION_COOKIES) {
+    const value = jar.get(name)?.value;
+    if (!value || raw.includes(`${name}=${value}`)) continue;
+    const secret = process.env.AUTH_SECRET;
+    if (!secret) return null;
+    const token = await decode({ token: value, secret, salt: name }).catch(() => null);
+    const uid = token?.uid;
+    if (typeof uid !== "string" || !ObjectId.isValid(uid)) return null;
+    const { users } = await cols();
+    const u = await users.findOne({ _id: new ObjectId(uid) }, { projection: { sessionVersion: 1 } });
+    return u && (token?.sv ?? 0) === (u.sessionVersion ?? 0) ? uid : null;
+  }
+  return null;
+}
 
 export async function requireUser(): Promise<UserDoc> {
   const user = await currentUser();

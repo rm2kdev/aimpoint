@@ -15,6 +15,7 @@ import type {
   AgentClaimDoc,
   BotMentionDoc,
   NotificationDoc,
+  LoginChallengeDoc,
 } from "./types";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
@@ -57,6 +58,7 @@ export async function cols() {
     agentClaims: db.collection<AgentClaimDoc>("agentClaims"),
     botMentions: db.collection<BotMentionDoc>("botMentions"),
     notifications: db.collection<NotificationDoc>("notifications"),
+    loginChallenges: db.collection<LoginChallengeDoc>("loginChallenges"),
   };
 }
 export type Cols = Awaited<ReturnType<typeof cols>>;
@@ -65,6 +67,8 @@ export type { Collection };
 async function ensureIndexes(db: Db) {
   await Promise.all([
     db.collection("users").createIndex({ email: 1 }, { unique: true }),
+    db.collection("loginChallenges").createIndex({ tokenHash: 1 }, { unique: true }),
+    db.collection("loginChallenges").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     db.collection("orgs").createIndex({ slug: 1 }, { unique: true }),
     db.collection("memberships").createIndex({ orgId: 1, userId: 1 }, { unique: true }),
     db.collection("memberships").createIndex({ userId: 1 }),

@@ -4,14 +4,48 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
+import {
+  completeLoginChallenge,
+  hasTwoFactor,
+  TwoFactorError,
+  verifySecondFactor,
+  type TwoFactorReason,
+} from "@/lib/two-factor";
 
 const creds = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
+  /** Authenticator or recovery code, required when the account has two-factor authentication on. */
+  code: z.string().max(64).optional(),
 });
+/** Second sign-in step from the login form: the password step's challenge token plus the code. */
+const challengeCreds = z.object({ challenge: z.string().min(1).max(200), code: z.string().max(64) });
 
 class InvalidLogin extends CredentialsSignin {
   code = "invalid_credentials";
+}
+/** Right password, but the account has 2FA on and no code was sent: no session. */
+export class TwoFactorRequired extends CredentialsSignin {
+  code = "two_factor_required";
+}
+/** Wrong, reused or locked-out second factor, or an expired challenge. */
+export class TwoFactorFailed extends CredentialsSignin {
+  constructor(
+    readonly reason: TwoFactorReason,
+    readonly userMessage: string,
+  ) {
+    super(userMessage);
+    this.code = reason === "locked" ? "two_factor_locked" : reason === "expired" ? "two_factor_expired" : "invalid_code";
+  }
+}
+
+async function secondFactor<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (e instanceof TwoFactorError) throw new TwoFactorFailed(e.reason, e.message);
+    throw e;
+  }
 }
 
 export const { handlers, auth, signIn, signOut, unstable_update: updateSession } = NextAuth({
@@ -20,14 +54,27 @@ export const { handlers, auth, signIn, signOut, unstable_update: updateSession }
   pages: { signIn: "/login" },
   providers: [
     Credentials({
-      credentials: { email: {}, password: {} },
+      credentials: { email: {}, password: {}, code: {}, challenge: {} },
       async authorize(raw) {
+        const { users } = await cols();
+        const viaChallenge = challengeCreds.safeParse(raw);
+        if (viaChallenge.success) {
+          const userId = await secondFactor(() => completeLoginChallenge(viaChallenge.data.challenge, viaChallenge.data.code));
+          const user = await users.findOne({ _id: userId });
+          if (!user) throw new InvalidLogin();
+          return { id: user._id.toHexString(), email: user.email, name: user.name };
+        }
         const parsed = creds.safeParse(raw);
         if (!parsed.success) throw new InvalidLogin();
-        const { users } = await cols();
         const user = await users.findOne({ email: parsed.data.email });
         if (!user || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
           throw new InvalidLogin();
+        }
+        // Two-factor accounts: the password alone never yields a session.
+        if (hasTwoFactor(user)) {
+          const code = parsed.data.code?.trim();
+          if (!code) throw new TwoFactorRequired();
+          await secondFactor(() => verifySecondFactor(user._id, code));
         }
         return { id: user._id.toHexString(), email: user.email, name: user.name };
       },

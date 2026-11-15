@@ -24,7 +24,29 @@ export interface UserDoc {
   sessionReissue?: { nonce: string; expiresAt: Date } | null;
   /** Wrong-password counter for reauthenticate(). */
   reauth?: { failures: number; lockedUntil: Date | null };
+  /** TOTP two-factor authentication (see lib/two-factor.ts). Absent/null = off. */
+  twoFactor?: {
+    /** Base32 secret sealed with lib/secrets.ts; never sent to the client after setup. */
+    secret: string;
+    enabledAt: Date;
+    /** Last accepted time step: codes for this step or earlier are refused (replay). */
+    lastStep: number;
+    /** Keyed hashes of the unused single-use recovery codes. */
+    recoveryHashes: string[];
+  } | null;
+  /** A secret shown during setup, switched on only once a valid code confirms it. */
+  twoFactorPending?: { secret: string; createdAt: Date } | null;
+  /** Wrong second-factor counter (login step and account actions). */
+  twoFactorAttempts?: { failures: number; lockedUntil: Date | null };
   createdAt: Date;
+}
+/** Second sign-in step: the password was right, the code is still owed. Stored by token hash; expires. */
+export interface LoginChallengeDoc {
+  _id: ObjectId;
+  tokenHash: string;
+  userId: ObjectId;
+  attempts: number;
+  expiresAt: Date;
 }
 export interface OrgDoc {
   _id: ObjectId;
