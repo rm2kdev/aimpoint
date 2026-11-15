@@ -185,10 +185,13 @@
 }
 
 /* ---------- status ring: "a bot is working" = the ring's own progress bit travels round ---------- */
+/* The spinning part is its own outer <svg> (StatusRing in bits.tsx), so this is a box transform the
+   compositor runs: no per-frame style/layout/paint, and it keeps turning while the main thread is
+   busy. Never move it back onto an SVG child (<g>/<path>): those animate on the main thread (VEC-83). */
 .status-ring-halo { display: none; }
 .status-ring-working {
-  transform-box: view-box;
-  transform-origin: 10px 10px;
+  transform-origin: 50% 50%;
+  will-change: transform;
   animation: status-ring-orbit 1.1s linear infinite;
 }
 @keyframes status-ring-orbit {

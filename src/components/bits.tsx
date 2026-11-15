@@ -26,32 +26,42 @@ function arc(fraction: number, r: number, c: number) {
 /** Length of the travelling segment when a ring has no progress arc of its own (about a quarter turn). */
 const WORKING_ARC = 0.25;
 
-/**
- * "Working" = the ring's own progress bit travels around it. The group spins via
- * `.status-ring-working` in globals.css (transform-origin 10 10, so the icon never changes size
- * or shifts). Under reduced motion nothing rotates and `.status-ring-halo` (hidden otherwise)
- * thickens the same track faintly, so "working" still reads without an extra circle.
- */
-function WorkingSpin({ children }: { children: React.ReactNode }) {
-  return <g className="status-ring-working">{children}</g>;
-}
+export const STATUS_RING_WORKING_LABEL = "A bot is working on this";
 
 /**
- * Done/cancelled are filled discs with no arc to move, so a short faint white arc rides the
- * disc's own edge (inside r 8.5, same circle): the quietest cue that keeps the tick/cross clear.
+ * "Working" = the ring's own progress bit travels around it. The travelling part is drawn in its
+ * own <svg> stacked over the static ring, and `.status-ring-working` (globals.css) rotates that
+ * whole element. Rotating an outer <svg> is a plain CSS-box transform the browser can run on the
+ * compositor, so the spin costs no style/layout/paint per frame and keeps going while the main
+ * thread is busy (VEC-83). Rotating an SVG child (a <g>) instead ran on the main thread every frame
+ * and froze under hover/scroll work. Under reduced motion nothing rotates and `.status-ring-halo`
+ * (hidden otherwise) thickens the same track faintly, so "working" still reads without an extra circle.
  */
-function DiscEdgeSpin() {
+function WorkingRing({
+  size,
+  className,
+  label,
+  ring,
+  spin,
+}: {
+  size: number;
+  className?: string;
+  label: string;
+  ring: React.ReactNode;
+  spin: React.ReactNode;
+}) {
   return (
-    <>
-      <circle className="status-ring-halo" cx="10" cy="10" r="7.4" fill="none" stroke="#fff" strokeOpacity="0.4" strokeWidth="1.3" />
-      <WorkingSpin>
-        <path d={arc(WORKING_ARC, 7.4, 10)} fill="none" stroke="#fff" strokeOpacity="0.75" strokeWidth="1.3" strokeLinecap="round" />
-      </WorkingSpin>
-    </>
+    <span role="img" aria-label={label} title={label} className={cn("relative inline-grid shrink-0", className)} style={{ width: size, height: size }}>
+      {/* `size-full` also opts both out of parents' `[&_svg:not([class*='size-'])]` sizing rules. */}
+      <svg viewBox="0 0 20 20" className="col-start-1 row-start-1 size-full" aria-hidden>
+        {ring}
+      </svg>
+      <svg viewBox="0 0 20 20" className="status-ring-working col-start-1 row-start-1 size-full" aria-hidden>
+        {spin}
+      </svg>
+    </span>
   );
 }
-
-export const STATUS_RING_WORKING_LABEL = "A bot is working on this";
 
 export function StatusRing({
   status,
@@ -71,70 +81,65 @@ export function StatusRing({
 }) {
   const color = status?.color ?? "var(--faint)";
   const cat = status?.category ?? "unstarted";
-  const common = working
-    ? { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), role: "img", "aria-label": workingLabel }
-    : { width: size, height: size, viewBox: "0 0 20 20", className: cn("shrink-0", className), "aria-hidden": true };
-  const title = working ? <title>{workingLabel}</title> : null;
-  if (cat === "done") {
-    return (
-      <svg {...common}>
-        {title}
-        <circle cx="10" cy="10" r="8.5" fill={color} />
-        <path d="m6.4 10.3 2.5 2.4 4.7-4.9" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        {working && <DiscEdgeSpin />}
-      </svg>
-    );
-  }
-  if (cat === "cancelled") {
-    return (
-      <svg {...common}>
-        {title}
-        <circle cx="10" cy="10" r="8.5" fill={color} opacity="0.9" />
-        <path d="m7.2 7.2 5.6 5.6m0-5.6-5.6 5.6" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" />
-        {working && <DiscEdgeSpin />}
-      </svg>
-    );
-  }
-  if (cat === "backlog" || cat === "triage") {
-    // Dashed = not yet. Triage adds a centre dot: not yet, and waiting to be broken down.
-    return (
-      <svg {...common}>
-        {title}
-        <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" strokeDasharray="2.6 2.3" />
-        {cat === "triage" && <circle cx="10" cy="10" r="2.6" fill={color} />}
-        {working && (
-          <>
-            <circle className="status-ring-halo" cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />
-            <WorkingSpin>
-              <path d={arc(WORKING_ARC, 7.5, 10)} fill="none" stroke={color} strokeWidth="2.4" strokeLinecap="round" />
-            </WorkingSpin>
-          </>
-        )}
-      </svg>
-    );
-  }
-  const p = status ? ringProgress(status, statuses) : 0;
-  const progressArc = (
-    <path
-      d={arc(working && p <= 0 ? WORKING_ARC : p, 7.5, 10)}
-      fill="none"
-      stroke={color}
-      strokeWidth="3.4"
-      style={{ transition: "d 300ms cubic-bezier(.2,.8,.2,1)" }}
-    />
-  );
-  return (
-    <svg {...common}>
-      {title}
-      <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />
-      {working ? (
+  let ring: React.ReactNode;
+  let spin: React.ReactNode = null;
+  if (cat === "done" || cat === "cancelled") {
+    ring =
+      cat === "done" ? (
         <>
-          <circle className="status-ring-halo" cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="3.4" />
-          <WorkingSpin>{progressArc}</WorkingSpin>
+          <circle cx="10" cy="10" r="8.5" fill={color} />
+          <path d="m6.4 10.3 2.5 2.4 4.7-4.9" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </>
       ) : (
-        progressArc
-      )}
+        <>
+          <circle cx="10" cy="10" r="8.5" fill={color} opacity="0.9" />
+          <path d="m7.2 7.2 5.6 5.6m0-5.6-5.6 5.6" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" />
+        </>
+      );
+    // Filled discs have no arc to move, so a short faint white arc rides the disc's own edge
+    // (inside r 8.5, same circle): the quietest cue that keeps the tick/cross clear.
+    if (working) {
+      ring = (
+        <>
+          {ring}
+          <circle className="status-ring-halo" cx="10" cy="10" r="7.4" fill="none" stroke="#fff" strokeOpacity="0.4" strokeWidth="1.3" />
+        </>
+      );
+      spin = <path d={arc(WORKING_ARC, 7.4, 10)} fill="none" stroke="#fff" strokeOpacity="0.75" strokeWidth="1.3" strokeLinecap="round" />;
+    }
+  } else if (cat === "backlog" || cat === "triage") {
+    // Dashed = not yet. Triage adds a centre dot: not yet, and waiting to be broken down.
+    ring = (
+      <>
+        <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" strokeDasharray="2.6 2.3" />
+        {cat === "triage" && <circle cx="10" cy="10" r="2.6" fill={color} />}
+        {working && <circle className="status-ring-halo" cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />}
+      </>
+    );
+    if (working) spin = <path d={arc(WORKING_ARC, 7.5, 10)} fill="none" stroke={color} strokeWidth="2.4" strokeLinecap="round" />;
+  } else {
+    const p = status ? ringProgress(status, statuses) : 0;
+    const progressArc = (
+      <path
+        d={arc(working && p <= 0 ? WORKING_ARC : p, 7.5, 10)}
+        fill="none"
+        stroke={color}
+        strokeWidth="3.4"
+        style={{ transition: "d 300ms cubic-bezier(.2,.8,.2,1)" }}
+      />
+    );
+    ring = (
+      <>
+        <circle cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="1.6" />
+        {working ? <circle className="status-ring-halo" cx="10" cy="10" r="7.5" fill="none" stroke={color} strokeWidth="3.4" /> : progressArc}
+      </>
+    );
+    if (working) spin = progressArc;
+  }
+  if (working) return <WorkingRing size={size} className={className} label={workingLabel} ring={ring} spin={spin} />;
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className={cn("shrink-0", className)} aria-hidden>
+      {ring}
     </svg>
   );
 }
