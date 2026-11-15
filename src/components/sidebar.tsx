@@ -24,6 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { Kbd, ProjectDot, UserAvatar } from "@/components/bits";
+import { Logo } from "@/components/logo";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,14 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
 
   return (
     <nav aria-label="Main" className="flex h-full flex-col bg-sidebar px-2.5 pt-3 pb-2">
+      <Link
+        href={orgPath(org.slug, "my")}
+        onClick={onNavigate}
+        aria-label="Vector home"
+        className="mb-1.5 flex h-9 items-center rounded-lg px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Logo />
+      </Link>
       <OrgSwitcher />
       <button
         onClick={onSearch}
@@ -182,10 +191,10 @@ function OrgSwitcher() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className="flex h-9 w-full items-center gap-2.5 rounded-lg px-2 text-left transition-colors outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring">
-        <span className="grid size-[22px] shrink-0 place-items-center rounded-md bg-foreground text-[11.5px] font-semibold text-background">
+        <span className="grid size-5 shrink-0 place-items-center rounded-[5px] border border-sidebar-border bg-background text-[11px] font-semibold text-foreground">
           {org.name[0]?.toUpperCase()}
         </span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">{org.name}</span>
+        <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{org.name}</span>
         <ChevronsUpDownIcon className="size-3.5 text-faint" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-60">
