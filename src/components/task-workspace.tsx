@@ -13,13 +13,14 @@ import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserA
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { Picker, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
+import { TaskContextMenu } from "@/components/task-context-menu";
 import { DueBadge } from "@/components/due-date";
 import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { timeAgo } from "@/lib/format";
-import { updateTask } from "@/app/actions/tasks";
+import { updateTask, type TaskPatch } from "@/app/actions/tasks";
 import type { Status, Task, TaskType } from "@/lib/types";
 
 export interface Scope {
@@ -271,9 +272,10 @@ export function TaskWorkspace({
     if (t) seen(t.id);
   }, [selectedKey, flat, seen]);
 
-  const setStatus = async (task: Task, statusId: string) => {
-    upsert({ ...task, statusId });
-    const r = await updateTask(org.slug, task.id, { statusId });
+  /** Optimistic edit from the row (status ring, right-click menu); rolls back with a toast if refused. */
+  const patchTask = async (task: Task, patch: TaskPatch) => {
+    upsert({ ...task, ...(patch as Partial<Task>) });
+    const r = await updateTask(org.slug, task.id, patch);
     if (!r.ok) {
       upsert(task);
       toast.error(r.error);
@@ -353,7 +355,9 @@ export function TaskWorkspace({
                   sort={view.sort}
                   href={`${pathname}?task=${t.key}`}
                   onSeen={() => seen(t.id)}
-                  onStatus={(s) => setStatus(t, s)}
+                  onStatus={(s) => patchTask(t, { statusId: s })}
+                  onPatch={(p) => patchTask(t, p)}
+                  onOpen={() => open(t.key)}
                   onArchive={(a) => setArchived(t, a)}
                   refCb={(el) => {
                     if (el) rowEls.current.set(t.id, el);
@@ -405,7 +409,9 @@ export function TaskWorkspace({
                         sort={view.sort}
                         href={`${pathname}?task=${t.key}`}
                         onSeen={() => seen(t.id)}
-                        onStatus={(s) => setStatus(t, s)}
+                        onStatus={(s) => patchTask(t, { statusId: s })}
+                  onPatch={(p) => patchTask(t, p)}
+                  onOpen={() => open(t.key)}
                         onArchive={(a) => setArchived(t, a)}
                         refCb={(el) => {
                           if (el) rowEls.current.set(t.id, el);
@@ -439,6 +445,8 @@ function TaskRow({
   onSeen,
   onStatus,
   onArchive,
+  onPatch,
+  onOpen,
   refCb,
 }: {
   task: Task;
@@ -452,6 +460,8 @@ function TaskRow({
   onSeen: () => void;
   onStatus: (statusId: string) => void;
   onArchive: (archived: boolean) => void;
+  onPatch: (patch: TaskPatch) => void;
+  onOpen: () => void;
   refCb: (el: HTMLLIElement | null) => void;
 }) {
   const { statusById, memberById, projectById, me, isAdmin } = useOrg();
@@ -465,13 +475,14 @@ function TaskRow({
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   return (
+    <TaskContextMenu task={task} onOpen={() => (onSeen(), onOpen())} onPatch={onPatch} onArchive={onArchive}>
     <li
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
-        selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent",
+        selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
       )}
     >
       <Picker
@@ -554,6 +565,7 @@ function TaskRow({
         )}
       </div>
     </li>
+    </TaskContextMenu>
   );
 }
 
