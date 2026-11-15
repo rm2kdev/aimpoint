@@ -211,17 +211,50 @@ export function TaskWorkspace({
   const lastTop = useRef(new Map<string, number>());
   const scrollRef = useRef<HTMLDivElement>(null);
   const order = useMemo(() => flat.map((t) => `${t.id}:${t.statusId}`).join(","), [flat]);
+  // A pointer drop: where every row shows right now, gap shifts included (VEC-96), so the glide after the
+  // drop starts from there rather than from where the rows sat before the drag. The dropped row is left out:
+  // the floating card carries it into place. Dropped a frame later if the drop changed no order.
+  const dropTop = useRef<Map<string, number> | null>(null);
+  useEffect(
+    () =>
+      dragStore?.onEnd((item, dropped) => {
+        if (!dropped || dragStore.get()?.mode !== "pointer") return;
+        const box = scrollRef.current;
+        const origin = box ? box.getBoundingClientRect().top - box.scrollTop : 0;
+        // Rows far off screen don't glide (below), so their old position is enough: read only the rest.
+        const lo = box ? box.scrollTop - box.clientHeight : -Infinity;
+        const hi = box ? box.scrollTop + box.clientHeight * 2 : Infinity;
+        const at = new Map(lastTop.current);
+        rowEls.current.forEach((el, id) => {
+          const was = lastTop.current.get(id);
+          if (id === item.id) at.delete(id);
+          else if (was === undefined || (was > lo && was < hi)) at.set(id, el.getBoundingClientRect().top - origin);
+        });
+        dropTop.current = at;
+        requestAnimationFrame(() => {
+          if (dropTop.current === at) dropTop.current = null;
+        });
+      }),
+    [dragStore],
+  );
   useLayoutEffect(() => {
     const next = new Map<string, number>();
     // Position within the scrolled content, so scrolling between renders doesn't read as a move.
     const box = scrollRef.current;
     const origin = box ? box.getBoundingClientRect().top - box.scrollTop : 0;
     const glide = !dragStore?.get() && !matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const before = dropTop.current ?? lastTop.current;
+    dropTop.current = null;
+    // Only rows that are (or were) on screen glide: a drop into another group moves every row below it, and
+    // animating hundreds of off-screen rows made the drop a long task (VEC-96).
+    const viewTop = box ? box.scrollTop - box.clientHeight / 2 : -Infinity;
+    const viewBottom = box ? box.scrollTop + box.clientHeight * 1.5 : Infinity;
+    const onScreen = (y: number) => y > viewTop && y < viewBottom;
     rowEls.current.forEach((el, id) => {
       const top = el.getBoundingClientRect().top - origin;
       next.set(id, top);
-      const prev = lastTop.current.get(id);
-      if (glide && prev !== undefined && Math.abs(prev - top) > 2) {
+      const prev = before.get(id);
+      if (glide && prev !== undefined && Math.abs(prev - top) > 2 && (onScreen(prev) || onScreen(top))) {
         el.animate([{ transform: `translateY(${prev - top}px)` }, { transform: "translateY(0)" }], {
           duration: 380,
           easing: "cubic-bezier(.2,.8,.2,1)",

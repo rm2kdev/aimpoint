@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import {
-  adjacentList, dropIndex, gapFromPointer, gapOffset, indexToGap, isNoopDrop, moveItem, pickBox,
+  adjacentList, dropIndex, gapOffset, indexToGap, isNoopDrop, moveItem, pickBox,
   type Span,
 } from "@/lib/reorder"
 
@@ -145,16 +145,35 @@ function createDragShield(): () => void {
   }
 }
 
-/** Row extents in the list's own (scrolling) coordinates. */
+/**
+ * Row extents in the list's own (scrolling) coordinates. Layout positions (`offsetTop`, relative to the
+ * list, which is `position: relative`), not screen rects: rows shifted with a transform to open a gap
+ * keep their hit areas, so the gap under the pointer never moves the targets it is measured against.
+ */
 function measure(list: HTMLUListElement) {
   const box = list.getBoundingClientRect()
   const originY = box.top + list.clientTop - list.scrollTop
   const rows = Array.from(list.querySelectorAll<HTMLElement>(":scope > li[data-sortable-id]"))
-  const spans: Span[] = rows.map((row) => {
-    const r = row.getBoundingClientRect()
-    return { start: r.top - originY, end: r.bottom - originY }
-  })
+  const spans: Span[] = rows.map((row) => ({ start: row.offsetTop, end: row.offsetTop + row.offsetHeight }))
   return { box, originY, rows, spans }
+}
+
+/** How long rows take to slide aside and a list's extra room to open (VEC-96); sortable-list.tsx matches it. */
+const GAP_MS = 150
+const GAP_EASE = "cubic-bezier(.2,.8,.2,1)"
+
+/**
+ * What a pointer drag has done to one list's DOM to open the landing gap: rows shifted with a transform,
+ * extra bottom padding (a list the item isn't from, so the rows pushed down have room) or a taller empty
+ * drop zone. Everything here is undone when the drag ends.
+ */
+type ListGap = {
+  el: HTMLUListElement
+  /** Distance between one row's bottom and the next row's top, measured before anything moved. */
+  spacing: number
+  offsets: Map<HTMLElement, number>
+  pad: number
+  zone: HTMLElement | null
 }
 
 function lineTopFor(list: HTMLUListElement, spans: Span[], gap: number): number | null {
@@ -195,8 +214,9 @@ export function createDragStore() {
   const endListeners = new Set<(item: DragItem, dropped: boolean) => void>()
 
   // Layout reads during a pointer drag are cached until something can have moved: a scroll, a resize, a
-  // list re-rendering (new rows, a drop zone appearing) or a list/target (un)registering. Rows don't move
-  // while a drag hovers (the line marks the gap), so most pointermoves read no layout at all (VEC-73).
+  // list re-rendering (new rows, a drop zone appearing) or a list/target (un)registering. Rows shifted to open
+  // the landing gap move by transform only (measure() reads layout positions), so most pointermoves read no
+  // layout at all (VEC-73); the slot and padding changes re-measure once they've settled (VEC-96).
   const rects = new Map<Element, DOMRect>()
   const measured = new Map<HTMLUListElement, ReturnType<typeof measure>>()
   const scrollers = new Map<HTMLElement, HTMLElement | null>()
@@ -217,6 +237,184 @@ export function createDragStore() {
   const scrollerOf = (el: HTMLElement) => {
     if (!scrollers.has(el)) scrollers.set(el, scrollParent(el))
     return scrollers.get(el) ?? null
+  }
+
+  // ---- The landing gap (VEC-96) ------------------------------------------------------------
+  // A pointer drag opens a gap the height of the dragged row where it would land, in whichever list is
+  // under the pointer: rows slide aside with a CSS transform transition (sortable-list.tsx gives every row
+  // a static `transition-transform`), so a gap change writes a transform on the few rows that change side
+  // and re-renders nothing. In the source list the rows between the lifted row's empty slot and the gap
+  // shift by one row, and once the card leaves the list the rows below the slot slide up over it. The slot
+  // keeps its layout height meanwhile (the list's end keeps the room): collapsing it would pull everything
+  // below up under a pointer that's on its way there, so a drag out of a list downwards would land a row
+  // too far. Another list grows by one row of bottom padding, animated with the same timing, for the rows
+  // it pushes down. Keyboard drags keep the insertion line.
+  const gapped = new Map<string, ListGap>()
+  let gapItem: { height: number } | null = null
+  let gapTimer: ReturnType<typeof setTimeout> | undefined
+  let gapUndo: (() => void) | null = null
+  /** After a drop: the card glides into the row once a list renders it (`claimSettle`), else fades. */
+  let settling: { id: string; ghost: HTMLElement; timer: number } | null = null
+
+  const translate = (row: HTMLElement, dy: number) => {
+    row.style.transform = dy ? `translate3d(0,${dy}px,0)` : ""
+  }
+
+  /** Bring every list's gap in line with the current snapshot. Touches only what changed. */
+  const applyGaps = () => {
+    if (!snap || snap.mode !== "pointer" || !gapItem) return
+    const { item, over } = snap
+    const overId = over?.kind === "list" ? over.listId : null
+    let structural = false
+    const ids = new Set([...gapped.keys(), item.listId])
+    if (overId) ids.add(overId)
+    for (const id of ids) {
+      const el = list(id)?.el
+      if (!el?.isConnected) {
+        gapped.delete(id)
+        continue
+      }
+      const m = measureCached(el)
+      let st = gapped.get(id)
+      if (!st || st.el !== el) {
+        const spacing =
+          m.spans.length > 1 ? Math.max(0, m.spans[1].start - m.spans[0].end) : parseFloat(getComputedStyle(el).rowGap) || 0
+        st = { el, spacing, offsets: new Map(), pad: 0, zone: null }
+        gapped.set(id, st)
+      }
+      const H = gapItem.height + st.spacing
+      const from = id === item.listId ? m.rows.findIndex((r) => r.dataset.sortableId === item.id) : -1
+      const gap = overId === id && over?.kind === "list" ? over.gap : null
+      const want = (i: number) => {
+        if (from < 0) return gap !== null && i >= gap ? H : 0
+        if (gap === null) return i > from ? -H : 0 // the card is elsewhere: close the slot up
+        if (isNoopDrop(true, from, gap)) return 0 // the slot itself is the gap
+        if (i >= gap && i < from) return H
+        if (i > from && i < gap) return -H
+        return 0
+      }
+      const live = new Set<HTMLElement>()
+      m.rows.forEach((row, i) => {
+        live.add(row)
+        const dy = want(i)
+        if ((st.offsets.get(row) ?? 0) === dy) return
+        translate(row, dy)
+        if (dy) st.offsets.set(row, dy)
+        else st.offsets.delete(row)
+      })
+      for (const row of st.offsets.keys()) {
+        if (live.has(row)) continue
+        translate(row, 0)
+        st.offsets.delete(row)
+      }
+      if (from < 0) {
+        const pad = gap !== null && m.rows.length ? H : 0
+        if (pad !== st.pad) {
+          st.pad = pad
+          el.style.paddingBottom = pad ? `${pad}px` : ""
+          structural = true
+        }
+        const zone = m.rows.length ? null : el.querySelector<HTMLElement>(":scope > [data-sortable-empty]")
+        if (zone) {
+          st.zone = zone
+          const h = gap !== null ? `${Math.max(gapItem.height, zone.offsetHeight)}px` : ""
+          if (zone.style.height !== h) {
+            zone.style.height = h
+            structural = true
+          }
+        }
+      }
+    }
+    // The padding and drop zone change layout as they animate: measure again once they've settled.
+    if (structural) {
+      clearTimeout(gapTimer)
+      gapTimer = setTimeout(() => pending?.rehit(), GAP_MS + 30)
+    }
+  }
+
+  /** The source row is lifted: the gap it opens elsewhere is its height. */
+  const beginGaps = (row: HTMLElement) => {
+    gapUndo?.()
+    gapItem = { height: row.offsetHeight }
+  }
+
+  /**
+   * Undo every gap. `instant` after a drop that moves the item: the re-render puts the rows around the gap
+   * where their shift already shows them, so the shifts go in the same frame with no transition, and the
+   * list's FLIP glide (task-workspace.tsx) moves anything else, such as the rows that closed up a slot the
+   * item didn't leave, from where it showed at the drop. Otherwise (cancel, no-op drop) the rows slide back
+   * and the slot reopens.
+   */
+  const endGaps = (instant: boolean) => {
+    clearTimeout(gapTimer)
+    const touched: HTMLElement[] = []
+    for (const st of gapped.values()) {
+      touched.push(st.el, ...st.offsets.keys())
+      if (st.zone) touched.push(st.zone)
+    }
+    if (instant) touched.forEach((n) => (n.style.transition = "none"))
+    for (const st of gapped.values()) {
+      st.offsets.forEach((_, row) => translate(row, 0))
+      st.el.style.paddingBottom = ""
+      if (st.zone) st.zone.style.height = ""
+    }
+    gapped.clear()
+    gapItem = null
+    const finish = () => {
+      gapUndo = null
+      for (const n of touched) n.style.transition = ""
+    }
+    // Instant: drop the `transition: none` after this frame's style is computed. Animated: after the slide.
+    const timer = instant ? 0 : setTimeout(finish, GAP_MS + 30)
+    const raf = instant ? requestAnimationFrame(() => requestAnimationFrame(finish)) : 0
+    gapUndo = () => {
+      clearTimeout(timer)
+      cancelAnimationFrame(raf)
+      finish()
+    }
+  }
+
+  /** Called by each list after it renders: the dropped (or returning) row is here, glide the card onto it. */
+  const claimSettle = (root: HTMLElement | null) => {
+    if (!settling || !root) return
+    const row = Array.from(root.querySelectorAll<HTMLElement>(":scope > li[data-sortable-id]")).find(
+      (li) => li.dataset.sortableId === settling!.id,
+    )
+    if (!row) return
+    const { ghost, timer } = settling
+    settling = null
+    cancelAnimationFrame(timer)
+    const r = row.getBoundingClientRect()
+    if (!r.width && !r.height) return ghost.remove()
+    row.style.visibility = "hidden"
+    const done = () => {
+      ghost.remove()
+      row.style.visibility = ""
+    }
+    const anim = ghost.animate(
+      [{ transform: ghost.style.transform }, { transform: `translate3d(${r.left}px, ${r.top}px, 0)` }],
+      { duration: 160, easing: GAP_EASE, fill: "forwards" },
+    )
+    anim.onfinish = done
+    anim.oncancel = done
+  }
+
+  /** Hand the card to whichever list renders the row next; fade it out if none does within two frames. */
+  const settleGhost = (id: string, ghost: HTMLElement) => {
+    if (settling) settling.ghost.remove()
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return ghost.remove()
+    const fade = () => {
+      if (settling?.ghost !== ghost) return
+      for (const ref of lists.values()) {
+        claimSettle(ref.current.el) // a list that didn't re-render may still hold the row
+        if (settling?.ghost !== ghost) return
+      }
+      settling = null
+      const anim = ghost.animate([{ opacity: 0.95 }, { opacity: 0 }], { duration: 120, fill: "forwards" })
+      anim.onfinish = () => ghost.remove()
+      anim.oncancel = () => ghost.remove()
+    }
+    settling = { id, ghost, timer: requestAnimationFrame(() => (settling ? (settling.timer = requestAnimationFrame(fade)) : 0)) }
   }
 
   const emit = () => listeners.forEach((l) => l())
@@ -283,10 +481,12 @@ export function createDragStore() {
     if (!prev && next) activeDrags++
     else if (prev && !next) {
       activeDrags--
+      if (gapItem || gapped.size) endGaps(false)
       invalidate()
       scrollers.clear()
     }
     snap = next
+    if (next?.mode === "pointer") applyGaps()
     if (prevTarget !== nextTarget && prev) {
       endHover(prev.item, false)
       if (next && nextTarget) startHover(next.item, nextTarget)
@@ -299,10 +499,20 @@ export function createDragStore() {
   const overList = (reg: ListRegistration, item: DragItem, y: number): DropOver => {
     const el = reg.el!
     const m = measureCached(el)
-    const gap = gapFromPointer(m.spans, y - m.originY)
-    const from = fromIndexIn(reg, item)
-    const lineTop = isNoopDrop(from >= 0, from, gap) ? null : lineTopFor(el, m.spans, gap)
-    return { kind: "list", listId: reg.listId, gap, lineTop }
+    const pos = y - m.originY
+    // Where the rows show now, gap shifts included: the item lands after every other row whose middle is
+    // above the pointer. Measuring against the shifted rows keeps the gap under the pointer (against the
+    // unshifted layout, rows pushed down would keep the gap a row ahead of a pointer moving down), and it's
+    // stable: a row that slides past the pointer leaves its middle on the far side.
+    const shift = gapped.get(reg.listId)?.offsets
+    const from = reg.listId === item.listId ? m.rows.findIndex((r) => r.dataset.sortableId === item.id) : -1
+    let to = 0
+    m.rows.forEach((row, i) => {
+      if (i !== from && pos > (m.spans[i].start + m.spans[i].end) / 2 + (shift?.get(row) ?? 0)) to++
+    })
+    const gap = from >= 0 ? indexToGap(from, to) : to
+    // A pointer drag shows where it lands by opening a gap there (applyGaps), not with the line.
+    return { kind: "list", listId: reg.listId, gap, lineTop: null }
   }
 
   /** Set by the last hit test: the pointer is over an opaque target that refuses the item (VEC-78). */
@@ -449,33 +659,6 @@ export function createDragStore() {
       ghost.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
     }
 
-    /**
-     * A cancel (Escape, release away from every list and target) or a drop back where it started: the card
-     * glides back into the row's slot, then goes. The row stays invisible until the card lands on it.
-     */
-    const settleGhost = () => {
-      const g = ghost
-      ghost = null // cleanup() leaves this one alone
-      if (!g) return
-      if (!row.isConnected || matchMedia("(prefers-reduced-motion: reduce)").matches) return g.remove()
-      row.style.visibility = "hidden"
-      const done = () => {
-        g.remove()
-        row.style.visibility = ""
-      }
-      // The row shows again when the drag state clears; measure it once that has rendered.
-      requestAnimationFrame(() => {
-        const r = row.getBoundingClientRect()
-        if (!row.isConnected || (!r.width && !r.height)) return done()
-        const anim = g.animate(
-          [{ transform: g.style.transform }, { transform: `translate3d(${r.left}px, ${r.top}px, 0)` }],
-          { duration: 160, easing: "cubic-bezier(.2,.8,.2,1)", fill: "forwards" },
-        )
-        anim.onfinish = done
-        anim.oncancel = done
-      })
-    }
-
     const update = () => {
       if (moveRaf) {
         cancelAnimationFrame(moveRaf)
@@ -498,6 +681,7 @@ export function createDragStore() {
       window.getSelection()?.removeAllRanges()
       if (touch) navigator.vibrate?.(10)
       announce(`Picked up ${itemLabel(item)}.`)
+      beginGaps(row)
       makeGhost()
       update()
       document.addEventListener("scroll", onScroll, { capture: true, passive: true })
@@ -565,21 +749,26 @@ export function createDragStore() {
       setTimeout(() => window.removeEventListener("click", swallowClick, { capture: true }), 0)
       update()
       const over = snap?.over ?? null
-      // Nothing moves (a cancel, or back where it started): the card settles into the row's slot.
       const reg = over?.kind === "list" ? list(over.listId) : undefined
       const stays = !over || (over.kind === "list" && !!reg && isNoopDrop(true, fromIndexIn(reg, item), over.gap))
-      if (stays) settleGhost()
+      // The card glides into the row wherever it renders next: the open gap, or its own slot after a cancel.
+      if (ghost) settleGhost(item.id, ghost)
+      ghost = null
       cleanup(false)
       drop(item, over)
+      // A drop that moves it: the re-render takes over from the shifts at once. A cancel or no-op slides back.
+      endGaps(!stays)
       set(null)
     }
 
     const cancel = () => {
       const wasActive = active
-      if (wasActive) settleGhost()
+      if (wasActive && ghost) settleGhost(item.id, ghost)
+      ghost = null
       cleanup(false)
       if (wasActive) {
         drop(item, null)
+        endGaps(false)
         set(null)
       }
     }
@@ -827,6 +1016,7 @@ export function createDragStore() {
       }
     },
     beginPointer,
+    claimSettle,
     keyDown,
     blur,
     /** How long the current drag has hovered target `id` (ms), or null when it isn't over it. */

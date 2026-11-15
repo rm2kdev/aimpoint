@@ -54,16 +54,22 @@ export {
  *   scrolls as usual.
  * - A pointer drag looks the same everywhere (VEC-95): a floating copy of the row follows the
  *   pointer from the moment the drag starts, in its own list, over another list, a heading or
- *   a drop target, and the source row leaves an empty slot until the drop. A 2px brand-blue
- *   line marks the insertion point in the list under the pointer; positions that would not
- *   change the order show no line. An empty linked list shows a dashed drop zone. A cancel
- *   or a drop back in place glides the card into the row's slot. A keyboard lift keeps the
- *   row in place, dimmed, with no floating copy.
+ *   a drop target, and the source row leaves an empty slot.
+ * - Where it would land opens up (VEC-96): in the list under the pointer the rows slide apart
+ *   to leave a gap the height of the row (in its own list, the rows between the slot and the
+ *   gap close the slot up); when the card leaves its list the rows below the slot slide up
+ *   over it, and it reopens when the card comes back. The list keeps the room at its end
+ *   meanwhile, so nothing below moves under the pointer. An empty linked list shows a dashed
+ *   drop zone that grows to the row's height. On a drop the card
+ *   glides into the gap (or back into its slot after a cancel) and the gaps close. Rows move
+ *   by transform only; under reduced motion the gaps open and close without sliding. A
+ *   keyboard lift keeps the row in place, dimmed, with no floating copy, and a 2px brand-blue
+ *   line marks where it would land.
  * - Keyboard: focus the element carrying `handleProps`, Space lifts, Up/Down (Home/End)
  *   move, Left/Right move to the previous/next linked list, Space or Enter drops, Escape or
  *   Tab cancels. Every step is announced in an assertive live region, naming the list.
  * - Inside a scrolling container, holding the pointer near its top or bottom edge
- *   auto-scrolls it; the line follows the scroll.
+ *   auto-scrolls it; the gap follows the scroll.
  * - Escape, pointer cancel, or releasing more than 24px away from every list and target
  *   cancels without calling anything; dropping in the same place is a no-op.
  * - `onReorder` gets the full new id order plus what moved. The list does not keep its own
@@ -73,8 +79,9 @@ export {
  *
  * Performance (VEC-73): the list subscribes only to the parts of the drag that change its own
  * markup (drag starts/ends, the pointer enters/leaves it, which row is lifted), and each row is
- * a memoised component, so a pointer move that only shifts the insertion line re-renders the
- * line and nothing else. `renderItem` is called again only for rows whose item, index or drag
+ * a memoised component, so a pointer move that only moves the gap re-renders nothing: the
+ * provider writes a transform on the rows that change side (and the keyboard line re-renders
+ * itself only). `renderItem` is called again only for rows whose item, index or drag
  * state changed, or when `renderItem` itself changes identity; keep it (and what it closes
  * over) stable when the rows are expensive, and memoise the row component it returns.
  */
@@ -123,6 +130,9 @@ export type SortableListProps<T> = {
   /** Accessible name for the list; also names it in announcements. */
   "aria-label"?: string
 }
+
+/** Duration and easing shared by the row and list-padding slides; matches GAP_MS / GAP_EASE in drag-provider. */
+const GAP_TRANSITION = "duration-150 ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none"
 
 const IGNORE = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [data-sortable-ignore]"
 
@@ -191,6 +201,8 @@ function SortableListInner<T>(props: SortableListProps<T>) {
       layoutSig.current = sig
       store.invalidate()
     }
+    // A drop just ended and this list renders the dropped row: the floating card glides onto it (VEC-96).
+    store.claimSettle(listRef.current)
   })
   React.useLayoutEffect(
     () => store.registerList(listId, regRef as { readonly current: ListRegistration }),
@@ -274,7 +286,9 @@ function SortableListInner<T>(props: SortableListProps<T>) {
         data-drop-over={isOver ? "" : undefined}
         // Mid-drag the provider's shield layer keeps rows from hover-washing or showing a link cursor. No
         // drag-time class here: a rule toggled on the list restyles every row at each drag start and drop (VEC-80).
-        className={cn("relative", className)}
+        // The bottom padding is the room a pointer drag's gap needs in a list it isn't from (VEC-96); it
+        // animates with the rows' slide. Static, so nothing is toggled on the list.
+        className={cn(GAP_TRANSITION, "relative transition-[padding-bottom]", className)}
         onDragStart={disabled ? undefined : (e) => e.preventDefault()}
       >
         {items.map((item, index) => {
@@ -302,7 +316,7 @@ function SortableListInner<T>(props: SortableListProps<T>) {
             role="presentation"
             data-sortable-empty=""
             className={cn(
-              "flex h-9 items-center justify-center rounded-lg border border-dashed text-[12px] text-faint transition-colors duration-100 motion-reduce:transition-none",
+              "flex h-9 items-center justify-center rounded-lg border border-dashed text-[12px] text-faint transition-[color,background-color,border-color,height] duration-150 motion-reduce:transition-none",
               isOver ? "border-brand bg-brand/5 text-brand" : "border-input",
             )}
           >
@@ -373,8 +387,11 @@ const SortableRow = React.memo(function SortableRow<T>({
       // its slot empty: same height, so nothing shifts under a still pointer and the gaps next to it stay the
       // no-op drop. A keyboard lift keeps it in place, dimmed, with the focus ring on it.
       data-drag-lifted={lifted ? "" : undefined}
+      // A static transition (nothing toggled per drag, VEC-80): the provider shifts rows with a transform to
+      // open the landing gap, and they slide (VEC-96).
       className={cn(
-        "transition-opacity duration-150 motion-reduce:transition-none",
+        GAP_TRANSITION,
+        "transition-[opacity,transform]",
         lifted && "invisible",
         isKeyboardDragging && "opacity-45",
         className,
@@ -388,7 +405,7 @@ const SortableRow = React.memo(function SortableRow<T>({
   )
 }) as <T>(props: SortableRowProps<T>) => React.ReactElement
 
-/** The 2px insertion line. Its own subscriber: a gap change re-renders this element only. */
+/** The 2px insertion line, for keyboard moves. Its own subscriber: a gap change re-renders this element only. */
 function InsertionLine({ listId }: { listId: string }) {
   const lineTop = useDragSelector((d) => (d?.over?.kind === "list" && d.over.listId === listId ? d.over.lineTop : null))
   if (lineTop === null) return null
