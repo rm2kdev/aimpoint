@@ -224,7 +224,7 @@ export const CLOSEOUT_STEPS = (key: string) =>
  * posted while it works. Shared by the push prompt and check_for_work so the two can't drift.
  */
 export const PROGRESS_HINT =
-  "Keep the ticket posted while you work, with add_comment: right after you pick it up, a short plan of what you're going to do; then an update at each meaningful milestone (finished investigating, change made, checks running, blocker hit) and at least every 10 minutes or so of work, saying what's done and what's next. Keep each update to a few lines of plain text (no Markdown) and don't post one for every tool call. If you're blocked or waiting on someone, say so straight away and @mention them (<@id>).";
+  "Keep the ticket posted while you work, with add_comment: right after you pick it up, a short plan of what you're going to do; then an update at each meaningful milestone (finished investigating, change made, checks running, blocker hit) and at least every 10 minutes or so of work, saying what's done and what's next. If the task has more than one step, post a short update as you finish each step, before starting the next, however quickly it went: there must be at least one update between the plan and your final comment, even when the task says to put the results in the final comment. Keep each update to a few lines of plain text (no Markdown) and don't post one for every tool call. If you're blocked or waiting on someone, say so straight away and @mention them (<@id>).";
 
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
 const STARTED_NOTE =
