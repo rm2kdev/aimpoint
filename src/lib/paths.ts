@@ -42,3 +42,10 @@ export const taskUrl = (origin: string, slug: string, taskKey: string, view: Tas
 export function withTask(path: string, taskKey: string): string {
   return `${path.split("?")[0]}?task=${encodeURIComponent(taskKey)}`;
 }
+
+/** User-level account page (not org-scoped). */
+export const ACCOUNT_PATH = "/account";
+
+/** `/account?from=<slug>`: remembers which org to go back to. */
+export const accountPath = (fromSlug?: string | null) =>
+  fromSlug ? `${ACCOUNT_PATH}?from=${encodeURIComponent(fromSlug)}` : ACCOUNT_PATH;

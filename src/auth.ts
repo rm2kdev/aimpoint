@@ -2,6 +2,7 @@ import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
+import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 
 const creds = z.object({
@@ -13,7 +14,7 @@ class InvalidLogin extends CredentialsSignin {
   code = "invalid_credentials";
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const { handlers, auth, signIn, signOut, unstable_update: updateSession } = NextAuth({
   trustHost: true,
   session: { strategy: "jwt", maxAge: 60 * 60 * 24 * 30 },
   pages: { signIn: "/login" },
@@ -33,8 +34,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user?.id) token.uid = user.id;
+      // Profile edits (e.g. display name): re-read from the database rather than trusting the update payload.
+      if (trigger === "update" && typeof token.uid === "string" && ObjectId.isValid(token.uid)) {
+        const { users } = await cols();
+        const u = await users.findOne({ _id: new ObjectId(token.uid) }, { projection: { name: 1, email: 1 } });
+        if (u) {
+          token.name = u.name;
+          token.email = u.email;
+        }
+      }
       return token;
     },
     session({ session, token }) {

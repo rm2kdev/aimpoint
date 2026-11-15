@@ -8,6 +8,7 @@ import {
   ArchiveIcon,
   BotIcon,
   CheckIcon,
+  CircleUserIcon,
   ChevronsUpDownIcon,
   InboxIcon,
   LayersIcon,
@@ -34,10 +35,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { logoutAction } from "@/app/actions/auth";
-import { orgPath, projectPath } from "@/lib/paths";
+import { accountPath, orgPath, projectPath } from "@/lib/paths";
 
 export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
-  const { org, orgs, me, projects, counts, isAdmin, unread } = useOrg();
+  const { org, orgs, projects, counts, isAdmin, unread } = useOrg();
   const pathname = usePathname();
 
   return (
@@ -111,12 +112,8 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
         </NavItem>
       </div>
 
-      <div className="mt-2 flex items-center gap-2.5 border-t border-sidebar-border px-1.5 pt-2.5">
-        <UserAvatar id={me.id} name={me.name} size={24} />
-        <div className="min-w-0 flex-1 leading-tight">
-          <div className="truncate text-[13px] font-medium">{me.name}</div>
-          <div className="text-[11.5px] text-faint">{me.role === "admin" ? "Admin" : "Member"}</div>
-        </div>
+      <div className="mt-2 flex items-center gap-1 border-t border-sidebar-border pt-2">
+        <UserMenu onNavigate={onNavigate} />
         <ThemeMenu />
       </div>
     </nav>
@@ -211,6 +208,44 @@ function OrgSwitcher() {
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => router.push("/onboarding")} className="gap-2.5">
           <PlusIcon className="size-4" /> New organisation
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => logoutAction()} className="gap-2.5">
+          <LogOutIcon className="size-4" /> Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
+  const { org, me } = useOrg();
+  const router = useRouter();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Account menu"
+        className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-1 text-left transition-colors outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <UserAvatar id={me.id} name={me.name} size={24} />
+        <span className="min-w-0 flex-1 leading-tight">
+          <span className="block truncate text-[13px] font-medium">{me.name}</span>
+          <span className="block text-[11.5px] text-faint">{me.role === "admin" ? "Admin" : "Member"}</span>
+        </span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" side="top" className="w-60">
+        <DropdownMenuLabel className="min-w-0 font-normal leading-tight">
+          <span className="block truncate text-[13px] font-medium">{me.name}</span>
+          <span className="block truncate text-xs text-faint">{me.email}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={() => {
+            onNavigate?.();
+            router.push(accountPath(org.slug));
+          }}
+          className="gap-2.5"
+        >
+          <CircleUserIcon className="size-4" /> Account settings
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => logoutAction()} className="gap-2.5">
           <LogOutIcon className="size-4" /> Sign out

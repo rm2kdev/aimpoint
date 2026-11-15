@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArchiveIcon, BotIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, UserIcon } from "lucide-react";
+import { ArchiveIcon, BotIcon, CircleUserIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, UserIcon } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -18,7 +18,7 @@ import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
-import { orgPath, projectPath, taskPath, withTask } from "@/lib/paths";
+import { accountPath, orgPath, projectPath, taskPath, withTask } from "@/lib/paths";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { org, projects } = useOrg();
@@ -111,6 +111,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 </CommandItem>
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "general"))} className="gap-2.5">
                   <SettingsIcon /> Settings
+                </CommandItem>
+                <CommandItem onSelect={() => go(accountPath(org.slug))} className="gap-2.5">
+                  <CircleUserIcon /> Account settings
                 </CommandItem>
               </CommandGroup>
             </>
