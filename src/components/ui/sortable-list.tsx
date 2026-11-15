@@ -166,7 +166,6 @@ function SortableListInner<T>(props: SortableListProps<T>) {
 
   // Narrow subscriptions: each re-renders the list only when its own value changes (VEC-73).
   const inGroup = useDragSelector((d) => !!d && d.item.group === group)
-  const pointerInGroup = useDragSelector((d) => !!d && d.item.group === group && d.mode === "pointer")
   const draggingId = useDragSelector((d) => (d && d.item.listId === listId ? d.item.id : null))
   const keyboard = useDragSelector((d) => d?.mode === "keyboard")
   const isOver = useDragSelector((d) => d?.over?.kind === "list" && d.over.listId === listId)
@@ -271,9 +270,9 @@ function SortableListInner<T>(props: SortableListProps<T>) {
         data-list-id={listId}
         data-dragging={draggingId !== null ? "" : undefined}
         data-drop-over={isOver ? "" : undefined}
-        // Rows under the pointer shouldn't hover-wash or show a link cursor mid-drag: one rule on the list
-        // instead of a class on every row.
-        className={cn("relative", pointerInGroup && "[&>li]:pointer-events-none", className)}
+        // Mid-drag the provider's shield layer keeps rows from hover-washing or showing a link cursor. No
+        // drag-time class here: a rule toggled on the list restyles every row at each drag start and drop (VEC-80).
+        className={cn("relative", className)}
         onDragStart={disabled ? undefined : (e) => e.preventDefault()}
       >
         {items.map((item, index) => {

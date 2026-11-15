@@ -112,6 +112,39 @@ function scrollParent(el: HTMLElement | null): HTMLElement | null {
   return null
 }
 
+/**
+ * A transparent layer over the whole window for the length of a pointer drag (VEC-80). It takes the
+ * pointer, so rows and links under it get no hover wash or link cursor, and the cursor reads "grabbing"
+ * everywhere; text selection is refused while it's up. It replaces styling the body (cursor, user-select)
+ * and each list (pointer-events on its rows): those are inherited by, or re-matched against, every row
+ * underneath, so each drag start and drop restyled the whole page, a 50 ms long task with a few hundred
+ * rows. Inserting and removing one fixed element restyles only that element. Hit testing is geometric
+ * (cached rects), so it doesn't see the layer; wheel scrolling goes to the scroller under the pointer.
+ */
+function createDragShield(): () => void {
+  const el = document.createElement("div")
+  el.setAttribute("aria-hidden", "true")
+  el.setAttribute("data-drag-shield", "")
+  el.style.cssText =
+    "position:fixed;inset:0;z-index:2147483646;cursor:grabbing;user-select:none;-webkit-user-select:none;touch-action:none"
+  const onWheel = (ev: WheelEvent) => {
+    const under = document.elementsFromPoint(ev.clientX, ev.clientY).find((n) => n !== el)
+    const box = under instanceof HTMLElement ? scrollParent(under) : null
+    if (!box) return
+    ev.preventDefault()
+    const unit = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? box.clientHeight : 1
+    box.scrollBy({ left: ev.deltaX * unit, top: ev.deltaY * unit })
+  }
+  const onSelectStart = (ev: Event) => ev.preventDefault()
+  el.addEventListener("wheel", onWheel, { passive: false })
+  document.addEventListener("selectstart", onSelectStart, { capture: true })
+  document.body.appendChild(el)
+  return () => {
+    document.removeEventListener("selectstart", onSelectStart, { capture: true })
+    el.remove()
+  }
+}
+
 /** Row extents in the list's own (scrolling) coordinates. */
 function measure(list: HTMLUListElement) {
   const box = list.getBoundingClientRect()
@@ -370,7 +403,7 @@ export function createDragStore() {
     let moveRaf = 0
     let ghost: HTMLElement | null = null
     let offset = { x: 0, y: 0 }
-    const prevBody = { userSelect: document.body.style.userSelect, cursor: document.body.style.cursor }
+    let removeShield: (() => void) | null = null
 
     // A floating copy of the row that follows the pointer. Shown only once the row can't
     // stand in for itself: it's gone (route change) or the pointer is over another list or
@@ -437,8 +470,7 @@ export function createDragStore() {
 
     const activate = () => {
       active = true
-      document.body.style.userSelect = "none"
-      document.body.style.cursor = "grabbing"
+      removeShield = createDragShield()
       window.getSelection()?.removeAllRanges()
       if (touch) navigator.vibrate?.(10)
       announce(`Picked up ${itemLabel(item)}.`)
@@ -593,9 +625,9 @@ export function createDragStore() {
       window.removeEventListener("contextmenu", onContextMenu)
       ghost?.remove()
       ghost = null
+      removeShield?.()
+      removeShield = null
       if (active) {
-        document.body.style.userSelect = prevBody.userSelect
-        document.body.style.cursor = prevBody.cursor
         if (clearSnap) {
           endHover(item, false)
           set(null)
