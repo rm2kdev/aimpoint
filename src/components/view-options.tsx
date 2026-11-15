@@ -21,11 +21,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { daysUntil } from "@/lib/dates";
 import { PRIORITY_LABELS } from "@/lib/format";
+import { compareRank } from "@/lib/rank";
 import type { Priority, Task } from "@/lib/types";
 
 /* ---------------- model ---------------- */
 
-export type SortKey = "priority" | "due" | "created" | "created-asc" | "updated" | "title" | "archived";
+export type SortKey = "manual" | "priority" | "due" | "created" | "created-asc" | "updated" | "title" | "archived";
 export type DueFilter = "overdue" | "today" | "week" | "none";
 
 export interface ViewState {
@@ -37,6 +38,7 @@ export interface ViewState {
 }
 
 export const SORT_LABELS: Record<SortKey, string> = {
+  manual: "Manual",
   priority: "Priority",
   due: "Due date",
   created: "Newest",
@@ -55,6 +57,12 @@ const DUE_LABELS: Record<DueFilter, string> = {
 
 const EMPTY: Omit<ViewState, "sort"> = { assignees: [], priorities: [], due: [] };
 
+/**
+ * Saved-state version. v1 (before VEC-57) saved the sort on every visit, so a saved "priority" there was
+ * usually just the old default: it no longer overrides the new default (Manual). v2 keeps whatever is saved.
+ */
+const VIEW_STATE_VERSION = 2;
+
 /** Per-view sort/filter, remembered in localStorage under the view's path. */
 export function useViewState(storageKey: string, defaultSort: SortKey) {
   const [state, setState] = useState<ViewState>({ sort: defaultSort, ...EMPTY });
@@ -63,10 +71,11 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey);
-      const saved = raw ? (JSON.parse(raw) as Partial<ViewState>) : {};
+      const saved = raw ? (JSON.parse(raw) as Partial<ViewState> & { v?: number }) : {};
+      const legacyDefault = (saved.v ?? 1) < VIEW_STATE_VERSION && saved.sort === "priority";
       // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is client-only; read after hydration
       setState({
-        sort: saved.sort && saved.sort in SORT_LABELS ? saved.sort : defaultSort,
+        sort: saved.sort && saved.sort in SORT_LABELS && !legacyDefault ? saved.sort : defaultSort,
         assignees: Array.isArray(saved.assignees) ? saved.assignees : [],
         priorities: Array.isArray(saved.priorities) ? saved.priorities : [],
         due: Array.isArray(saved.due) ? saved.due : [],
@@ -78,7 +87,7 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
   }, [storageKey, defaultSort]);
 
   useEffect(() => {
-    if (loadedKey === storageKey) localStorage.setItem(storageKey, JSON.stringify(state));
+    if (loadedKey === storageKey) localStorage.setItem(storageKey, JSON.stringify({ ...state, v: VIEW_STATE_VERSION }));
   }, [state, storageKey, loadedKey]);
 
   return [state, setState] as const;
@@ -107,6 +116,9 @@ const newest = (a: Task, b: Task) => b.createdAt.localeCompare(a.createdAt) || b
 
 export function comparator(sort: SortKey): (a: Task, b: Task) => number {
   switch (sort) {
+    case "manual":
+      // Shared manual order (lib/rank.ts): identical for every member, ties broken by id.
+      return compareRank;
     case "due":
       // Dated tasks first, soonest first; undated fall to the bottom by priority.
       return (a, b) =>

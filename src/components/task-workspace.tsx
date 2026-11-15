@@ -20,7 +20,8 @@ import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMen
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { timeAgo } from "@/lib/format";
-import { updateTask, type TaskPatch } from "@/app/actions/tasks";
+import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
+import { compareRank, rankBetween } from "@/lib/rank";
 import type { Status, Task, TaskType } from "@/lib/types";
 
 export interface Scope {
@@ -31,7 +32,7 @@ export interface Scope {
 
 type TypeFilter = "all" | TaskType;
 
-const SORTS: SortKey[] = ["priority", "due", "created", "created-asc", "updated", "title"];
+const SORTS: SortKey[] = ["manual", "priority", "due", "created", "created-asc", "updated", "title"];
 const ARCHIVE_SORTS: SortKey[] = ["archived", "due", "created", "updated", "title"];
 
 export function TaskWorkspace({
@@ -62,7 +63,8 @@ export function TaskWorkspace({
   // Rows a teammate changed live: id -> actor id. Cleared once seen (hovered or opened).
   const [fresh, setFresh] = useState<Map<string, Fresh>>(new Map());
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : "priority");
+  // Manual (shared drag order) is the default for project views and All; My tasks keeps priority.
+  const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : scope.mine ? "priority" : "manual");
   const [collapsed, toggleGroup] = useCollapsedGroups(`vector:collapsed:${pathname}`);
 
   useEffect(() => {
@@ -120,7 +122,9 @@ export function TaskWorkspace({
             ? "moved this"
             : prev.assigneeId !== e.task.assigneeId
               ? "reassigned this"
-              : "edited this";
+              : prev.rank !== e.task.rank
+                ? "reordered this"
+                : "edited this";
         mark(e.task.id, e.actorId, verb);
       }
     } else if (e.type === "feed.add" && e.item.kind === "comment" && e.actorId !== me.id) {
@@ -272,6 +276,36 @@ export function TaskWorkspace({
     if (t) seen(t.id);
   }, [selectedKey, flat, seen]);
 
+  /**
+   * Manual order (VEC-57): move `task` between its new neighbours (`beforeKey` = the task it goes above,
+   * `afterKey` = the one it goes below) and/or into another status or project, optimistically. The server
+   * computes the real rank; a refusal rolls the row back with a toast. Returns whether it was saved.
+   */
+  const moveTask = async (task: Task, move: { beforeKey?: string; afterKey?: string; statusId?: string; projectId?: string }) => {
+    const others = [...tasks.values()].filter((t) => t.id !== task.id && t.rank).sort(compareRank);
+    const at = (key?: string) => (key ? others.findIndex((t) => t.key === key) : -1);
+    const ia = at(move.afterKey);
+    const ib = at(move.beforeKey);
+    let rank = task.rank;
+    try {
+      // Same neighbour rule as the server, over the tasks this view holds.
+      if (ia >= 0 && ib >= 0 && ia < ib) rank = rankBetween(others[ia].rank, others[ib].rank);
+      else if (ia >= 0) rank = rankBetween(others[ia].rank, others[ia + 1]?.rank);
+      else if (ib >= 0) rank = rankBetween(others[ib - 1]?.rank, others[ib].rank);
+    } catch {
+      // Ties or stale ranks: keep the old position until the server's answer arrives.
+    }
+    upsert({ ...task, rank, statusId: move.statusId ?? task.statusId, projectId: move.projectId ?? task.projectId });
+    const r = await moveTaskAction(org.slug, task.key, { beforeKey: move.beforeKey, afterKey: move.afterKey, status: move.statusId, project: move.projectId });
+    if (!r.ok) {
+      upsert(task);
+      toast.error(r.error);
+      return false;
+    }
+    if (r.data) upsert(r.data);
+    return true;
+  };
+
   /** Optimistic edit from the row (status ring, right-click menu); rolls back with a toast if refused. */
   const patchTask = async (task: Task, patch: TaskPatch) => {
     upsert({ ...task, ...(patch as Partial<Task>) });
@@ -398,7 +432,7 @@ export function TaskWorkspace({
                   </h2>
                   {!folded && (
                   <ul id={`group-${g.status.id}`} className="flex flex-col gap-1">
-                    {g.tasks.map((t) => (
+                    {g.tasks.map((t, i) => (
                       <TaskRow
                         key={t.id}
                         task={t}
@@ -413,6 +447,16 @@ export function TaskWorkspace({
                   onPatch={(p) => patchTask(t, p)}
                   onOpen={() => open(t.key)}
                         onArchive={(a) => setArchived(t, a)}
+                        onMove={
+                          view.sort === "manual" && g.tasks.length > 1
+                            ? (where) => {
+                                const first = g.tasks[0];
+                                const last = g.tasks[g.tasks.length - 1];
+                                if (where === "top" && i > 0) void moveTask(t, { beforeKey: first.key });
+                                if (where === "bottom" && i < g.tasks.length - 1) void moveTask(t, { afterKey: last.key });
+                              }
+                            : undefined
+                        }
                         refCb={(el) => {
                           if (el) rowEls.current.set(t.id, el);
                           else rowEls.current.delete(t.id);
@@ -447,6 +491,7 @@ function TaskRow({
   onArchive,
   onPatch,
   onOpen,
+  onMove,
   refCb,
 }: {
   task: Task;
@@ -462,6 +507,7 @@ function TaskRow({
   onArchive: (archived: boolean) => void;
   onPatch: (patch: TaskPatch) => void;
   onOpen: () => void;
+  onMove?: (where: "top" | "bottom") => void;
   refCb: (el: HTMLLIElement | null) => void;
 }) {
   const { statusById, memberById, projectById, me, isAdmin } = useOrg();
@@ -475,7 +521,7 @@ function TaskRow({
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   return (
-    <TaskContextMenu task={task} onOpen={() => (onSeen(), onOpen())} onPatch={onPatch} onArchive={onArchive}>
+    <TaskContextMenu task={task} onOpen={() => (onSeen(), onOpen())} onPatch={onPatch} onArchive={onArchive} onMove={onMove}>
     <li
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArchiveIcon, ArchiveRestoreIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
 import { PRIORITY_OPTIONS, TYPE_OPTIONS, useAssigneeOptions, useStatusOptions, type Option } from "@/components/pickers";
@@ -33,12 +33,15 @@ export function TaskContextMenu({
   onOpen,
   onPatch,
   onArchive,
+  onMove,
 }: {
   task: Task;
   children: React.ReactNode;
   onOpen: () => void;
   onPatch: (patch: TaskPatch) => void;
   onArchive: (archived: boolean) => void;
+  /** Manual sort only: move to the top or bottom of its status group (creator or admin). */
+  onMove?: (where: "top" | "bottom") => void;
 }) {
   const { me, isAdmin, memberById } = useOrg();
   const access = taskAccess(task, me.id, isAdmin);
@@ -106,6 +109,19 @@ export function TaskContextMenu({
           options={TYPE_OPTIONS}
           onChange={(type) => onPatch({ type: type as TaskType })}
         />
+        {onMove && access === "full" && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onSelect={() => onMove("top")}>
+              <ArrowUpToLineIcon />
+              Move to top
+            </ContextMenuItem>
+            <ContextMenuItem onSelect={() => onMove("bottom")}>
+              <ArrowDownToLineIcon />
+              Move to bottom
+            </ContextMenuItem>
+          </>
+        )}
         {!canWork && (
           <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">
             Only {creator?.name ?? "the creator"}, the assignee or an admin can change this task.

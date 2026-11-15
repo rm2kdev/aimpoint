@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { MongoClient, ObjectId } from "mongodb";
 import bcrypt from "bcryptjs";
 import { createHash, randomBytes } from "node:crypto";
+import { ranksAfter } from "../src/lib/rank.ts";
 
 if (existsSync(".env.local")) {
   for (const line of readFileSync(".env.local", "utf8").split("\n")) {
@@ -113,6 +114,12 @@ const docs = tasks.map(([pk, title, type, status, who, priority, description, cr
     updatedAt: t,
   };
 });
+// Manual order (VEC-57): ranks in the backfill's order (status, then priority, then newest).
+const statusOrder = new Map(st.map((s) => [s._id.toHexString(), s.order]));
+const ranked = [...docs].sort(
+  (a, b) => statusOrder.get(a.statusId.toHexString()) - statusOrder.get(b.statusId.toHexString()) || b.priority - a.priority || b.createdAt - a.createdAt,
+);
+ranksAfter(null, ranked.length).forEach((rank, i) => (ranked[i].rank = rank));
 await db.collection("projects").insertMany(projects);
 await db.collection("tasks").insertMany(docs);
 await db.collection("activity").insertMany(

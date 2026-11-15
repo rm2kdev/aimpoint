@@ -9,15 +9,17 @@ import {
   addCommentAs,
   createTaskAs,
   deleteTaskAs,
+  moveTask,
   oid,
   updateTaskAs,
   type Actor,
+  type MoveInput,
   type NewTaskInput,
   type TaskPatch,
 } from "@/lib/task-service";
 import type { Counts, FeedItem, Task, TaskDetail, TaskDoc } from "@/lib/types";
 
-export type { NewTaskInput, TaskPatch };
+export type { MoveInput, NewTaskInput, TaskPatch };
 
 const actorOf = ({ org, user, isAdmin }: OrgContext): Actor => ({ orgId: org._id, id: user._id, isAdmin });
 
@@ -27,6 +29,14 @@ export async function createTask(slug: string, input: NewTaskInput): Promise<Res
 
 export async function updateTask(slug: string, taskId: string, patch: TaskPatch): Promise<Result<Task>> {
   return guard(async () => updateTaskAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), patch));
+}
+
+/**
+ * Reorder a task and/or change its status or project in one write (VEC-57). `beforeKey` / `afterKey` are the
+ * keys of its new neighbours (it goes above `beforeKey`, below `afterKey`). Creator or admin only.
+ */
+export async function moveTaskAction(slug: string, taskKey: string, move: MoveInput): Promise<Result<Task>> {
+  return guard(async () => moveTask(actorOf(await requireOrg(slug)), taskKey, move ?? {}));
 }
 
 export async function deleteTask(slug: string, taskId: string): Promise<Result> {

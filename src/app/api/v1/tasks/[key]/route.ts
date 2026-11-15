@@ -2,7 +2,7 @@ import { botRoute, parsePriority, parseType, readJson, resolveAssignee, resolveP
 import { findTaskByKey, loadFeed, toTaskDetail, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
 import { UserError } from "@/lib/result";
-import { updateTaskAs } from "@/lib/task-service";
+import { moveTask, updateTaskAs } from "@/lib/task-service";
 
 /** GET /api/v1/tasks/WEB-12: the task with its description and activity. */
 export const GET = botRoute<{ key: string }>(async (_req, ctx, { key }) => {
@@ -13,11 +13,29 @@ export const GET = botRoute<{ key: string }>(async (_req, ctx, { key }) => {
   return { task, activity };
 }, "get_task");
 
-/** PATCH /api/v1/tasks/WEB-12  Same rights as a person: creator edits anything, assignee moves and sets details. `dependsOn` replaces the list. */
+/** Fields that may go with `before` / `after` in one move (VEC-57). */
+const MOVE_FIELDS = new Set(["before", "after", "status", "project"]);
+
+/**
+ * PATCH /api/v1/tasks/WEB-12  Same rights as a person: creator edits anything, assignee moves and sets details. `dependsOn` replaces the list.
+ * `before` / `after` (task keys) reorder it in the shared manual order: it goes directly above `before` / below
+ * `after`, optionally with `status` and `project` in the same write. Creator or admin only.
+ */
 export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
   const found = await findTaskByKey(ctx.org._id, key);
   if (!found) throw new UserError(`Unknown task "${key}".`);
   const b = await readJson(req);
+  if (b.before !== undefined || b.after !== undefined) {
+    const extra = Object.keys(b).filter((k) => !MOVE_FIELDS.has(k));
+    if (extra.length) throw new UserError(`\`before\` / \`after\` can only be combined with \`status\` and \`project\` (got ${extra.join(", ")}).`);
+    const task = await moveTask(ctx.actor, key, {
+      beforeKey: b.before == null ? null : String(b.before),
+      afterKey: b.after == null ? null : String(b.after),
+      status: await resolveStatus(ctx.org._id, b.status),
+      project: b.project === undefined ? undefined : (await resolveProject(ctx.org._id, b.project))._id.toHexString(),
+    });
+    return { task };
+  }
   const task = await updateTaskAs(ctx.actor, found.task._id, {
     title: b.title === undefined ? undefined : String(b.title),
     description: toDescriptionHtml(b.description),

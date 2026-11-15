@@ -1,5 +1,6 @@
 import "server-only";
 import { MongoClient, ObjectId, type Db, type Collection } from "mongodb";
+import { ranksAfter } from "./rank";
 import type {
   UserDoc,
   OrgDoc,
@@ -90,6 +91,7 @@ async function ensureIndexes(db: Db) {
     db.collection("tasks").createIndex({ orgId: 1, assigneeId: 1 }),
     db.collection("tasks").createIndex({ orgId: 1, title: "text" }),
     db.collection("tasks").createIndex({ orgId: 1, dependsOn: 1 }),
+    db.collection("tasks").createIndex({ orgId: 1, rank: 1 }),
     db.collection("comments").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("activity").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("invites").createIndex({ token: 1 }, { unique: true }),
@@ -135,6 +137,27 @@ async function migrate(db: Db) {
       const ops = list.map((s, i) => ({ updateOne: { filter: { _id: s._id }, update: { $set: { order: i < at ? i : i + 1 } } } }));
       if (ops.length) await statuses.bulkWrite(ops);
       await statuses.insertOne({ _id: new ObjectId(), orgId, name: "Triage", color: "#d6409f", category: "triage", order: at });
+    }
+  });
+
+  // Manual task order (VEC-57): every task gets a rank, one key space per organisation, in the order the
+  // lists showed before: by status (workflow order), then priority (high first), then newest first.
+  await once("2026-11-task-rank", async () => {
+    const tasks = db.collection<TaskDoc>("tasks");
+    const statuses = db.collection<StatusDoc>("statuses");
+    for (const orgId of await tasks.distinct("orgId")) {
+      const order = new Map((await statuses.find({ orgId }).toArray()).map((s) => [s._id.toHexString(), s.order]));
+      const list = await tasks.find({ orgId }, { projection: { statusId: 1, priority: 1, createdAt: 1, number: 1 } }).toArray();
+      list.sort(
+        (a, b) =>
+          (order.get(a.statusId.toHexString()) ?? 1e9) - (order.get(b.statusId.toHexString()) ?? 1e9) ||
+          b.priority - a.priority ||
+          b.createdAt.getTime() - a.createdAt.getTime() ||
+          b.number - a.number,
+      );
+      const ranks = ranksAfter(null, list.length);
+      const ops = list.map((t, i) => ({ updateOne: { filter: { _id: t._id }, update: { $set: { rank: ranks[i] } } } }));
+      if (ops.length) await tasks.bulkWrite(ops);
     }
   });
 }

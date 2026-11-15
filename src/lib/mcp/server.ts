@@ -4,7 +4,7 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { toolsForBot } from "@/lib/bots";
-import { addCommentAs, createTaskAs, markStartedByBot, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
+import { addCommentAs, createTaskAs, markStartedByBot, moveTask, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, taskKeys } from "@/lib/dependencies";
 import { CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
@@ -670,7 +670,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   update_task: {
     description:
-      "Edit a task. On tasks you created you can change anything. On tasks assigned to you, priority, type and due date. Title, description, project, dependencies and archiving are creator-only. Description accepts Markdown and replaces the whole description. `depends_on` replaces the whole dependency list ([] removes them all).",
+      "Edit a task. On tasks you created you can change anything. On tasks assigned to you, priority, type and due date. Title, description, project, dependencies and archiving are creator-only. Description accepts Markdown and replaces the whole description. `depends_on` replaces the whole dependency list ([] removes them all). To reorder it in the shared manual order (what people see under Sort: Manual), pass `before` (the task it goes directly above) and/or `after` (the task it goes directly below), optionally with `status` and `project` to move it there in the same write; reordering is creator/admin only and can't be combined with other fields.",
     inputSchema: {
       type: "object",
       properties: {
@@ -683,13 +683,34 @@ const TOOLS: Record<string, ToolImpl> = {
         project: { type: "string", description: "Move to another project (key, name or id). The task gets a new key." },
         archived: { type: "boolean" },
         depends_on: DEPENDS_ARG,
+        before: { type: "string", description: "Reorder: task key it should sit directly above." },
+        after: { type: "string", description: "Reorder: task key it should sit directly below." },
+        status: { type: "string", description: 'Status name, e.g. "Todo". With before/after it moves there in the same write.' },
       },
       required: ["task"],
       additionalProperties: false,
     },
     run: async (args, ctx) => {
-      const { task } = await findTask(ctx, str(args, "task", true)!);
+      const { task, project } = await findTask(ctx, str(args, "task", true)!);
+      const status = str(args, "status") ? (await resolveStatus(ctx, str(args, "status")!))._id.toHexString() : undefined;
+      if (str(args, "before") || str(args, "after")) {
+        const extra = Object.keys(args).filter((k) => args[k] !== undefined && !["task", "before", "after", "status", "project"].includes(k));
+        if (extra.length) throw new ToolInputError(`before/after can only be combined with status and project (got ${extra.join(", ")}).`);
+        const keyOf = async (ref?: string) => {
+          if (!ref) return null;
+          const n = await findTask(ctx, ref);
+          return `${n.project.key}-${n.task.number}`;
+        };
+        const t = await moveTask(ctx.actor, `${project.key}-${task.number}`, {
+          beforeKey: await keyOf(str(args, "before")),
+          afterKey: await keyOf(str(args, "after")),
+          status,
+          project: str(args, "project") ? (await resolveProject(ctx, str(args, "project")!))._id.toHexString() : undefined,
+        });
+        return { content: [text(`Moved ${t.key}.`), json({ key: t.key, rank: t.rank, url: taskUrl(ctx.origin, ctx.org, t.key) })] };
+      }
       const patch: TaskPatch = {
+        statusId: status,
         title: str(args, "title"),
         description: args.description === undefined ? undefined : markdownToHtml(String(args.description ?? "")),
         type: parseType(args.type),

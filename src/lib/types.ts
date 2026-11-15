@@ -121,6 +121,11 @@ export interface TaskDoc {
    * triager finds it once. Replaced each time the task becomes ready again; cleared on re-triage.
    */
   closeout?: { botId: ObjectId; requestedAt: Date; deliveredAt: Date | null } | null;
+  /**
+   * Manual order (VEC-57): fractional index key from lib/rank.ts, one key space per organisation, smaller =
+   * higher. Backfilled once by the `2026-11-task-rank` migration; new tasks get one above everything else.
+   */
+  rank?: string;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -399,6 +404,8 @@ export interface Task {
   workingBotIds: string[];
   /** Other tasks are waiting on this one but nobody is on it (see Stalled). Null when it isn't stalled. */
   stalled: Stalled | null;
+  /** Manual order key (lib/rank.ts); compare as strings, smaller = higher. "" only for a task saved before ranks. */
+  rank: string;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

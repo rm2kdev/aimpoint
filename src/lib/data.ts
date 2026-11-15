@@ -119,6 +119,7 @@ export function toTask(t: TaskDoc, projectKey: string, workingBotIds: string[] =
     waitingOn: (t.waitingOn ?? []).map((id) => id.toHexString()),
     workingBotIds,
     stalled: null,
+    rank: t.rank ?? "",
     createdBy: t.createdBy.toHexString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),

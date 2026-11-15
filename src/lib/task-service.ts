@@ -3,7 +3,8 @@ import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
-import { sanitizeDescription, toFeed, toTask, withWorkingBots } from "@/lib/data";
+import { findTaskByKey, sanitizeDescription, toFeed, toTask, withWorkingBots } from "@/lib/data";
+import { rankBetween } from "@/lib/rank";
 import { publishWorking } from "@/lib/claims";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
@@ -308,6 +309,7 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   const waitingOn = await openDependencies(actor.orgId, dependsOn);
   const now = new Date();
   const priority = input.priority ?? 0;
+  const rank = await topRank(actor.orgId);
   const doc: TaskDoc = {
     _id: new ObjectId(),
     orgId: actor.orgId,
@@ -324,6 +326,7 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     archivedBy: null,
     dependsOn,
     waitingOn,
+    rank,
     createdBy: actor.id,
     createdAt: now,
     updatedAt: now,
@@ -351,7 +354,11 @@ export interface TaskPatch {
   dependsOn?: string[];
 }
 
-export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPatch): Promise<Task> {
+/**
+ * `internal` carries fields no client patch may set directly: `rank` comes only from moveTask, which computes
+ * it from the neighbours itself.
+ */
+export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPatch, internal: { rank?: string } = {}): Promise<Task> {
   const c = await cols();
   const before = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
   if (!before) throw new UserError("This task no longer exists.");
@@ -467,6 +474,8 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
     projectKey = p.key;
     acts.push({ kind: "project", from: before.projectId.toHexString(), to: p._id.toHexString() });
   }
+  // A reorder alone writes no activity, only the new rank.
+  if (internal.rank !== undefined && internal.rank !== before.rank) set.rank = internal.rank;
 
   if (!Object.keys(set).length) {
     const p = await c.projects.findOne({ _id: before.projectId });
@@ -501,6 +510,83 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   if (doneChanged) await dependencyChanged(actor.orgId, byOf(actor), [taskId]);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   return task;
+}
+
+/* ---------------- manual order (VEC-57) ---------------- */
+
+/**
+ * Rank for a new task: above every task in the organisation, so it's first in its status group in every view
+ * (project views and All share one key space). Documented choice: new tasks go to the top.
+ */
+async function topRank(orgId: ObjectId, exclude?: ObjectId) {
+  const c = await cols();
+  const first = await c.tasks.find({ orgId, rank: { $type: "string", $gt: "" }, ...(exclude ? { _id: { $ne: exclude } } : {}) }, { projection: { rank: 1 } }).sort({ rank: 1 }).limit(1).next();
+  return rankBetween(null, first?.rank ?? null);
+}
+
+/** The closest rank above (`dir` -1) or below (`dir` 1) `rank` in the organisation, skipping the moving task. */
+async function neighbourRank(orgId: ObjectId, rank: string, dir: 1 | -1, exclude: ObjectId) {
+  const c = await cols();
+  const n = await c.tasks
+    .find({ orgId, _id: { $ne: exclude }, rank: dir === 1 ? { $gt: rank } : { $lt: rank, $gt: "" } }, { projection: { rank: 1 } })
+    .sort({ rank: dir })
+    .limit(1)
+    .next();
+  return n?.rank ?? null;
+}
+
+export interface MoveInput {
+  /** Key of the task the moved one should sit directly above (e.g. "VEC-12"). */
+  beforeKey?: string | null;
+  /** Key of the task the moved one should sit directly below. */
+  afterKey?: string | null;
+  /** Status id to move it into, in the same write. */
+  status?: string | null;
+  /** Project id to move it into, in the same write (the task gets a new key there). */
+  project?: string | null;
+}
+
+/**
+ * Drag-to-reorder write (VEC-57): put `taskKey` between its new neighbours and optionally change its status
+ * and/or project, in one update and one `task.upsert`. Neighbours are given by key; with only one of them the
+ * other side is that task's org-wide neighbour, so the task lands directly next to it in every view. Without
+ * either it keeps its rank. Only the creator or an admin may move a task (canEditTask); status and project
+ * follow updateTaskAs's rules (archived project refused, new key on a project move, activity for status and
+ * project, none for a pure reorder).
+ */
+export async function moveTask(actor: Actor, taskKey: string, input: MoveInput): Promise<Task> {
+  const found = await findTaskByKey(actor.orgId, String(taskKey ?? ""));
+  if (!found || !found.task.orgId.equals(actor.orgId)) throw new UserError(`Unknown task "${taskKey}".`);
+  const task = found.task;
+  if (!canEditTask(task, actor.id, actor.isAdmin)) throw new UserError("Only the task's creator or an admin can move it.");
+
+  const neighbour = async (key: string | null | undefined, side: string) => {
+    if (!key) return null;
+    const n = await findTaskByKey(actor.orgId, String(key));
+    if (!n) throw new UserError(`Unknown task "${key}" for \`${side}\`.`);
+    if (n.task._id.equals(task._id)) throw new UserError(`A task can't move ${side === "beforeKey" ? "before" : "after"} itself.`);
+    if (!n.task.rank) throw new UserError(`${key} has no position yet. Reload and try again.`);
+    return n.task.rank;
+  };
+  const below = await neighbour(input.beforeKey, "beforeKey"); // the task it goes above
+  const above = await neighbour(input.afterKey, "afterKey"); // the task it goes below
+
+  let rank: string | undefined;
+  if (above !== null && below !== null && above < below) {
+    rank = rankBetween(above, below);
+  } else if (above !== null) {
+    // Directly below `above` (also the fallback when a stale client sent neighbours out of order).
+    rank = rankBetween(above, await neighbourRank(actor.orgId, above, 1, task._id));
+  } else if (below !== null) {
+    rank = rankBetween(await neighbourRank(actor.orgId, below, -1, task._id), below);
+  } else if (!task.rank) {
+    rank = await topRank(actor.orgId, task._id);
+  }
+
+  const statusId = input.status ? String(input.status) : undefined;
+  const projectId = input.project ? String(input.project) : undefined;
+  if (rank === undefined && !statusId && !projectId) throw new UserError("Say where to move it: a task to go before or after, a status or a project.");
+  return updateTaskAs(actor, task._id, { statusId, projectId }, { rank });
 }
 
 export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {

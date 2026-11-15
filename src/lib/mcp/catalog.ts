@@ -47,7 +47,7 @@ export const MCP_TOOLS: ToolInfo[] = [
   { name: "add_comment", title: "Comment", summary: "Comment on any task and @mention people or bots.", group: "write" },
   { name: "set_status", title: "Move status", summary: "Change a task's status.", group: "write" },
   { name: "assign_task", title: "Assign", summary: "Assign a task to a person, a bot, itself, or nobody.", group: "write" },
-  { name: "update_task", title: "Edit task", summary: "Change title, description, type, priority, due date, project or dependencies.", group: "write" },
+  { name: "update_task", title: "Edit task", summary: "Change title, description, type, priority, due date, project, dependencies or manual order.", group: "write" },
   { name: "create_task", title: "Create task", summary: "Create a new task in any project, optionally depending on other tasks.", group: "write" },
 ];
 
