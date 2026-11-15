@@ -209,7 +209,7 @@ Motion is small and causal. Rows glide to their new position when their status c
 A neutral, slightly warm stone palette with a single cobalt accent and one signal yellow reserved for live changes.
 
 ### Primary
-- **Cobalt Selection Blue** (brand-blue / dark-brand-blue): the only interface accent. Focus rings, the text caret, checkmarks in menus, the empty-state ring's filled arc, rich-text links, the drag-to-reorder drop line. Never used as a large fill.
+- **Cobalt Selection Blue** (brand-blue / dark-brand-blue): the only interface accent. Focus rings, the text caret, checkmarks in menus, the empty-state ring's filled arc, rich-text links, the drag drop line and drop-zone border. Never used as a large fill.
 - **Selection Wash** and **Selection Ink** (selection-wash / selection-ink, dark variants): the selected task row, the active sidebar item, and `::selection`. The wash fills; the ink colours text and icons on top of it.
 
 ### Secondary
@@ -349,14 +349,19 @@ An 18px SVG ring (14–20px depending on context) in the status's own colour.
 
 The same ring heads every status group, every status picker and the detail pane title. The empty state reuses it at 44px, with a faint track and a blue quarter arc.
 
-### Drag to Reorder (`SortableList`)
-Every user-ordered list (sidebar projects, later statuses and list rows) reorders through one primitive, `SortableList` in `src/components/ui/sortable-list.tsx`, with pure helpers (`moveItem`, gap maths) in `src/lib/reorder.ts`. Call sites never handle pointer or keyboard events themselves.
-- **Drop line:** while dragging, a 2px Cobalt Selection Blue line (`bg-brand`, so it follows light/dark) with fully rounded ends spans the full row width, centred in the gap at the exact insertion point. It glides between gaps over 100ms. Gaps directly above or below the dragged row would not change the order, so they show no line. This is the only drag affordance: no ghost, no gap opening up.
+### Drag to Reorder and Move (`SortableList`)
+Every user-ordered list (sidebar projects, later statuses, list rows and board columns) drags through one primitive, `SortableList` in `src/components/ui/sortable-list.tsx`, on a session held by `DragProvider` (`src/components/ui/drag-provider.tsx`, mounted once in `AppShell`), with pure helpers (`moveItem`, `transferItem`, gap maths, `pickBox`, `adjacentList`) in `src/lib/reorder.ts`. Call sites never handle pointer or keyboard events themselves, and there is no DnD library.
+- **Drop line:** while dragging, a 2px Cobalt Selection Blue line (`bg-brand`, so it follows light/dark) with fully rounded ends spans the full row width, centred in the gap at the exact insertion point of the list under the pointer. It glides between gaps over 100ms. Gaps directly above or below the dragged row in its own list would not change the order, so they show no line.
 - **Dragged row:** dims to 45% in place, so no row moves until the drop. Rows under the pointer get no hover wash mid-drag.
+- **Linked lists:** lists with the same `group` exchange items; `onMove(id, { fromList, toList, fromIndex, toIndex, ids })` fires on the receiving list (`fromIndex` is -1 once the source list is gone). A list without `group` only reorders itself, and a list without `onMove` never receives items. While an item from its group is dragged, an empty list shows a 36px dashed Input Stroke drop zone ("Drop here", Faint Ink) that turns brand-bordered with a 5% brand wash when it would receive the drop.
+- **Floating preview:** reordering within one list keeps the line-only look. Once the pointer is over another list or a drop target, or the source row is gone (after a route change), a copy of the row follows the pointer: popover surface, 1px Border ring, large shadow, 95% opacity, no motion of its own.
+- **External drop targets:** `useDropTarget(id, { accepts, onHoverStart, onHoverEnd, onDrop, dwellMs, onDwell, label })` gives any element (a sidebar project row, a trash zone) `{ ref, isOver, canDrop, dwell }`. It is hit-tested by its box, before lists. Style hover with Selection or a brand border, never Live Yellow. Spring-loading (open a project after hovering ~600ms) uses `dwellMs` + `onDwell`; `onHoverEnd` reports `{ dropped, dwellMs }`.
+- **Across navigation:** the session, window listeners and preview live in `DragProvider`, so a drag survives a client-side route change; lists and targets that mount on the new page are picked up under the still pointer.
 - **Starting a drag:** mouse and pen need 4px of travel, so plain clicks on row links still navigate (the click that ends a real drag is swallowed). Touch needs a 250ms long-press; moving first scrolls as normal. Pass `handle` to start drags only from a grip.
-- **Keyboard:** focus the row's handle element (its link), Space lifts (the line appears as you move), Up/Down/Home/End move, Space or Enter drops, Escape or Tab cancels. Each step is announced in an assertive live region, and focus stays on the moved row.
-- **Cancel:** Escape, a pointer cancel, or releasing more than 24px outside the list calls nothing. Dropping in place calls nothing.
-- Under `prefers-reduced-motion` the line jumps between gaps and the dim is instant.
+- **Keyboard:** focus the row's handle element (its link), Space lifts (the line appears as you move), Up/Down/Home/End move, Left/Right move to the previous/next linked list in document order (ignored in an unlinked list), Space or Enter drops, Escape or Tab cancels. Each step is announced in one assertive live region owned by the provider, naming the target list ("Alpha will move to Doing, position 2 of 2."), and focus follows the moved row into its new list.
+- **Cancel:** Escape, a pointer cancel, or releasing more than 24px away from every list and target calls nothing (a hovered target gets `onHoverEnd` with `dropped: false`). Dropping in place calls nothing.
+- **Auto-scroll:** holding the pointer within 36px of the top or bottom edge of the scrolling container around the list under it scrolls up to 14px a frame, stopping at that list's end.
+- Under `prefers-reduced-motion` the line jumps between gaps and the dim and drop-zone colour are instant.
 
 ```tsx
 <SortableList
@@ -366,8 +371,15 @@ Every user-ordered list (sidebar projects, later statuses and list rows) reorder
   onReorder={(ids, { movedId, fromIndex, toIndex }) => saveOrder(ids)}
   renderItem={(p, { handleProps }) => <Link href={p.href} {...handleProps}>{p.name}</Link>}
 />
+
+// A board: one list per column, same group, stable listId
+<SortableList listId={col.id} group="board" aria-label={col.name} items={col.tasks}
+  getId={(t) => t.id} getLabel={(t) => t.title} getData={(t) => t}
+  onReorder={(ids) => reorder(col.id, ids)}
+  onMove={(id, { fromList, toList, toIndex }) => move(id, fromList, toList, toIndex)}
+  renderItem={...} />
 ```
-`onReorder` gets the complete new id order. The list keeps no order of its own, so update `items` optimistically in the callback (`moveItem(items, fromIndex, toIndex)`). Vertical lists only for now.
+`onReorder` gets the complete new id order. Lists keep no order of their own, so update `items` optimistically in the callback (`moveItem(items, fromIndex, toIndex)`, or `transferItem(from, to, fromIndex, toIndex)` for a move). Vertical lists only for now.
 
 ### Priority Icon
 Three ascending 3px bars in a 14px box. Filled bars are Muted Ink, or Ink at urgent (3); unfilled bars are Input Stroke. No priority is three short faint dashes.

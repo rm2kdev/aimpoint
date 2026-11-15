@@ -64,3 +64,77 @@ export function gapOffset(spans: readonly Span[], gap: number): number {
   if (gap >= n) return spans[n - 1].end + spacing / 2;
   return (spans[gap - 1].end + spans[gap].start) / 2;
 }
+
+// ---- Linked lists (several lists sharing a drag group) --------------------------------------
+
+/**
+ * Final index for a drop at `gap`. In the item's own list the item is still counted, so gaps
+ * after it shift down by one; in any other list the gap is the index.
+ */
+export function dropIndex(sameList: boolean, from: number, gap: number): number {
+  return sameList ? gapToIndex(from, gap) : gap;
+}
+
+/** A drop that changes nothing: only possible in the item's own list, next to its own slot. */
+export function isNoopDrop(sameList: boolean, from: number, gap: number): boolean {
+  return sameList && from >= 0 && isNoopGap(from, gap);
+}
+
+/**
+ * Moves the item at `fromIndex` of `from` into `to` at `toIndex` (clamped to 0..to.length).
+ * Returns new arrays; inputs are never mutated. An out-of-range `fromIndex` returns copies.
+ *
+ * transferItem(["a","b"], ["x"], 0, 1) -> { from: ["b"], to: ["x","a"] }
+ */
+export function transferItem<T>(
+  from: readonly T[],
+  to: readonly T[],
+  fromIndex: number,
+  toIndex: number,
+): { from: T[]; to: T[] } {
+  const a = from.slice();
+  const b = to.slice();
+  if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= a.length) return { from: a, to: b };
+  const [item] = a.splice(fromIndex, 1);
+  const at = Number.isInteger(toIndex) ? Math.max(0, Math.min(b.length, toIndex)) : b.length;
+  b.splice(at, 0, item);
+  return { from: a, to: b };
+}
+
+/** A screen rectangle (e.g. from getBoundingClientRect). */
+export type Box = { left: number; top: number; right: number; bottom: number };
+
+/** Distance from a point to a box (0 inside it). */
+export function distanceToBox(box: Box, x: number, y: number): number {
+  const dx = Math.max(box.left - x, 0, x - box.right);
+  const dy = Math.max(box.top - y, 0, y - box.bottom);
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * Which of several boxes a pointer is over: the one containing it, else the nearest within
+ * `margin` px, else -1. Ties go to the earlier box. Used to pick the list under a drag.
+ */
+export function pickBox(boxes: readonly (Box | null)[], x: number, y: number, margin: number): number {
+  let best = -1;
+  let bestDist = Infinity;
+  boxes.forEach((box, i) => {
+    if (!box) return;
+    const d = distanceToBox(box, x, y);
+    if (d <= margin && d < bestDist) {
+      best = i;
+      bestDist = d;
+    }
+  });
+  return best;
+}
+
+/**
+ * The neighbouring list for keyboard moves: `dir` -1 = previous, +1 = next, in `order`
+ * (lists in document order). Returns null at either end or when `current` isn't listed.
+ */
+export function adjacentList(order: readonly string[], current: string, dir: -1 | 1): string | null {
+  const i = order.indexOf(current);
+  if (i < 0) return null;
+  return order[i + dir] ?? null;
+}

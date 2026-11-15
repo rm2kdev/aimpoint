@@ -2,14 +2,23 @@
 
 import * as React from "react"
 import { cn } from "@/lib/utils"
-import { gapFromPointer, gapOffset, gapToIndex, indexToGap, isNoopGap, moveItem, type Span } from "@/lib/reorder"
+import {
+  DragProvider, useDragState, useDragStore,
+  type DragItem, type ListRegistration, type MoveDetail, type ReorderDetail,
+} from "@/components/ui/drag-provider"
+
+export {
+  DragProvider, useDropTarget, useDragState,
+  type DragItem, type DragSnapshot, type DropTargetOptions, type MoveDetail, type ReorderDetail,
+} from "@/components/ui/drag-provider"
 
 /**
- * Drag-to-reorder for vertical lists, shared app-wide. Call sites import only this module
- * (and `@/lib/reorder` for pure helpers); there is no DnD library underneath, just pointer
- * and keyboard events, so nothing else needs to know how dragging works.
+ * Drag-to-reorder for vertical lists, shared app-wide, plus moving items between linked
+ * lists and onto other drop targets. Call sites import only this module (and
+ * `@/lib/reorder` for pure helpers); there is no DnD library underneath, just pointer and
+ * keyboard events, so nothing else needs to know how dragging works.
  *
- * Usage:
+ * One list (reorder only):
  *
  *   <SortableList
  *     items={projects}
@@ -21,27 +30,45 @@ import { gapFromPointer, gapOffset, gapToIndex, indexToGap, isNoopGap, moveItem,
  *     )}
  *   />
  *
+ * Linked lists (a board): give each list the same `group`, a stable `listId` and `onMove`.
+ * `onMove` is called on the list that receives the item; update both lists there
+ * (`transferItem` in `@/lib/reorder`).
+ *
+ *   {columns.map((col) => (
+ *     <SortableList key={col.id} listId={col.id} group="board" aria-label={col.name}
+ *       items={col.tasks} getId={(t) => t.id} getLabel={(t) => t.title} getData={(t) => t}
+ *       onReorder={(ids) => reorder(col.id, ids)}
+ *       onMove={(id, { fromList, toList, toIndex }) => move(id, fromList, toList, toIndex)}
+ *       renderItem={...} />
+ *   ))}
+ *
+ * External targets (e.g. sidebar project rows): `useDropTarget(id, { onHoverStart,
+ * onHoverEnd, onDrop, accepts, dwellMs, onDwell })` returns `{ ref, isOver, canDrop, dwell }`.
+ *
  * Behaviour:
+ * - The session lives in `DragProvider` (mounted in the app shell), so a drag started in one
+ *   list continues across a client-side route change and can drop into a list on the new
+ *   page. A list outside any provider makes its own.
  * - Mouse/pen: press and move 4px to start (plain clicks on links still navigate; the click
  *   that ends a real drag is swallowed). Touch: long-press 250ms, then drag; moving first
  *   scrolls as usual.
- * - While dragging, a 2px brand-blue line marks the insertion point between rows and the
- *   dragged row dims in place, so nothing shifts. Positions that would not change the order
- *   (directly above or below the row itself) show no line.
+ * - While dragging, a 2px brand-blue line marks the insertion point in the list under the
+ *   pointer and the dragged row dims in place, so nothing shifts. Positions that would not
+ *   change the order show no line. An empty linked list shows a dashed drop zone. A floating
+ *   copy of the row follows the pointer once it is over another list or a drop target, or
+ *   once the source row is gone (after navigating).
  * - Keyboard: focus the element carrying `handleProps`, Space lifts, Up/Down (Home/End)
- *   move, Space or Enter drops, Escape or Tab cancels. Every step is announced in an
- *   assertive live region.
+ *   move, Left/Right move to the previous/next linked list, Space or Enter drops, Escape or
+ *   Tab cancels. Every step is announced in an assertive live region, naming the list.
  * - Inside a scrolling container, holding the pointer near its top or bottom edge
  *   auto-scrolls it; the line follows the scroll.
- * - Escape, pointer cancel, or releasing more than 24px outside the list cancels without
- *   calling `onReorder`; dropping in the same place is a no-op.
+ * - Escape, pointer cancel, or releasing more than 24px away from every list and target
+ *   cancels without calling anything; dropping in the same place is a no-op.
  * - `onReorder` gets the full new id order plus what moved. The list does not keep its own
  *   order: update `items` (optimistically) in the callback.
  * - `handleProps` must be spread on one focusable element per row: the row's link for
  *   whole-row dragging, or a grip button together with `handle` to drag from the grip only.
  */
-
-export type ReorderDetail = { movedId: string; fromIndex: number; toIndex: number }
 
 /** Spread on the row's focusable element (its link, or a grip button). */
 export type SortableHandleProps = {
@@ -67,365 +94,135 @@ export type SortableListProps<T> = {
   onReorder: (ids: string[], detail: ReorderDetail) => void
   /** Name used in screen-reader announcements. Defaults to the id. */
   getLabel?: (item: T) => string
+  /** Attached to the dragged item (`DragItem.data`) for drop targets and other lists. */
+  getData?: (item: T) => unknown
+  /** Stable id for this list, reported as `fromList`/`toList`. Defaults to a generated id. */
+  listId?: string
+  /** Lists sharing a group exchange items. Without one, the list only reorders itself. */
+  group?: string
+  /** An item from another list in the group was dropped here. Lists without it don't receive items. */
+  onMove?: (id: string, detail: MoveDetail) => void
+  /** Refuse some items from other lists. */
+  accepts?: (item: DragItem) => boolean
+  /** Text in the drop zone an empty linked list shows during a drag. */
+  emptyLabel?: string
   /** Only start pointer drags from inside an element carrying `handleProps`. */
   handle?: boolean
   disabled?: boolean
   className?: string
   itemClassName?: string
-  /** Accessible name for the list. */
+  /** Accessible name for the list; also names it in announcements. */
   "aria-label"?: string
 }
 
-const MOUSE_THRESHOLD = 4
-const TOUCH_DELAY_MS = 250
-const TOUCH_SLOP = 8
-const OUTSIDE_MARGIN = 24
-/** Distance from a scroll container's top/bottom edge where a pointer drag starts auto-scrolling. */
-const AUTOSCROLL_EDGE = 36
-/** Max auto-scroll speed in px per frame (reached right at the edge). */
-const AUTOSCROLL_MAX = 14
 const IGNORE = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [data-sortable-ignore]"
 
-type DragState = {
-  id: string
-  from: number
-  /** Insertion gap (0..n), or null while the pointer is outside the list. */
-  gap: number | null
-  mode: "pointer" | "keyboard"
-  lineTop: number | null
-}
-
-type Session = { cleanup: () => void }
-
-/** Nearest ancestor that scrolls vertically (the list itself counts), or null. */
-function scrollParent(el: HTMLElement | null): HTMLElement | null {
-  for (let node = el; node && node !== document.body; node = node.parentElement) {
-    const oy = getComputedStyle(node).overflowY
-    if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight) return node
+export function SortableList<T>(props: SortableListProps<T>) {
+  const store = useDragStore()
+  if (!store) {
+    return (
+      <DragProvider>
+        <SortableListInner {...props} />
+      </DragProvider>
+    )
   }
-  return null
+  return <SortableListInner {...props} />
 }
 
-export function SortableList<T>({
+function SortableListInner<T>({
   items,
   getId,
   renderItem,
   onReorder,
   getLabel,
+  getData,
+  listId: listIdProp,
+  group: groupProp,
+  onMove,
+  accepts,
+  emptyLabel = "Drop here",
   handle = false,
   disabled = false,
   className,
   itemClassName,
   "aria-label": ariaLabel,
 }: SortableListProps<T>) {
+  const store = useDragStore()!
   const uid = React.useId()
+  const listId = listIdProp ?? uid
+  const group = groupProp ?? `list:${listId}`
   const instructionsId = `${uid}-instructions`
   const listRef = React.useRef<HTMLUListElement>(null)
-  const sessionRef = React.useRef<Session | null>(null)
-  const dragRef = React.useRef<DragState | null>(null)
-  const pendingFocusRef = React.useRef<HTMLElement | null>(null)
-  const latest = React.useRef({ items, getId, getLabel, onReorder })
-  const [drag, setDragState] = React.useState<DragState | null>(null)
-  const [announcement, setAnnouncement] = React.useState("")
+  const drag = useDragState()
 
-  React.useLayoutEffect(() => {
-    latest.current = { items, getId, getLabel, onReorder }
+  const reg = (): ListRegistration => ({
+    listId,
+    group,
+    label: ariaLabel ?? "the list",
+    disabled,
+    el: listRef.current,
+    ids: () => items.map(getId),
+    itemLabel: (id) => {
+      const item = items.find((it) => getId(it) === id)
+      return item !== undefined && getLabel ? getLabel(item) : undefined
+    },
+    onReorder,
+    onMove,
+    accepts,
   })
-
-  // Keyboard drops re-render the rows in a new order; keep focus on the moved handle.
+  const regRef = React.useRef<ListRegistration | null>(null)
   React.useLayoutEffect(() => {
-    const el = pendingFocusRef.current
-    if (!el) return
-    pendingFocusRef.current = null
-    if (el.isConnected && document.activeElement !== el) el.focus({ preventScroll: true })
-  }, [items])
+    regRef.current = reg()
+  })
+  React.useLayoutEffect(
+    () => store.registerList(listId, regRef as { readonly current: ListRegistration }),
+    [store, listId],
+  )
 
-  React.useEffect(() => () => sessionRef.current?.cleanup(), [])
+  // A keyboard drop re-renders the rows (maybe in another list): keep focus on the moved row.
+  React.useLayoutEffect(() => {
+    store.takeFocus(listId, listRef.current)
+  }, [store, listId, items])
 
-  const setDrag = React.useCallback((next: DragState | null) => {
-    const prev = dragRef.current
-    if (
-      prev && next && prev.id === next.id && prev.gap === next.gap &&
-      prev.mode === next.mode && prev.lineTop === next.lineTop
-    ) return
-    dragRef.current = next
-    setDragState(next)
-  }, [])
-
-  const label = (id: string) => {
-    const { items, getId, getLabel } = latest.current
+  const itemFor = (id: string): DragItem => {
     const item = items.find((it) => getId(it) === id)
-    return item !== undefined && getLabel ? getLabel(item) : id
-  }
-
-  /** Row extents and list height, in the list's own (scrolling) coordinates. */
-  const measure = () => {
-    const list = listRef.current
-    if (!list) return null
-    const box = list.getBoundingClientRect()
-    const originY = box.top + list.clientTop - list.scrollTop
-    const rows = Array.from(list.querySelectorAll<HTMLElement>(":scope > li[data-sortable-id]"))
-    const spans: Span[] = rows.map((row) => {
-      const r = row.getBoundingClientRect()
-      return { start: r.top - originY, end: r.bottom - originY }
-    })
-    return { list, box, originY, rows, spans }
-  }
-
-  const lineTopFor = (spans: Span[], gap: number) => {
-    const list = listRef.current
-    const max = list ? list.scrollHeight - 1 : Infinity
-    return Math.min(Math.max(gapOffset(spans, gap), 1), max)
-  }
-
-  const commit = (id: string, from: number, gap: number | null) => {
-    const n = latest.current.items.length
-    if (gap === null) {
-      setAnnouncement(`Reorder cancelled. ${label(id)} stays at position ${from + 1} of ${n}.`)
-      return
+    return {
+      id,
+      listId,
+      group,
+      label: item !== undefined && getLabel ? getLabel(item) : id,
+      data: item !== undefined && getData ? getData(item) : undefined,
     }
-    if (isNoopGap(from, gap)) {
-      setAnnouncement(`${label(id)} dropped in its original position, ${from + 1} of ${n}.`)
-      return
-    }
-    const { items: list, getId, onReorder } = latest.current
-    const toIndex = gapToIndex(from, gap)
-    const ids = moveItem(list.map(getId), from, toIndex)
-    setAnnouncement(`${label(id)} moved to position ${toIndex + 1} of ${n}.`)
-    onReorder(ids, { movedId: id, fromIndex: from, toIndex })
   }
 
-  // ---- Pointer (mouse, pen, touch) -------------------------------------------------------
-
-  const onPointerDown = (e: React.PointerEvent<HTMLLIElement>, id: string, index: number) => {
-    if (disabled || dragRef.current || sessionRef.current) return
+  const onPointerDown = (e: React.PointerEvent<HTMLLIElement>, id: string) => {
+    if (disabled || store.get()) return
     if (e.pointerType === "mouse" && e.button !== 0) return
     const target = e.target as Element
     if (target.closest(IGNORE)) return
     if (handle && !target.closest("[data-sortable-handle]")) return
     if (target.closest("li[data-sortable-id]") !== e.currentTarget) return // nested list
-
-    const touch = e.pointerType === "touch"
-    const pointerId = e.pointerId
-    const startX = e.clientX
-    const startY = e.clientY
-    let active = false
-    let lastX = startX
-    let lastY = startY
-    let timer: ReturnType<typeof setTimeout> | undefined
-    let scroller: HTMLElement | null = null
-    let raf = 0
-    const prevBody = { userSelect: document.body.style.userSelect, cursor: document.body.style.cursor }
-
-    const update = (x: number, y: number) => {
-      const m = measure()
-      if (!m) return
-      const outside =
-        x < m.box.left - OUTSIDE_MARGIN || x > m.box.right + OUTSIDE_MARGIN ||
-        y < m.box.top - OUTSIDE_MARGIN || y > m.box.bottom + OUTSIDE_MARGIN
-      const gap = outside ? null : gapFromPointer(m.spans, y - m.originY)
-      setDrag({
-        id, from: index, gap, mode: "pointer",
-        lineTop: gap === null || isNoopGap(index, gap) ? null : lineTopFor(m.spans, gap),
-      })
-    }
-
-    const activate = () => {
-      active = true
-      document.body.style.userSelect = "none"
-      document.body.style.cursor = "grabbing"
-      window.getSelection()?.removeAllRanges()
-      if (touch) navigator.vibrate?.(10)
-      setAnnouncement(`Picked up ${label(id)}.`)
-      update(lastX, lastY)
-      // Long lists inside a scrolling container (e.g. the sidebar): scroll while the pointer
-      // is near its top or bottom edge, and keep the line in place when it scrolls.
-      scroller = scrollParent(listRef.current)
-      if (scroller) {
-        scroller.addEventListener("scroll", onScroll, { passive: true })
-        raf = requestAnimationFrame(autoScroll)
-      }
-    }
-
-    const onScroll = () => {
-      if (active) update(lastX, lastY)
-    }
-
-    const autoScroll = () => {
-      if (!active || !scroller) return
-      const r = scroller.getBoundingClientRect()
-      const top = lastY - r.top
-      const bottom = r.bottom - lastY
-      let dy = 0
-      if (top < AUTOSCROLL_EDGE && lastY > r.top - OUTSIDE_MARGIN) dy = -Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(top, 0) / AUTOSCROLL_EDGE))
-      else if (bottom < AUTOSCROLL_EDGE && lastY < r.bottom + OUTSIDE_MARGIN) dy = Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(bottom, 0) / AUTOSCROLL_EDGE))
-      // Only scroll while part of the list is still hidden that way, so holding at the edge
-      // stops at the list's end instead of scrolling unrelated content into view.
-      const list = listRef.current?.getBoundingClientRect()
-      if (list && dy > 0) dy = Math.min(dy, Math.max(0, Math.ceil(list.bottom - r.bottom)))
-      if (list && dy < 0) dy = Math.max(dy, Math.min(0, Math.floor(list.top - r.top)))
-      if (dy) scroller.scrollTop += dy // fires onScroll, which moves the line
-      raf = requestAnimationFrame(autoScroll)
-    }
-
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return
-      lastX = ev.clientX
-      lastY = ev.clientY
-      if (active) {
-        update(lastX, lastY)
-        return
-      }
-      const dist = Math.hypot(lastX - startX, lastY - startY)
-      if (touch) {
-        if (dist > TOUCH_SLOP) cleanup() // a scroll or swipe, not a long-press
-      } else if (dist >= MOUSE_THRESHOLD) {
-        activate()
-      }
-    }
-
-    const swallowClick = (ev: MouseEvent) => {
-      ev.preventDefault()
-      ev.stopPropagation()
-    }
-
-    const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return
-      if (!active) return cleanup()
-      // The click that ends a drag must not follow the link under the pointer.
-      window.addEventListener("click", swallowClick, { capture: true, once: true })
-      setTimeout(() => window.removeEventListener("click", swallowClick, { capture: true }), 0)
-      const gap = dragRef.current?.gap ?? null
-      cleanup()
-      commit(id, index, gap)
-    }
-
-    const onCancel = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return
-      const wasActive = active
-      cleanup()
-      if (wasActive) commit(id, index, null)
-    }
-
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape" || !active) return
-      ev.preventDefault()
-      ev.stopPropagation()
-      cleanup()
-      commit(id, index, null)
-    }
-
-    // Once a touch drag is live, stop the page from scrolling under the finger.
-    const onTouchMove = (ev: TouchEvent) => {
-      if (active && ev.cancelable) ev.preventDefault()
-    }
-    const onContextMenu = (ev: Event) => {
-      if (active || touch) ev.preventDefault()
-    }
-
-    function cleanup() {
-      if (timer) clearTimeout(timer)
-      if (raf) cancelAnimationFrame(raf)
-      scroller?.removeEventListener("scroll", onScroll)
-      window.removeEventListener("pointermove", onMove)
-      window.removeEventListener("pointerup", onUp)
-      window.removeEventListener("pointercancel", onCancel)
-      window.removeEventListener("keydown", onKey, { capture: true })
-      window.removeEventListener("touchmove", onTouchMove)
-      window.removeEventListener("contextmenu", onContextMenu)
-      if (active) {
-        document.body.style.userSelect = prevBody.userSelect
-        document.body.style.cursor = prevBody.cursor
-        setDrag(null)
-      }
-      active = false
-      sessionRef.current = null
-    }
-
-    window.addEventListener("pointermove", onMove)
-    window.addEventListener("pointerup", onUp)
-    window.addEventListener("pointercancel", onCancel)
-    window.addEventListener("keydown", onKey, { capture: true })
-    if (touch) {
-      window.addEventListener("touchmove", onTouchMove, { passive: false })
-      window.addEventListener("contextmenu", onContextMenu)
-      timer = setTimeout(activate, TOUCH_DELAY_MS)
-    }
-    sessionRef.current = { cleanup }
+    store.beginPointer(e, itemFor(id), e.currentTarget)
   }
 
-  // ---- Keyboard -------------------------------------------------------------------------
-
   const onKeyDown = (e: React.KeyboardEvent<HTMLLIElement>, id: string, index: number) => {
-    if (disabled) return
-    const current = dragRef.current
-    const n = latest.current.items.length
+    if (disabled || !regRef.current) return
     const target = e.target as HTMLElement
-
-    if (!current) {
-      if (e.key !== " " || e.repeat) return
+    if (!store.get()) {
       if (!target.matches("[data-sortable-handle]")) return
       if (target.closest("li[data-sortable-id]") !== e.currentTarget) return
+    }
+    const item = items.find((it) => getId(it) === id)
+    const data = item !== undefined && getData ? getData(item) : undefined
+    if (store.keyDown(e.key, e.repeat, regRef.current, id, index, data)) {
       e.preventDefault()
       e.stopPropagation()
-      setDrag({ id, from: index, gap: index, mode: "keyboard", lineTop: null })
-      setAnnouncement(
-        `Picked up ${label(id)}, position ${index + 1} of ${n}. ` +
-        `Use the up and down arrow keys to move, Space or Enter to drop, Escape to cancel.`,
-      )
-      return
     }
-    if (current.mode !== "keyboard" || current.id !== id) return
-
-    const finish = (gap: number | null) => {
-      setDrag(null)
-      if (gap !== null && !isNoopGap(current.from, gap)) pendingFocusRef.current = target
-      commit(id, current.from, gap)
-    }
-
-    const to = gapToIndex(current.from, current.gap ?? current.from)
-    let nextTo: number | null = null
-    switch (e.key) {
-      case "ArrowUp": nextTo = Math.max(0, to - 1); break
-      case "ArrowDown": nextTo = Math.min(n - 1, to + 1); break
-      case "Home": nextTo = 0; break
-      case "End": nextTo = n - 1; break
-      case " ":
-      case "Enter":
-        e.preventDefault()
-        e.stopPropagation()
-        finish(current.gap)
-        return
-      case "Escape":
-        e.preventDefault()
-        e.stopPropagation()
-        finish(null)
-        return
-      case "Tab":
-        finish(null) // let focus move on
-        return
-      default:
-        return
-    }
-    e.preventDefault()
-    e.stopPropagation()
-    if (nextTo === to) return
-    const gap = indexToGap(current.from, nextTo)
-    const m = measure()
-    setDrag({
-      ...current, gap,
-      lineTop: m && !isNoopGap(current.from, gap) ? lineTopFor(m.spans, gap) : null,
-    })
-    m?.rows[nextTo]?.scrollIntoView({ block: "nearest" })
-    setAnnouncement(`${label(id)} will move to position ${nextTo + 1} of ${n}.`)
   }
 
   const onBlur = (e: React.FocusEvent<HTMLLIElement>, id: string) => {
-    const current = dragRef.current
-    if (!current || current.mode !== "keyboard" || current.id !== id) return
     if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-    setDrag(null)
-    commit(id, current.from, null)
+    store.blur(listId, id)
   }
 
   const handleProps: SortableHandleProps = {
@@ -434,6 +231,10 @@ export function SortableList<T>({
     "aria-describedby": instructionsId,
   }
 
+  const inGroup = !!drag && drag.item.group === group
+  const over = drag?.over?.kind === "list" && drag.over.listId === listId ? drag.over : null
+  const showEmpty = inGroup && items.length === 0 && !disabled && !!onMove && (!accepts || accepts(drag.item))
+
   return (
     <>
       <ul
@@ -441,13 +242,15 @@ export function SortableList<T>({
         role="list"
         aria-label={ariaLabel}
         data-sortable-list=""
-        data-dragging={drag ? "" : undefined}
+        data-list-id={listId}
+        data-dragging={drag && drag.item.listId === listId ? "" : undefined}
+        data-drop-over={over ? "" : undefined}
         className={cn("relative", className)}
         onDragStart={disabled ? undefined : (e) => e.preventDefault()}
       >
         {items.map((item, index) => {
           const id = getId(item)
-          const isDragging = drag?.id === id
+          const isDragging = drag?.item.id === id && drag.item.listId === listId
           return (
             <li
               key={id}
@@ -457,10 +260,10 @@ export function SortableList<T>({
                 "transition-opacity duration-150 motion-reduce:transition-none",
                 isDragging && "opacity-45",
                 // Rows under the pointer shouldn't hover-wash or show a link cursor mid-drag.
-                drag?.mode === "pointer" && "pointer-events-none",
+                inGroup && drag.mode === "pointer" && "pointer-events-none",
                 itemClassName,
               )}
-              onPointerDown={(e) => onPointerDown(e, id, index)}
+              onPointerDown={(e) => onPointerDown(e, id)}
               onKeyDown={(e) => onKeyDown(e, id, index)}
               onBlur={(e) => onBlur(e, id)}
             >
@@ -473,22 +276,33 @@ export function SortableList<T>({
             </li>
           )
         })}
-        {drag && drag.lineTop !== null && (
+        {showEmpty && (
+          <li
+            aria-hidden
+            role="presentation"
+            data-sortable-empty=""
+            className={cn(
+              "flex h-9 items-center justify-center rounded-lg border border-dashed text-[12px] text-faint transition-colors duration-100 motion-reduce:transition-none",
+              over ? "border-brand bg-brand/5 text-brand" : "border-input",
+            )}
+          >
+            {emptyLabel}
+          </li>
+        )}
+        {over && over.lineTop !== null && (
           <li
             aria-hidden
             role="presentation"
             data-sortable-indicator=""
             className="pointer-events-none absolute inset-x-0 h-0.5 -translate-y-1/2 rounded-full bg-brand transition-[top] duration-100 ease-out motion-reduce:transition-none"
-            style={{ top: drag.lineTop }}
+            style={{ top: over.lineTop }}
           />
         )}
       </ul>
       <span id={instructionsId} className="sr-only">
-        To reorder, press Space to pick up, use the up and down arrow keys to move, then Space
-        or Enter to drop, or Escape to cancel.
-      </span>
-      <span aria-live="assertive" aria-atomic className="sr-only">
-        {announcement}
+        {group.startsWith("list:")
+          ? "To reorder, press Space to pick up, use the up and down arrow keys to move, then Space or Enter to drop, or Escape to cancel."
+          : "To move, press Space to pick up, use the up and down arrow keys to move within a list and left and right to move to another list, then Space or Enter to drop, or Escape to cancel."}
       </span>
     </>
   )

@@ -12,6 +12,7 @@ import { CommandMenu } from "@/components/command-menu";
 import { BotStatusTray } from "@/components/bot-status-tray";
 import { NewTaskDialog, type NewTaskDefaults } from "@/components/new-task-dialog";
 import { cn } from "@/lib/utils";
+import { DragProvider } from "@/components/ui/drag-provider";
 import { orgPath, taskPath } from "@/lib/paths";
 
 interface ShellCtx {
@@ -64,6 +65,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{ newTask, setViewDefaults, openSearch: () => setSearch(true), openNav: () => setNavOpen(true) }}>
+      {/* Drag sessions live above the page so a drag survives client-side navigation. */}
+      <DragProvider>
       {/* Column: the app row fills what's left above the bot status tray, so every scroll area and the task pane end above it. */}
       <div className="flex h-dvh flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -94,6 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <NotificationToasts />
       <CommandMenu open={search} onOpenChange={setSearch} />
       <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} />
+      </DragProvider>
     </Ctx.Provider>
   );
 }

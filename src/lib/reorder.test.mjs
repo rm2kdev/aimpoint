@@ -60,3 +60,62 @@ test("gapFromPointer and gapOffset", () => {
   assert.equal(gapOffset(spans, 3), 125);
   assert.equal(gapOffset([], 0), 0);
 });
+
+// ---- Linked lists ------------------------------------------------------------------------
+
+import { dropIndex, isNoopDrop, transferItem, distanceToBox, pickBox, adjacentList } from "./reorder.ts";
+
+test("dropIndex: own list shifts past the item, other lists use the gap", () => {
+  assert.equal(dropIndex(true, 1, 3), 2);
+  assert.equal(dropIndex(true, 3, 1), 1);
+  assert.equal(dropIndex(false, 1, 3), 3);
+  assert.equal(dropIndex(false, 0, 0), 0);
+});
+
+test("isNoopDrop: only next to the item's own slot in its own list", () => {
+  assert.equal(isNoopDrop(true, 2, 2), true);
+  assert.equal(isNoopDrop(true, 2, 3), true);
+  assert.equal(isNoopDrop(true, 2, 4), false);
+  assert.equal(isNoopDrop(false, 2, 2), false);
+  assert.equal(isNoopDrop(true, -1, 0), false); // item no longer in its list
+});
+
+test("transferItem: moves across lists, clamps, never mutates", () => {
+  const a = ["a", "b", "c"];
+  const x = ["x", "y"];
+  assert.deepEqual(transferItem(a, x, 1, 1), { from: ["a", "c"], to: ["x", "b", "y"] });
+  assert.deepEqual(transferItem(a, x, 0, 99), { from: ["b", "c"], to: ["x", "y", "a"] });
+  assert.deepEqual(transferItem(a, x, 2, -5), { from: ["a", "b"], to: ["c", "x", "y"] });
+  assert.deepEqual(transferItem(a, [], 0, 0), { from: ["b", "c"], to: ["a"] });
+  assert.deepEqual(transferItem(a, x, 7, 0), { from: a, to: x });
+  assert.deepEqual(a, ["a", "b", "c"]);
+  assert.deepEqual(x, ["x", "y"]);
+});
+
+test("distanceToBox: zero inside, euclidean outside", () => {
+  const b = { left: 0, top: 0, right: 10, bottom: 10 };
+  assert.equal(distanceToBox(b, 5, 5), 0);
+  assert.equal(distanceToBox(b, 15, 5), 5);
+  assert.equal(distanceToBox(b, 13, 14), 5);
+});
+
+test("pickBox: containing box wins, else nearest within margin, else -1", () => {
+  const left = { left: 0, top: 0, right: 100, bottom: 200 };
+  const right = { left: 120, top: 0, right: 220, bottom: 200 };
+  assert.equal(pickBox([left, right], 50, 50, 24), 0);
+  assert.equal(pickBox([left, right], 150, 50, 24), 1);
+  assert.equal(pickBox([left, right], 108, 50, 24), 0); // gap between columns: nearer the left
+  assert.equal(pickBox([left, right], 113, 50, 24), 1);
+  assert.equal(pickBox([left, right], 300, 50, 24), -1);
+  assert.equal(pickBox([null, right], 50, 50, 24), -1);
+  assert.equal(pickBox([], 0, 0, 24), -1);
+});
+
+test("adjacentList: previous/next in order, null at the ends", () => {
+  const order = ["todo", "doing", "done"];
+  assert.equal(adjacentList(order, "doing", -1), "todo");
+  assert.equal(adjacentList(order, "doing", 1), "done");
+  assert.equal(adjacentList(order, "todo", -1), null);
+  assert.equal(adjacentList(order, "done", 1), null);
+  assert.equal(adjacentList(order, "nope", 1), null);
+});
