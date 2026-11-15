@@ -155,10 +155,21 @@ export async function loadWorkingBots(taskIds: ObjectId[]): Promise<Map<string, 
 /** Fills `workingBotIds` and `stalled` on these tasks (in place): one claims query, plus a few more only when some are stalled candidates. */
 export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> {
   const working = await loadWorkingBots(tasks.map((t) => new ObjectId(t.id)));
-  for (const t of tasks) t.workingBotIds = working.get(t.id) ?? [];
+  // Nobody works on a closed task: a claim left over on one (closed elsewhere, or a status turned into a
+  // done stage) never shows the ring.
+  const busy = tasks.filter((t) => working.has(t.id));
+  const closedStatus = busy.length ? await closedStatusIds(busy.map((t) => t.statusId)) : new Set<string>();
+  for (const t of tasks) t.workingBotIds = closedStatus.has(t.statusId) ? [] : (working.get(t.id) ?? []);
   const stalled = await loadStalled(tasks);
   for (const t of tasks) t.stalled = stalled.get(t.id) ?? null;
   return tasks;
+}
+
+/** Which of these status ids are done or cancelled. */
+async function closedStatusIds(statusIds: string[]): Promise<Set<string>> {
+  const c = await cols();
+  const ids = [...new Set(statusIds)].map((id) => new ObjectId(id));
+  return new Set((await c.statuses.find({ _id: { $in: ids }, category: { $in: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray()).map((s) => s._id.toHexString()));
 }
 
 /**

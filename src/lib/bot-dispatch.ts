@@ -8,7 +8,7 @@ import { isPush } from "@/lib/bot-connect";
 import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
-import type { BotConnectionDoc, BotDelivery, BotDoc, OrgDoc } from "@/lib/types";
+import { isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
 /**
  * Push delivery: when a bot with a backend (Claude, OpenAI, Hermes, webhook) is assigned a task or
@@ -155,6 +155,12 @@ type SendResult = { ok: true; status: number } | { ok: false; status?: number; e
 async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReason) {
   const c = await cols();
   if (reason.kind === "assigned" || reason.kind === "ready") {
+    // Re-read: it may have been closed or archived between the wake-up and delivery. A closed task gets no
+    // claim (check_for_work wouldn't hand it out either), so no working ring and nothing left in progress.
+    const task = await c.tasks.findOne({ _id: reason.taskId }, { projection: { statusId: 1, archivedAt: 1 } });
+    if (!task || task.archivedAt) return;
+    const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
+    if (isClosedCategory(st?.category)) return;
     const res = await c.agentClaims.updateOne(
       { botId: bot._id, taskId: reason.taskId },
       { $setOnInsert: { _id: new ObjectId(), orgId: org._id, state: "in_progress", claimedAt: new Date(), finishedAt: null } },

@@ -383,7 +383,8 @@ const TOOLS: Record<string, ToolImpl> = {
 
       // 4. Nothing new.
       const inProgress = await c.agentClaims.find({ botId: ctx.bot._id, state: "in_progress", kind: { $ne: "triage" } }).sort({ claimedAt: 1 }).limit(50).toArray();
-      const tasks = await c.tasks.find({ _id: { $in: inProgress.map((x) => x.taskId) } }, { projection: { description: 0 } }).toArray();
+      // Only open tasks: a closed one has nothing left to do, even if a claim on it was left behind.
+      const tasks = await c.tasks.find({ _id: { $in: inProgress.map((x) => x.taskId) }, statusId: { $in: await openStatusIds(ctx.org._id) } }, { projection: { description: 0 } }).toArray();
       const rows = await summarise(ctx, tasks as TaskDoc[]);
       const blocked = await blockedAssignedCount(ctx);
       const waitNote = blocked ? ` ${blocked} task${blocked === 1 ? " is" : "s are"} assigned to you but waiting on other tasks to be done; ${blocked === 1 ? "it" : "they"}'ll come through here once ready.` : "";

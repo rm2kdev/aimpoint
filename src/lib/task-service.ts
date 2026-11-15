@@ -210,6 +210,8 @@ async function announceAssignment(actor: Actor, task: TaskDoc, key: string) {
   const isBot = !!(await c.bots.findOne({ orgId: actor.orgId, _id: assigneeId }, { projection: { _id: 1 } }));
   const waiting = task.waitingOn ?? [];
   if (isBot) {
+    // A closed task is no work: check_for_work never hands it out, so push doesn't wake for it either.
+    if (task.archivedAt || (await isClosedTask(task))) return;
     if (self && (await c.agentClaims.findOne({ botId: assigneeId, taskId: task._id, state: "in_progress" }, { projection: { _id: 1 } }))) return;
     if (!waiting.length) wakeBots(actor.orgId, [assigneeId], { kind: "assigned", taskId: task._id, taskKey: key, title: task.title, by: await actorName(actor) });
     return;
@@ -221,6 +223,24 @@ async function announceAssignment(actor: Actor, task: TaskDoc, key: string) {
     actorId: actor.id,
     detail: waiting.length ? `Waiting on ${waiting.map((id) => keys.get(id.toHexString()) ?? "another task").join(", ")}` : null,
   });
+}
+
+/** The task's status is done or cancelled. */
+async function isClosedTask(task: Pick<TaskDoc, "statusId">) {
+  const c = await cols();
+  const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
+  return isClosedCategory(st?.category);
+}
+
+/**
+ * The task was just closed (done or cancelled): any bot still working on it as assignee has nothing left
+ * to do, so its claim is finished like complete_task would. Runs before the task.upsert broadcast, which
+ * then carries the cleared working ring. Triage claims are left for complete_task / release_task.
+ */
+async function finishClaimsOnClose(taskId: ObjectId) {
+  const c = await cols();
+  const now = new Date();
+  await c.agentClaims.updateMany({ taskId, state: "in_progress", kind: { $ne: "triage" } }, { $set: { state: "done", finishedAt: now } });
 }
 
 /** Assignees can be org members or the org's bots. */
@@ -382,6 +402,7 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
     acts.push({ kind: "priority", from: String(before.priority), to: String(patch.priority) });
   }
   let doneChanged = false;
+  let closed = false;
   let enteredTriage = false;
   if (patch.statusId && patch.statusId !== before.statusId.toHexString()) {
     const s = await c.statuses.findOne({ _id: oid(patch.statusId, "status"), orgId: actor.orgId });
@@ -391,6 +412,7 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
     const prev = await c.statuses.findOne({ _id: before.statusId }, { projection: { category: 1 } });
     // Closing (done or cancelled) or reopening it releases or re-blocks its dependents.
     doneChanged = isClosedCategory(prev?.category) !== isClosedCategory(s.category);
+    closed = doneChanged && isClosedCategory(s.category);
     enteredTriage = s.category === "triage" && prev?.category !== "triage";
   }
   let removedDeps: ObjectId[] = [];
@@ -455,6 +477,7 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId: actor.orgId }, { $set: set }, { returnDocument: "after" });
   if (!after) throw new UserError("This task no longer exists.");
   if (set.assigneeId !== undefined) await resetClaimOnAssign(taskId, set.assigneeId);
+  if (closed) await finishClaimsOnClose(taskId);
   projectKey ??= (await c.projects.findOne({ _id: after.projectId }))?.key ?? "?";
   const task = toTask(after, projectKey);
   const orgHex = actor.orgId.toHexString();
