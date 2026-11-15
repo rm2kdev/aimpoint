@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PlusIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -44,7 +44,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
-import { isClosedCategory, type FeedItem, type Priority, type Task, type TaskDetail, type TaskRef, type TaskType } from "@/lib/types";
+import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskType } from "@/lib/types";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -282,7 +282,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               )}
             </div>
           )}
-          {task.stalled && !closed && !task.archivedAt && (
+          {task.stalled && isStalledReason(task.stalled.reason) && !closed && !task.archivedAt && (
             <p role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
               <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
               <span>
@@ -406,6 +406,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
 
           <Dependencies
             task={task}
+            needsOwner={task.stalled?.reason === "needs_owner" && !closed && !task.archivedAt ? task.stalled : null}
             canEdit={canEdit}
             onChange={setDependencies}
             onNewDependent={() => newTask({ projectId: task.projectId, dependsOn: [toRef(task)] })}
@@ -476,11 +477,14 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
 /** "Depends on" (editable by the creator or an admin) and "Blocks" (read-only: edit it from the other task). */
 function Dependencies({
   task,
+  needsOwner,
   canEdit,
   onChange,
   onNewDependent,
 }: {
   task: TaskDetail;
+  /** Unassigned with waiters while still blocked itself (Stalled reason needs_owner): a neutral one-line hint. */
+  needsOwner: Stalled | null;
   canEdit: boolean;
   onChange: (refs: TaskRef[]) => void;
   onNewDependent: () => void;
@@ -529,6 +533,14 @@ function Dependencies({
             </ul>
           ) : (
             <p className="py-1 text-[12.5px] text-faint">No task waits for this one.</p>
+          )}
+          {needsOwner && (
+            <p role="status" className="mt-2 flex items-start gap-2 rounded-lg bg-chip px-3 py-2 text-[12.5px] text-muted-foreground">
+              <UserRoundIcon className="mt-px size-3.5 shrink-0" />
+              <span>
+                <span className="font-medium text-foreground/80">Needs an owner.</span> {stalledText(needsOwner, null)}
+              </span>
+            </p>
           )}
         </>
       )}

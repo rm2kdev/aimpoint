@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CircleAlertIcon, HourglassIcon } from "lucide-react";
+import { CircleAlertIcon, HourglassIcon, UserRoundIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -111,14 +111,31 @@ export function stalledText(stalled: Stalled, botName: string | null) {
   const n = stalled.blocking.length;
   const keys = n <= 1 ? stalled.blocking.join("") : `${stalled.blocking.slice(0, -1).join(", ")} and ${stalled.blocking[n - 1]}`;
   const waiting = `${keys} ${n === 1 ? "is" : "are"} waiting on it`;
+  if (stalled.reason === "needs_owner") return `Nobody is assigned yet. ${waiting}, and it can start once its own dependencies are done, so assign it before then.`;
   return stalled.reason === "finished"
     ? `${botName ?? "Its bot"} finished its work but left it open, and ${waiting}. Review it and move it to Done to release ${n === 1 ? "it" : "them"}, or reassign it.`
     : `Nobody is assigned, and ${waiting}. Assign it to someone.`;
 }
 
-/** Red "Stalled" chip for task rows: other tasks wait on this one and nobody is moving it. */
+/**
+ * Chip for task rows. Red "Stalled": other tasks wait on this one and nobody is moving it. Neutral "Needs owner"
+ * (reason needs_owner): unassigned with waiters but still blocked itself, so nothing is held up yet (VEC-86).
+ */
 export function StalledBadge({ stalled, className }: { stalled: Stalled; className?: string }) {
   const { memberById } = useOrgBase();
+  if (stalled.reason === "needs_owner") {
+    const hint = `Needs an owner. ${stalledText(stalled, null)}`;
+    return (
+      <span
+        title={hint}
+        aria-label={hint}
+        className={cn("inline-flex h-5 items-center gap-1 rounded-[5px] bg-chip px-1.5 text-[12px] whitespace-nowrap text-muted-foreground", className)}
+      >
+        <UserRoundIcon className="size-3.5" />
+        Needs owner
+      </span>
+    );
+  }
   const label = `Stalled, needs attention. ${stalledText(stalled, stalled.botId ? (memberById.get(stalled.botId)?.name ?? null) : null)}`;
   return (
     <span

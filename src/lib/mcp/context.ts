@@ -298,7 +298,14 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
   const [{ stalled }] = await withWorkingBots([toTask(task, project.key)]);
   const stalledOut = stalled
     ? {
-        reason: stalled.reason === "finished" ? `${personRef(dir, stalled.botId)?.name ?? "Its bot"} finished its work but left it open` : "nobody is assigned",
+        reason:
+          stalled.reason === "finished"
+            ? `${personRef(dir, stalled.botId)?.name ?? "Its bot"} finished its work but left it open`
+            : stalled.reason === "needs_owner"
+              ? "nobody is assigned yet; it is still waiting on its own dependencies, so it isn't holding anything up yet, but it needs an owner before they're done"
+              : "nobody is assigned",
+        /** "stalled": holding the blocking tasks up now. "needs_owner": a softer hint, not stalled yet. */
+        kind: stalled.reason === "needs_owner" ? "needs_owner" : "stalled",
         blocking: stalled.blocking,
       }
     : null;
@@ -310,7 +317,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     dependsOn: refs.dependencies.map(refOut),
     /** Tasks waiting for this one. Moving this task to a done status releases them to their assignees. */
     blocks: refs.dependents.map(refOut),
-    /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open. People see it flagged as stalled. */
+    /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open. People see it flagged as stalled. kind "needs_owner" = unassigned but still waiting on its own dependencies: people see a neutral "Needs owner" hint, not Stalled. */
     stalled: stalledOut,
   };
 

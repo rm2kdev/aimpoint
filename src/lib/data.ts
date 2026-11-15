@@ -216,7 +216,8 @@ async function closedStatusIds(statusIds: string[]): Promise<Set<string>> {
 /**
  * Which of these tasks are stalled (see Stalled): open, not archived, nobody working on them, at least one
  * open task waiting on them, and either unassigned or assigned to a bot that already finished its work and isn't
- * waiting on dependencies of its own.
+ * waiting on dependencies of its own. An unassigned task that is waiting on its own dependencies gets the softer
+ * "needs_owner" reason instead of "unassigned".
  */
 export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> {
   const out = new Map<string, Stalled>();
@@ -270,7 +271,9 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
   const byKey = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
   for (const t of blocked) {
     const keys = blocking.get(t.id)!.sort(byKey);
-    if (!t.assigneeId) out.set(t.id, { reason: "unassigned", botId: null, blocking: keys });
+    // Unassigned but still waiting on its own open dependencies: nothing is held up by it yet, so only hint that
+    // it needs an owner (VEC-86); it turns into red "unassigned" Stalled once those close.
+    if (!t.assigneeId) out.set(t.id, { reason: t.waitingOn.length ? "needs_owner" : "unassigned", botId: null, blocking: keys });
     else if (!t.waitingOn.length && finishedBy.has(`${t.id}:${t.assigneeId}`)) out.set(t.id, { reason: "finished", botId: t.assigneeId, blocking: keys });
   }
   return out;

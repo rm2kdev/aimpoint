@@ -419,15 +419,20 @@ export interface Task {
  * "finished": its assignee is a bot that called complete_task but left it open (e.g. In Review), so no bot will
  * touch it again and the waiting tasks only move once a person closes it.
  * "unassigned": nobody is assigned to it.
+ * "needs_owner": nobody is assigned, but it is still waiting on open dependencies of its own, so it isn't holding
+ * anything up yet. Not stalled: a softer hint (neutral, not red) to give it an owner before those clear (VEC-86).
  * A person assignee, or a bot that hasn't picked it up yet or is working on it, isn't stalled.
  */
 export interface Stalled {
-  reason: "finished" | "unassigned";
+  reason: StalledReason;
   /** Bot that finished it ("finished" only). */
   botId: string | null;
   /** Keys of the open tasks waiting on it, e.g. ["VEC-16", "VEC-17"]. */
   blocking: string[];
 }
+export type StalledReason = "finished" | "unassigned" | "needs_owner";
+/** True for reasons that mean the task really is holding others up (red Stalled), false for the needs_owner hint. */
+export const isStalledReason = (r: StalledReason) => r !== "needs_owner";
 /** A task mentioned from another task: a dependency or a dependent. */
 export interface TaskRef {
   id: string;

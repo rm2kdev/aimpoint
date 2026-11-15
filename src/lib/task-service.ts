@@ -335,6 +335,8 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   await c.activity.insertOne({ _id: new ObjectId(), orgId: actor.orgId, taskId: doc._id, actorId: actor.id, kind: "created", createdAt: now });
   const task = toTask(doc, project.key);
   await publish(actor.orgId.toHexString(), { type: "task.upsert", actorId: actor.id.toHexString(), task });
+  // The tasks it depends on just gained a waiter: their derived Stalled / needs-owner state may have changed.
+  if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
   await announceAssignment(actor, doc, task.key);
   if (status.category === "triage") await enterTriage(actor, doc, task.key);
   return task;
@@ -632,6 +634,8 @@ export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {
     c.notifications.deleteMany({ taskId }),
   ]);
   await publish(actor.orgId.toHexString(), { type: "task.delete", actorId: actor.id.toHexString(), taskId: taskId.toHexString() });
+  // The tasks it depended on lost a waiter: their derived Stalled state may have cleared.
+  if (t.dependsOn?.length) await publishWorking(actor.orgId, actor.id, t.dependsOn);
 }
 
 export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string): Promise<FeedItem> {
