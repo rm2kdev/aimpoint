@@ -9,7 +9,7 @@ import { publishWorking } from "@/lib/claims";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
-import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, taskKeys, type By } from "@/lib/dependencies";
+import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, reopenForHandOff, taskKeys, type By } from "@/lib/dependencies";
 import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
 
 /**
@@ -487,6 +487,9 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   if (!after) throw new UserError("This task no longer exists.");
   if (set.assigneeId !== undefined) await resetClaimOnAssign(taskId, set.assigneeId);
   if (closed) await finishClaimsOnClose(taskId);
+  // Removing its last open dependency makes it ready: hand it back to a bot that had parked it (before the upsert).
+  const nowReady = !!set.waitingOn && (before.waitingOn ?? []).length > 0 && !set.waitingOn.length;
+  if (nowReady && set.assigneeId === undefined) await reopenForHandOff(actor.orgId, after);
   projectKey ??= (await c.projects.findOne({ _id: after.projectId }))?.key ?? "?";
   const task = toTask(after, projectKey);
   const orgHex = actor.orgId.toHexString();
@@ -501,13 +504,18 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
 
   if (set.assigneeId) {
     await announceAssignment(actor, after, task.key);
-  } else if (set.waitingOn && (before.waitingOn ?? []).length && !set.waitingOn.length) {
+  } else if (nowReady) {
     // Removing the last open dependency makes it ready, just as finishing it would.
     const keys = await taskKeys(actor.orgId, removedDeps);
     await handOffReady(actor.orgId, byOf(actor), after, task.key, removedDeps.flatMap((id) => keys.get(id.toHexString()) ?? []), "removed");
   }
   // Closing (or reopening) this task releases (or re-blocks) the tasks that wait for it.
   if (doneChanged) await dependencyChanged(actor.orgId, byOf(actor), [taskId]);
+  // The tasks it depends on gained or lost an open waiter: their derived Stalled state may have changed.
+  const prevDeps = before.dependsOn ?? [];
+  const addedDeps = set.dependsOn ? set.dependsOn.filter((id) => !prevDeps.some((p) => p.equals(id))) : [];
+  const upstream = doneChanged || set.archivedAt !== undefined ? [...(after.dependsOn ?? []), ...removedDeps] : [...addedDeps, ...removedDeps];
+  if (upstream.length) await publishWorking(actor.orgId, actor.id, upstream);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   return task;
 }

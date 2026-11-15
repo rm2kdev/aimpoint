@@ -215,7 +215,8 @@ async function closedStatusIds(statusIds: string[]): Promise<Set<string>> {
 
 /**
  * Which of these tasks are stalled (see Stalled): open, not archived, nobody working on them, at least one
- * open task waiting on them, and either unassigned or assigned to a bot that already finished its work.
+ * open task waiting on them, and either unassigned or assigned to a bot that already finished its work and isn't
+ * waiting on dependencies of its own.
  */
 export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> {
   const out = new Map<string, Stalled>();
@@ -257,8 +258,9 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
   }
   const blocked = open.filter((t) => blocking.has(t.id));
   if (!blocked.length) return out;
-  // Assigned to a bot that finished its work on it (complete_task) and left it open.
-  const assigned = blocked.filter((t) => t.assigneeId);
+  // Assigned to a bot that finished its work on it (complete_task) and left it open. Not while the task waits on
+  // its own open dependencies (`waitingOn` holds only those): the bot parked it, and the ready hand-off gives it back.
+  const assigned = blocked.filter((t) => t.assigneeId && !t.waitingOn.length);
   const finished = assigned.length
     ? await c.agentClaims
         .find({ taskId: { $in: assigned.map((t) => new ObjectId(t.id)) }, state: "done" }, { projection: { taskId: 1, botId: 1 } })
@@ -269,7 +271,7 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
   for (const t of blocked) {
     const keys = blocking.get(t.id)!.sort(byKey);
     if (!t.assigneeId) out.set(t.id, { reason: "unassigned", botId: null, blocking: keys });
-    else if (finishedBy.has(`${t.id}:${t.assigneeId}`)) out.set(t.id, { reason: "finished", botId: t.assigneeId, blocking: keys });
+    else if (!t.waitingOn.length && finishedBy.has(`${t.id}:${t.assigneeId}`)) out.set(t.id, { reason: "finished", botId: t.assigneeId, blocking: keys });
   }
   return out;
 }

@@ -6,7 +6,7 @@ import { publish } from "@/lib/realtime/server";
 import { loadWorkingBots, toFeed, toTask } from "@/lib/data";
 import { wakeBots } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
-import type { ActivityDoc, TaskDoc, TaskRef } from "@/lib/types";
+import { isClosedCategory, type ActivityDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 
 /**
  * Task dependencies. A task depends on other tasks in the same organisation; it's *ready* once every one
@@ -156,6 +156,8 @@ async function reevaluate(orgId: ObjectId, by: By, tasks: TaskDoc[], opts: { fin
     if (depsChanged) set.dependsOn = deps;
     const after = await c.tasks.findOneAndUpdate({ _id: t._id, orgId }, { $set: set }, { returnDocument: "after" });
     if (!after) continue;
+    // Before the upsert, so the task never broadcasts as "finished" Stalled in between.
+    if ((t.waitingOn ?? []).length > 0 && !waiting.length) await reopenForHandOff(orgId, after);
     const pKey = await projectKey(after.projectId);
     const key = `${pKey}-${after.number}`;
     await publish(hex(orgId), { type: "task.upsert", actorId: hex(by.id), task: toTask(after, pKey) });
@@ -166,6 +168,24 @@ async function reevaluate(orgId: ObjectId, by: By, tasks: TaskDoc[], opts: { fin
       await handOffReady(orgId, by, after, key, finished, opts.deleted ? "deleted" : "done", cancelledKeys);
     }
   }
+}
+
+/**
+ * The task just became ready (its last open dependency closed or was removed). If its assignee is a bot that had
+ * finished a round on it (a `done` claim, e.g. it parked the task behind new dependencies and called complete_task),
+ * forget that claim so the ready hand-off really hands it back: a push delivery takes a fresh in-progress claim
+ * (and moves Todo / In Review to In Progress), and check_for_work offers it again, which it never does for a task
+ * the bot holds any claim on. Call it before publishing the task. Skipped when that bot also triaged the task:
+ * it gets only the close-out wake-up then, which it ends with complete_task as before.
+ */
+export async function reopenForHandOff(orgId: ObjectId, task: TaskDoc) {
+  const assignee = task.assigneeId;
+  if (!assignee || task.archivedAt || task.triagedBy?.equals(assignee)) return;
+  const c = await cols();
+  if (!(await c.bots.findOne({ orgId, _id: assignee }, { projection: { _id: 1 } }))) return;
+  const status = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
+  if (!status || status.category === "triage" || isClosedCategory(status.category)) return;
+  await c.agentClaims.deleteMany({ taskId: task._id, botId: assignee, state: "done", kind: { $ne: "triage" } });
 }
 
 /** Which of `ids` are in a cancelled-stage status now. */
