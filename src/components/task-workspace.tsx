@@ -19,7 +19,7 @@ import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { SortableList, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { SortableList, useDragState, useDropTarget, type DragItem, type SortableHandleProps } from "@/components/ui/sortable-list";
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
@@ -32,6 +32,9 @@ export interface Scope {
 }
 
 type TypeFilter = "all" | TaskType;
+
+/** Every status group's list shares this drag group, so a task can be dropped into another status (VEC-60). */
+const TASK_GROUP = "tasks";
 
 const SORTS: SortKey[] = ["manual", "priority", "due", "created", "created-asc", "updated", "title"];
 const ARCHIVE_SORTS: SortKey[] = ["archived", "due", "created", "updated", "title"];
@@ -171,8 +174,8 @@ export function TaskWorkspace({
     const out: { status: Status; tasks: Task[] }[] = [];
     const cmp = comparator(view.sort);
     for (const s of statuses) {
-      const list = visible.filter((t) => t.statusId === s.id).sort(cmp);
-      if (list.length) out.push({ status: s, tasks: list });
+      // Every status gets a section, empty ones included, so there is always somewhere to drop a task.
+      out.push({ status: s, tasks: visible.filter((t) => t.statusId === s.id).sort(cmp) });
     }
     // Tasks whose status was deleted mid-session.
     const known = new Set(statuses.map((s) => s.id));
@@ -183,8 +186,7 @@ export function TaskWorkspace({
   const archivedList = useMemo(() => (scope.archived ? [...visible].sort(comparator(view.sort)) : []), [scope.archived, visible, view.sort]);
 
   const isClosed = (s: Status) => s.category === "done" || s.category === "cancelled";
-  const openGroups = groups.filter((g) => !isClosed(g.status));
-  const openCount = openGroups.reduce((n, g) => n + g.tasks.length, 0);
+  const openCount = groups.reduce((n, g) => n + (isClosed(g.status) ? 0 : g.tasks.length), 0);
   const shown = useMemo(() => (scope.archived ? [] : groups), [scope.archived, groups]);
   // Done and cancelled groups start folded until opened from their heading.
   const isFolded = (s: Status) => collapsed.get(s.id) ?? isClosed(s);
@@ -326,6 +328,24 @@ export function TaskWorkspace({
     }
   };
 
+  /**
+   * A task dropped into another status group (VEC-60): one write sets the status and the position. On a
+   * heading it lands at the top of that group; folded groups say where it went, since the row disappears.
+   */
+  const dropIntoGroup = async (id: string, status: Status, neighbours: { afterKey?: string; beforeKey?: string }, viaHeading = false) => {
+    const t = tasks.get(id);
+    if (!t) return;
+    const same = t.statusId === status.id;
+    if (same && !neighbours.afterKey && !neighbours.beforeKey) return;
+    const ok = await moveTask(t, { ...neighbours, statusId: same ? undefined : status.id });
+    if (ok && viaHeading && isFolded(status)) {
+      toast.success(`Moved ${t.key} to ${status.name}`, {
+        description: t.title,
+        action: { label: "Show", onClick: () => toggleGroup(status.id, false) },
+      });
+    }
+  };
+
   /** Optimistic edit from the row (status ring, right-click menu); rolls back with a toast if refused. */
   const patchTask = async (task: Task, patch: TaskPatch) => {
     upsert({ ...task, ...(patch as Partial<Task>) });
@@ -424,38 +444,35 @@ export function TaskWorkspace({
             </ul>
           ) : (
             <>
-              {openGroups.length === 0 && (
+              {openCount === 0 && (
                 <EmptyState title="All clear" hint="Every task in this view is done. Nice." onNew={() => newTask()} compact />
               )}
               {shown.map((g) => {
                 const folded = isFolded(g.status);
                 return (
                 <div key={g.status.id} className="mt-4 first:mt-2">
-                  <h2 className="sticky top-0 z-10 flex h-8 items-center bg-background px-1 text-[12.5px] font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => toggleGroup(g.status.id, !folded)}
-                      aria-expanded={!folded}
-                      aria-controls={`group-${g.status.id}`}
-                      title={folded ? `Show ${g.status.name}` : `Hide ${g.status.name}`}
-                      className="group/heading flex h-7 items-center gap-2 rounded-md pr-2 pl-0.5 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-                    >
-                      <ChevronDownIcon
-                        aria-hidden
-                        className={cn(
-                          "size-3.5 text-faint transition-transform duration-200 group-hover/heading:text-foreground motion-reduce:transition-none",
-                          folded && "-rotate-90",
-                        )}
-                      />
-                      <StatusRing status={g.status} statuses={statuses} size={15} />
-                      {g.status.name}
-                      <span className="tabular font-mono font-normal text-faint">{g.tasks.length}</span>
-                    </button>
-                  </h2>
+                  <GroupHeading
+                    status={g.status}
+                    count={g.tasks.length}
+                    folded={folded}
+                    canDrop={manual}
+                    onToggle={() => toggleGroup(g.status.id, !folded)}
+                    onDrop={(item) => {
+                      const top = g.tasks.find((x) => x.id !== item.id);
+                      void dropIntoGroup(item.id, g.status, { beforeKey: top?.key }, true);
+                    }}
+                  />
                   {!folded && (
                   <SortableList
                     // Drag to reorder within the group (VEC-59): Manual sort only, creator or admin rows only.
                     listId={g.status.id}
+                    // Linked with the other groups: dropping a row into another group changes its status (VEC-60).
+                    group={TASK_GROUP}
+                    emptyLabel={`Move to ${g.status.name}`}
+                    onMove={(id, { toIndex, ids }) => {
+                      const keyOf = (i: string | undefined) => (i ? g.tasks.find((x) => x.id === i)?.key : undefined);
+                      void dropIntoGroup(id, g.status, { afterKey: keyOf(ids[toIndex - 1]), beforeKey: keyOf(ids[toIndex + 1]) });
+                    }}
                     aria-label={g.status.name}
                     className="flex flex-col gap-1"
                     items={g.tasks}
@@ -505,6 +522,7 @@ export function TaskWorkspace({
                     )}
                   />
                   )}
+                  {!folded && g.tasks.length === 0 && <EmptyGroup />}
                 </div>
                 );
               })}
@@ -516,6 +534,70 @@ export function TaskWorkspace({
       {selectedKey && <TaskPane key={selectedKey} taskKey={selectedKey} onClose={() => open(null)} onTask={upsert} />}
     </div>
   );
+}
+
+/**
+ * A status group's heading: folds the group, and takes drops (the task goes to the top of the group), which
+ * is how a task gets into a folded group.
+ */
+function GroupHeading({
+  status,
+  count,
+  folded,
+  canDrop,
+  onToggle,
+  onDrop,
+}: {
+  status: Status;
+  count: number;
+  folded: boolean;
+  canDrop: boolean;
+  onToggle: () => void;
+  onDrop: (item: DragItem) => void;
+}) {
+  const { statuses } = useOrg();
+  const { ref, isOver, canDrop: accepting } = useDropTarget<HTMLHeadingElement>(`status-heading:${status.id}`, {
+    label: status.name,
+    disabled: !canDrop,
+    // Tasks from other groups; the group itself takes its own rows through its list.
+    accepts: (item) => item.group === TASK_GROUP && (item.data as Task | undefined)?.statusId !== status.id,
+    onDrop,
+  });
+  const over = isOver && accepting;
+  return (
+    <h2 ref={ref} data-drop-over={over ? "" : undefined} className="sticky top-0 z-10 flex h-8 items-center bg-background px-1 text-[12.5px] font-semibold">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!folded}
+        aria-controls={`group-${status.id}`}
+        title={folded ? `Show ${status.name}` : `Hide ${status.name}`}
+        className={cn(
+          "group/heading flex h-7 items-center gap-2 rounded-md pr-2 pl-0.5 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+          over && "bg-brand/10 text-brand shadow-[inset_0_0_0_1px_var(--color-brand)] hover:bg-brand/10",
+        )}
+      >
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 text-faint transition-transform duration-200 group-hover/heading:text-foreground motion-reduce:transition-none",
+            folded && "-rotate-90",
+          )}
+        />
+        <StatusRing status={status} statuses={statuses} size={15} />
+        {status.name}
+        <span className="tabular font-mono font-normal text-faint">{count}</span>
+      </button>
+      {over && <span className="ml-2 text-[12px] font-normal text-brand">Drop to move to the top</span>}
+    </h2>
+  );
+}
+
+/** An empty, unfolded group: a slim "No tasks" line, which the list's drop zone replaces during a drag. */
+function EmptyGroup() {
+  const drag = useDragState();
+  if (drag?.item.group === TASK_GROUP) return null;
+  return <p className="flex h-9 items-center px-3 text-[12.5px] text-faint">No tasks</p>;
 }
 
 function TaskRow({
