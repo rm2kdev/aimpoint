@@ -544,6 +544,11 @@ export interface MoveInput {
   status?: string | null;
   /** Project id to move it into, in the same write (the task gets a new key there). */
   project?: string | null;
+  /**
+   * Without neighbours: put it above every other unarchived task of its (new) status in its (new) project,
+   * e.g. a task dropped straight onto a sidebar project row (VEC-61).
+   */
+  toTop?: boolean;
 }
 
 /**
@@ -579,6 +584,20 @@ export async function moveTask(actor: Actor, taskKey: string, input: MoveInput):
     rank = rankBetween(above, await neighbourRank(actor.orgId, above, 1, task._id));
   } else if (below !== null) {
     rank = rankBetween(await neighbourRank(actor.orgId, below, -1, task._id), below);
+  } else if (input.toTop) {
+    const groupProject = input.project && ObjectId.isValid(String(input.project)) ? new ObjectId(String(input.project)) : task.projectId;
+    const groupStatus = input.status && ObjectId.isValid(String(input.status)) ? new ObjectId(String(input.status)) : task.statusId;
+    const c = await cols();
+    const first = await c.tasks
+      .find(
+        { orgId: actor.orgId, projectId: groupProject, statusId: groupStatus, archivedAt: null, _id: { $ne: task._id }, rank: { $type: "string", $gt: "" } },
+        { projection: { rank: 1 } },
+      )
+      .sort({ rank: 1 })
+      .limit(1)
+      .next();
+    if (first?.rank) rank = rankBetween(await neighbourRank(actor.orgId, first.rank, -1, task._id), first.rank);
+    else rank = task.rank || (await topRank(actor.orgId, task._id)); // alone in that group: already the top
   } else if (!task.rank) {
     rank = await topRank(actor.orgId, task._id);
   }

@@ -195,9 +195,18 @@
   to { transform: rotate(360deg); }
 }
 
+/* ---------- spring-loaded sidebar project (VEC-61): the hovered row flashes twice, then the project opens ---------- */
+.spring-blink { animation: spring-blink 320ms linear both; }
+@keyframes spring-blink {
+  0%, 20%, 50%, 70%, 100% { background-color: color-mix(in oklab, var(--color-brand) 22%, transparent); }
+  25%, 45%, 75%, 95% { background-color: transparent; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
   /* No spin: the same track thickens faintly all the way round, so "working" still reads. */
   .status-ring-working { animation: none !important; }
   .status-ring-halo { display: inline; opacity: 0.35; }
+  /* No flashing: one static highlight until the project opens. */
+  .spring-blink { animation: none !important; background-color: color-mix(in oklab, var(--color-brand) 22%, transparent); }
 }

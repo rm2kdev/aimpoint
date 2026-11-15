@@ -23,6 +23,7 @@ import { SortableList, useDragState, useDropTarget, type DragItem, type Sortable
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
+import { TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
 import type { Status, Task, TaskType } from "@/lib/types";
 
 export interface Scope {
@@ -32,9 +33,6 @@ export interface Scope {
 }
 
 type TypeFilter = "all" | TaskType;
-
-/** Every status group's list shares this drag group, so a task can be dropped into another status (VEC-60). */
-const TASK_GROUP = "tasks";
 
 const SORTS: SortKey[] = ["manual", "priority", "due", "created", "created-asc", "updated", "title"];
 const ARCHIVE_SORTS: SortKey[] = ["archived", "due", "created", "updated", "title"];
@@ -52,7 +50,7 @@ export function TaskWorkspace({
   showProject: boolean;
   emptyHint: string;
 }) {
-  const { org, me, statuses, isAdmin } = useOrg();
+  const { org, me, statuses, isAdmin, projectById } = useOrg();
   const { newTask, setViewDefaults } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -288,9 +286,9 @@ export function TaskWorkspace({
   /**
    * Manual order (VEC-57): move `task` between its new neighbours (`beforeKey` = the task it goes above,
    * `afterKey` = the one it goes below) and/or into another status or project, optimistically. The server
-   * computes the real rank; a refusal rolls the row back with a toast. Returns whether it was saved.
+   * computes the real rank; a refusal rolls the row back with a toast. Returns the saved task, or null.
    */
-  const moveTask = async (task: Task, move: { beforeKey?: string; afterKey?: string; statusId?: string; projectId?: string }) => {
+  const moveTask = async (task: Task, move: { beforeKey?: string; afterKey?: string; statusId?: string; projectId?: string }): Promise<Task | null> => {
     const others = [...tasks.values()].filter((t) => t.id !== task.id && t.rank).sort(compareRank);
     const at = (key?: string) => (key ? others.findIndex((t) => t.key === key) : -1);
     const ia = at(move.afterKey);
@@ -309,10 +307,10 @@ export function TaskWorkspace({
     if (!r.ok) {
       upsert(task);
       toast.error(r.error);
-      return false;
+      return null;
     }
     if (r.data) upsert(r.data);
-    return true;
+    return r.data ?? task;
   };
 
   const manual = view.sort === "manual";
@@ -331,14 +329,31 @@ export function TaskWorkspace({
   /**
    * A task dropped into another status group (VEC-60): one write sets the status and the position. On a
    * heading it lands at the top of that group; folded groups say where it went, since the row disappears.
+   * A task from another project (dragged in through a spring-loaded sidebar row, VEC-61) also moves into
+   * this view's project in the same write, gets that project's key, and the open pane follows it.
    */
-  const dropIntoGroup = async (id: string, status: Status, neighbours: { afterKey?: string; beforeKey?: string }, viaHeading = false) => {
-    const t = tasks.get(id);
+  const dropIntoGroup = async (
+    id: string,
+    status: Status,
+    neighbours: { afterKey?: string; beforeKey?: string },
+    viaHeading = false,
+    dragged?: Task,
+  ) => {
+    const t = tasks.get(id) ?? dragged;
     if (!t) return;
+    const intoProject = scope.projectId && t.projectId !== scope.projectId ? scope.projectId : undefined;
     const same = t.statusId === status.id;
-    if (same && !neighbours.afterKey && !neighbours.beforeKey) return;
-    const ok = await moveTask(t, { ...neighbours, statusId: same ? undefined : status.id });
-    if (ok && viaHeading && isFolded(status)) {
+    if (same && !intoProject && !neighbours.afterKey && !neighbours.beforeKey) return;
+    const moved = await moveTask(t, { ...neighbours, statusId: same ? undefined : status.id, projectId: intoProject });
+    if (moved && intoProject) {
+      if (selectedKey === t.key) open(moved.key);
+      toast.success(`Moved ${t.key} to ${projectById.get(intoProject)?.name ?? "this project"} as ${moved.key}`, {
+        description: t.title,
+        action: { label: "Open", onClick: () => open(moved.key) },
+      });
+      return;
+    }
+    if (moved && viaHeading && isFolded(status)) {
       toast.success(`Moved ${t.key} to ${status.name}`, {
         description: t.title,
         action: { label: "Show", onClick: () => toggleGroup(status.id, false) },
@@ -456,10 +471,11 @@ export function TaskWorkspace({
                     count={g.tasks.length}
                     folded={folded}
                     canDrop={manual}
+                    projectId={scope.projectId}
                     onToggle={() => toggleGroup(g.status.id, !folded)}
                     onDrop={(item) => {
                       const top = g.tasks.find((x) => x.id !== item.id);
-                      void dropIntoGroup(item.id, g.status, { beforeKey: top?.key }, true);
+                      void dropIntoGroup(item.id, g.status, { beforeKey: top?.key }, true, item.data as Task | undefined);
                     }}
                   />
                   {!folded && (
@@ -469,9 +485,15 @@ export function TaskWorkspace({
                     // Linked with the other groups: dropping a row into another group changes its status (VEC-60).
                     group={TASK_GROUP}
                     emptyLabel={`Move to ${g.status.name}`}
-                    onMove={(id, { toIndex, ids }) => {
+                    onMove={(id, { toIndex, ids, item }) => {
                       const keyOf = (i: string | undefined) => (i ? g.tasks.find((x) => x.id === i)?.key : undefined);
-                      void dropIntoGroup(id, g.status, { afterKey: keyOf(ids[toIndex - 1]), beforeKey: keyOf(ids[toIndex + 1]) });
+                      void dropIntoGroup(
+                        id,
+                        g.status,
+                        { afterKey: keyOf(ids[toIndex - 1]), beforeKey: keyOf(ids[toIndex + 1]) },
+                        false,
+                        item.data as Task | undefined,
+                      );
                     }}
                     aria-label={g.status.name}
                     className="flex flex-col gap-1"
@@ -545,6 +567,7 @@ function GroupHeading({
   count,
   folded,
   canDrop,
+  projectId,
   onToggle,
   onDrop,
 }: {
@@ -552,6 +575,8 @@ function GroupHeading({
   count: number;
   folded: boolean;
   canDrop: boolean;
+  /** The view's project: a task from another project may drop on any heading, its own status included. */
+  projectId?: string;
   onToggle: () => void;
   onDrop: (item: DragItem) => void;
 }) {
@@ -559,8 +584,11 @@ function GroupHeading({
   const { ref, isOver, canDrop: accepting } = useDropTarget<HTMLHeadingElement>(`status-heading:${status.id}`, {
     label: status.name,
     disabled: !canDrop,
-    // Tasks from other groups; the group itself takes its own rows through its list.
-    accepts: (item) => item.group === TASK_GROUP && (item.data as Task | undefined)?.statusId !== status.id,
+    // Tasks from other groups (or other projects); the group itself takes its own rows through its list.
+    accepts: (item) => {
+      const t = item.data as Task | undefined;
+      return item.group === TASK_GROUP && !!t && (t.statusId !== status.id || (!!projectId && t.projectId !== projectId));
+    },
     onDrop,
   });
   const over = isOver && accepting;

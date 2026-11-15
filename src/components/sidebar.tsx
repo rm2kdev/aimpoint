@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
   BotIcon,
@@ -34,10 +34,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SortableList, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { SortableList, useDropTarget, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { useDragStore } from "@/components/ui/drag-provider";
 import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
-import { accountPath, orgPath, projectPath } from "@/lib/paths";
+import { moveTaskAction } from "@/app/actions/tasks";
+import { accountPath, orgPath, projectPath, withTask } from "@/lib/paths";
+import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
+import type { Project, Task } from "@/lib/types";
 
 export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
   const { org, orgs, counts, isAdmin, unread } = useOrg();
@@ -108,11 +112,66 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
   );
 }
 
-/** Active projects in the person's own order; drag (or Space + arrows) to reorder (VEC-54). */
+/**
+ * Active projects in the person's own order; drag (or Space + arrows) to reorder (VEC-54). On the desktop
+ * sidebar each row is also a spring-loaded drop target for a dragged task (VEC-61): hover it and the row
+ * blinks and the project opens mid-drag, so the task can be dropped anywhere in that project's list;
+ * release on the row itself to move the task to the top of its status there. Archived projects aren't listed,
+ * so they're never targets.
+ */
 function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
   const { org, projects, counts, reorderProjects } = useOrg();
   const pathname = usePathname();
+  const router = useRouter();
+  const store = useDragStore();
   const active = useMemo(() => projects.filter((p) => !p.archived), [projects]);
+  // The mobile drawer's copy (the one with onNavigate) stays mounted off-screen; only the desktop rows take
+  // task drops. Spring-loading in the drawer isn't supported: it covers the list a task would be dropped into.
+  const springs = !onNavigate;
+
+  // The page a drag started on, recorded when its first spring opens a project. A cancelled drag (Escape,
+  // release away from every list) goes back there, so nothing is left half-moved on another page.
+  const origin = useRef<string | null>(null);
+  useEffect(() => {
+    if (!springs || !store) return;
+    return store.onEnd((_item, dropped) => {
+      const back = origin.current;
+      origin.current = null;
+      if (!dropped && back && back !== location.pathname + location.search) router.push(back, { scroll: false });
+    });
+  }, [springs, store, router]);
+
+  const spring = (p: Project, task: Task) => {
+    if (origin.current === null) origin.current = location.pathname + location.search;
+    // Keep the task's pane open if it was; it follows the task to its new key on drop.
+    const paneOpen = new URLSearchParams(location.search).get("task") === task.key;
+    const href = projectPath(org.slug, p.key);
+    router.push(paneOpen ? withTask(href, task.key) : href, { scroll: false });
+  };
+
+  /** Released on the row without waiting: top of the same status in that project, one write. */
+  const quickDrop = async (p: Project, task: Task) => {
+    const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: t }));
+    const same = task.projectId === p.id;
+    echo({ ...task, projectId: p.id });
+    const r = await moveTaskAction(org.slug, task.key, { project: same ? undefined : p.id, toTop: true });
+    if (!r.ok) {
+      echo(task);
+      return void toast.error(r.error);
+    }
+    const moved = r.data ?? task;
+    if (r.data) echo(r.data);
+    const q = new URLSearchParams(location.search);
+    if (q.get("task") === task.key && moved.key !== task.key) {
+      q.set("task", moved.key);
+      router.replace(`${location.pathname}?${q}`, { scroll: false });
+    }
+    toast.success(same ? `Moved ${task.key} to the top` : `Moved ${task.key} to ${p.name} as ${moved.key}`, {
+      description: task.title,
+      action: { label: "Open", onClick: () => router.push(withTask(projectPath(org.slug, p.key), moved.key)) },
+    });
+  };
+
   return (
     <SortableList
       items={active}
@@ -128,20 +187,94 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
       renderItem={(p, { handleProps, isDragging }) => {
         const href = projectPath(org.slug, p.key);
         return (
-          <NavItem
+          <ProjectRow
+            project={p}
             href={href}
             active={pathname === href}
-            icon={<ProjectDot color={p.color} className="mx-[4px] size-2.5" />}
             count={counts.projects[p.id] ?? 0}
             onNavigate={onNavigate}
             handleProps={handleProps}
             dragging={isDragging}
-          >
-            {p.name}
-          </NavItem>
+            springs={springs}
+            onSpring={(task) => spring(p, task)}
+            onQuickDrop={(task) => void quickDrop(p, task)}
+          />
         );
       }}
     />
+  );
+}
+
+function ProjectRow({
+  project: p,
+  href,
+  active,
+  count,
+  onNavigate,
+  handleProps,
+  dragging,
+  springs,
+  onSpring,
+  onQuickDrop,
+}: {
+  project: Project;
+  href: string;
+  active: boolean;
+  count: number;
+  onNavigate?: () => void;
+  handleProps?: SortableHandleProps;
+  dragging?: boolean;
+  springs: boolean;
+  onSpring: (task: Task) => void;
+  onQuickDrop: (task: Task) => void;
+}) {
+  const store = useDragStore();
+  const [blink, setBlink] = useState(false);
+  const blinkTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(blinkTimer.current), []);
+  const stopBlink = () => {
+    clearTimeout(blinkTimer.current);
+    setBlink(false);
+  };
+  // Both sidebar copies are mounted: give the drawer's (disabled) targets their own ids so they don't replace the desktop ones.
+  const targetId = `sidebar-project:${p.id}${springs ? "" : ":drawer"}`;
+  const target = useDropTarget<HTMLAnchorElement>(targetId, {
+    label: p.name,
+    disabled: !springs,
+    // Tasks only: a project being reordered (its own list group) never lands here.
+    accepts: (item) => item.group === TASK_DRAG_GROUP && !!item.data,
+    dwellMs: SPRING_DELAY_MS,
+    onDwell: (item) => {
+      if (active) return; // already open
+      setBlink(true);
+      blinkTimer.current = setTimeout(() => {
+        setBlink(false);
+        // Still the same drag, still over this row (moving off cancels the timer through onHoverEnd).
+        const snap = store?.get();
+        if (snap?.item.id === item.id && snap.over?.kind === "target" && snap.over.id === targetId) onSpring(item.data as Task);
+      }, SPRING_BLINK_MS);
+    },
+    onHoverEnd: stopBlink,
+    onDrop: (item) => {
+      stopBlink();
+      onQuickDrop(item.data as Task);
+    },
+  });
+  const over = target.isOver && target.canDrop;
+  return (
+    <NavItem
+      href={href}
+      active={active}
+      icon={<ProjectDot color={p.color} className="mx-[4px] size-2.5" />}
+      count={count}
+      onNavigate={onNavigate}
+      handleProps={handleProps}
+      dragging={dragging}
+      targetRef={target.ref}
+      dropState={blink ? "spring" : over ? "over" : undefined}
+    >
+      {p.name}
+    </NavItem>
   );
 }
 
@@ -156,6 +289,8 @@ function NavItem({
   onNavigate,
   handleProps,
   dragging,
+  targetRef,
+  dropState,
 }: {
   href: string;
   active: boolean;
@@ -171,17 +306,25 @@ function NavItem({
   handleProps?: SortableHandleProps;
   /** Lifted with the keyboard or dragged: keep a focus ring on it. */
   dragging?: boolean;
+  /** Drop target (spring-loaded project row). */
+  targetRef?: React.Ref<HTMLAnchorElement>;
+  /** A dragged task is over the row ("over"), or it's blinking before the project opens ("spring"). */
+  dropState?: "over" | "spring";
 }) {
   return (
     <Link
+      ref={targetRef}
       href={href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
+      data-drop-over={dropState ? dropState : undefined}
       {...handleProps}
       className={cn(
         "group mb-px flex h-[30px] shrink-0 items-center gap-2.5 rounded-[7px] px-2 text-[13.5px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&_svg]:size-4 [&_svg]:shrink-0",
         active ? "bg-selected font-medium text-selected-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent",
         dragging && "cursor-grabbing",
+        dropState && "bg-brand/10 text-brand shadow-[inset_0_0_0_1px_var(--color-brand)] hover:bg-brand/10",
+        dropState === "spring" && "spring-blink",
       )}
     >
       <span className={cn("flex", active ? "text-selected-foreground" : "text-muted-foreground")}>{icon}</span>

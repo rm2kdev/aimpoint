@@ -47,6 +47,8 @@ export type MoveDetail = {
   toIndex: number
   /** The receiving list's ids with the item inserted. */
   ids: string[]
+  /** The dragged item, incl. its `data` (the only copy once the source list has unmounted). */
+  item: DragItem
 }
 
 /** What a `SortableList` hands the session about itself (kept current every render). */
@@ -90,6 +92,10 @@ const OUTSIDE_MARGIN = 24
 const AUTOSCROLL_EDGE = 36
 /** Max auto-scroll speed in px per frame (reached right at the edge). */
 const AUTOSCROLL_MAX = 14
+/** The floating preview's left edge sits at most this far left of the pointer. */
+const GHOST_POINTER_X = 12
+/** The floating preview is never wider than this. */
+const GHOST_MAX_WIDTH = 420
 
 /** Nearest ancestor that scrolls vertically (the element itself counts), or null. */
 function scrollParent(el: HTMLElement | null): HTMLElement | null {
@@ -136,8 +142,11 @@ export function createDragStore() {
   let pending: { cleanup: () => void; rehit: () => void } | null = null
   let pendingFocus: { listId: string; id: string } | null = null
   let hover: { id: string; at: number; timer?: ReturnType<typeof setTimeout> } | null = null
+  const endListeners = new Set<(item: DragItem, dropped: boolean) => void>()
 
   const emit = () => listeners.forEach((l) => l())
+  /** Every drag ends here once: `dropped` is false for a cancel (Escape, release away from targets). */
+  const ended = (item: DragItem, dropped: boolean) => endListeners.forEach((l) => l(item, dropped))
 
   const announce = (text: string) => {
     // Repeating the same sentence must still be read out, so nudge it.
@@ -243,6 +252,7 @@ export function createDragStore() {
     if (!over) {
       endHover(item, false)
       announce(cancelled())
+      ended(item, false)
       return null
     }
     if (over.kind === "target") {
@@ -250,11 +260,13 @@ export function createDragStore() {
       t?.opts.onDrop?.(item)
       endHover(item, true)
       announce(t ? `${name} dropped on ${t.opts.label ?? over.id}.` : cancelled())
+      ended(item, !!t)
       return null
     }
     const reg = list(over.listId)
     if (!reg) {
       announce(cancelled())
+      ended(item, false)
       return null
     }
     const ids = reg.ids()
@@ -262,6 +274,7 @@ export function createDragStore() {
     const same = from >= 0
     if (isNoopDrop(same, from, over.gap)) {
       announce(`${name} dropped in its original position, ${from + 1} of ${ids.length}.`)
+      ended(item, true)
       return null
     }
     const toIndex = dropIndex(same, from, over.gap)
@@ -273,8 +286,9 @@ export function createDragStore() {
       const next = ids.filter((id) => id !== item.id)
       next.splice(at, 0, item.id)
       announce(`${name} moved to ${reg.label}, position ${at + 1} of ${next.length}.`)
-      reg.onMove?.(item.id, { fromList: item.listId, toList: reg.listId, fromIndex: sourceFrom, toIndex: at, ids: next })
+      reg.onMove?.(item.id, { fromList: item.listId, toList: reg.listId, fromIndex: sourceFrom, toIndex: at, ids: next, item })
     }
+    ended(item, true)
     return reg.listId
   }
 
@@ -305,7 +319,9 @@ export function createDragStore() {
     // a drop target. Reordering within one list keeps the line-only look.
     const makeGhost = () => {
       const r = row.getBoundingClientRect()
-      offset = { x: startX - r.left, y: startY - r.top }
+      // Hang the preview just right of the pointer, and cap its width, so it never covers the target
+      // under the pointer (a sidebar project row has to stay visible while it blinks, VEC-61).
+      offset = { x: Math.min(startX - r.left, GHOST_POINTER_X), y: startY - r.top }
       const g = row.cloneNode(true) as HTMLElement
       g.removeAttribute("data-sortable-id")
       g.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"))
@@ -314,7 +330,7 @@ export function createDragStore() {
       g.setAttribute("data-drag-ghost", "")
       g.className =
         "pointer-events-none fixed top-0 left-0 z-[100] list-none rounded-lg bg-popover opacity-95 shadow-lg ring-1 ring-border"
-      g.style.width = `${r.width}px`
+      g.style.width = `${Math.min(r.width, GHOST_MAX_WIDTH)}px`
       g.style.display = "none"
       document.body.appendChild(g)
       ghost = g
@@ -594,6 +610,11 @@ export function createDragStore() {
     },
     get: () => snap,
     getAnnouncement: () => announcement,
+    /** Called once when a drag ends: dropped somewhere (true) or cancelled (false). Returns an unsubscribe. */
+    onEnd(fn: (item: DragItem, dropped: boolean) => void) {
+      endListeners.add(fn)
+      return () => void endListeners.delete(fn)
+    },
     announce,
     registerList(listId: string, ref: Ref<ListRegistration>) {
       lists.set(listId, ref)
