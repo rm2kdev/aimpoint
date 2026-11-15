@@ -9,6 +9,7 @@ import { notificationHeadline } from "@/lib/notification-text";
 import { markNotificationsRead } from "@/app/actions/notifications";
 import { Sidebar } from "@/components/sidebar";
 import { CommandMenu } from "@/components/command-menu";
+import { BotStatusTray } from "@/components/bot-status-tray";
 import { NewTaskDialog, type NewTaskDefaults } from "@/components/new-task-dialog";
 import { cn } from "@/lib/utils";
 import { orgPath, taskPath } from "@/lib/paths";
@@ -63,28 +64,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{ newTask, setViewDefaults, openSearch: () => setSearch(true), openNav: () => setNavOpen(true) }}>
-      <div className="flex h-dvh overflow-hidden">
-        {/* desktop sidebar */}
-        <aside className="hidden w-[248px] shrink-0 border-r border-sidebar-border lg:block">
-          <Sidebar onSearch={() => setSearch(true)} />
-        </aside>
-        {/* mobile drawer */}
-        <div
-          className={cn("fixed inset-0 z-40 bg-black/30 transition-opacity lg:hidden", navOpen ? "opacity-100" : "pointer-events-none opacity-0")}
-          onClick={() => setNavOpen(false)}
-          aria-hidden
-        />
-        <aside
-          className={cn(
-            "fixed inset-y-0 left-0 z-50 w-[272px] border-r border-sidebar-border shadow-xl transition-transform duration-200 ease-out lg:hidden",
-            navOpen ? "translate-x-0" : "pointer-events-none -translate-x-full",
-          )}
-          aria-hidden={!navOpen}
-          inert={!navOpen}
-        >
-          <Sidebar onSearch={() => setSearch(true)} onNavigate={() => setNavOpen(false)} />
-        </aside>
-        <div className="flex min-w-0 flex-1">{children}</div>
+      {/* Column: the app row fills what's left above the bot status tray, so every scroll area and the task pane end above it. */}
+      <div className="flex h-dvh flex-col overflow-hidden">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          {/* desktop sidebar */}
+          <aside className="hidden w-[248px] shrink-0 border-r border-sidebar-border lg:block">
+            <Sidebar onSearch={() => setSearch(true)} />
+          </aside>
+          {/* mobile drawer */}
+          <div
+            className={cn("fixed inset-0 z-40 bg-black/30 transition-opacity lg:hidden", navOpen ? "opacity-100" : "pointer-events-none opacity-0")}
+            onClick={() => setNavOpen(false)}
+            aria-hidden
+          />
+          <aside
+            className={cn(
+              "fixed inset-y-0 left-0 z-50 w-[272px] border-r border-sidebar-border shadow-xl transition-transform duration-200 ease-out lg:hidden",
+              navOpen ? "translate-x-0" : "pointer-events-none -translate-x-full",
+            )}
+            aria-hidden={!navOpen}
+            inert={!navOpen}
+          >
+            <Sidebar onSearch={() => setSearch(true)} onNavigate={() => setNavOpen(false)} />
+          </aside>
+          <div className="flex min-w-0 flex-1">{children}</div>
+        </div>
+        <BotStatusTray />
       </div>
       <NotificationToasts />
       <CommandMenu open={search} onOpenChange={setSearch} />
