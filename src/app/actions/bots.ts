@@ -12,6 +12,7 @@ import { toBot } from "@/lib/data";
 import { METHOD_IDS, backendFor } from "@/lib/bot-connect";
 import { deliver, hermesProbe, providerProbe } from "@/lib/bot-dispatch";
 import { seal, secretHint, unseal } from "@/lib/secrets";
+import { BOT_MAX_TASKS_DEFAULT, BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMethod } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 
@@ -41,7 +42,7 @@ export async function createBot(slug: string, input: BotInput): Promise<Result<{
     const data = clean(input, org._id.toHexString());
     const { key, hash, hint } = generateKey();
     const now = new Date();
-    const doc = { _id: new ObjectId(), orgId: org._id, ...data, keyHash: hash, keyHint: hint, keyRotatedAt: now, createdBy: user._id, createdAt: now };
+    const doc = { _id: new ObjectId(), orgId: org._id, ...data, maxTasks: BOT_MAX_TASKS_DEFAULT, keyHash: hash, keyHint: hint, keyRotatedAt: now, createdBy: user._id, createdAt: now };
     const c = await cols();
     await c.bots.insertOne(doc);
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
@@ -56,6 +57,22 @@ export async function updateBot(slug: string, id: string, input: BotInput): Prom
     const data = clean(input, org._id.toHexString());
     const c = await cols();
     const bot = await c.bots.findOneAndUpdate({ _id: botId(id), orgId: org._id }, { $set: data }, { returnDocument: "after" });
+    if (!bot) throw new UserError("This bot no longer exists.");
+    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    revalidatePath(orgPath(slug), "layout");
+    return toBot(bot);
+  });
+}
+
+/** Sets how many tasks the bot works on at once. Display only for now: dispatch doesn't enforce it. */
+export async function setBotMaxTasks(slug: string, id: string, value: number): Promise<Result<Bot>> {
+  return guard(async () => {
+    const { org, user } = await requireOrg(slug, { admin: true });
+    if (typeof value !== "number" || !Number.isInteger(value) || value < BOT_MAX_TASKS_MIN || value > BOT_MAX_TASKS_MAX) {
+      throw new UserError(`Max concurrent tasks is a whole number from ${BOT_MAX_TASKS_MIN} to ${BOT_MAX_TASKS_MAX}.`);
+    }
+    const c = await cols();
+    const bot = await c.bots.findOneAndUpdate({ _id: botId(id), orgId: org._id }, { $set: { maxTasks: value } }, { returnDocument: "after" });
     if (!bot) throw new UserError("This bot no longer exists.");
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");

@@ -25,10 +25,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { deleteBot, updateBot } from "@/app/actions/bots";
+import { deleteBot, setBotMaxTasks, updateBot } from "@/app/actions/bots";
 import { setBotRole } from "@/app/actions/bot-roles";
 import { MCP_TOOLS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
+import { BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAvatar as BotAvatarData, BotRole, Task } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 
@@ -57,6 +58,7 @@ export function BotDetail({
   // The bot's key, when this page has it in hand: just created (handed over by the New bot dialog) or made in the connection setup.
   const [newKey, setNewKey] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [maxTasks, setMaxTasks] = useState(String(initial.maxTasks));
   const [pending, start] = useTransition();
   useEffect(() => {
     const k = `vector:new-bot-key:${initial.id}`;
@@ -71,6 +73,19 @@ export function BotDetail({
   const creator = memberById.get(bot.createdBy);
   const role = roles.find((r) => r.id === bot.roleId);
   const picked = new Set(pickedUp);
+
+  const maxNum = Number(maxTasks);
+  const maxValid = maxTasks.trim() !== "" && Number.isInteger(maxNum) && maxNum >= BOT_MAX_TASKS_MIN && maxNum <= BOT_MAX_TASKS_MAX;
+  const maxDirty = maxTasks !== String(bot.maxTasks);
+  const saveMax = () =>
+    start(async () => {
+      const r = await setBotMaxTasks(org.slug, bot.id, maxNum);
+      if (!r.ok) return void toast.error(r.error);
+      setBot(r.data!);
+      setMaxTasks(String(r.data!.maxTasks));
+      toast.success(`${bot.name} takes up to ${r.data!.maxTasks} task${r.data!.maxTasks === 1 ? "" : "s"} at once`);
+      router.refresh();
+    });
 
   const save = () =>
     start(async () => {
@@ -188,6 +203,47 @@ export function BotDetail({
                   : `${MCP_TOOLS.filter((t) => !t.optIn).length} of ${MCP_TOOLS.length} tools: everything except triage.`}
               </p>
             </div>
+          </Row>
+
+          <Row
+            title="Max concurrent tasks"
+            desc={`How many tasks ${bot.name} works on at once (${BOT_MAX_TASKS_MIN}-${BOT_MAX_TASKS_MAX}). Shown in the bot status tray; Vector doesn't hold work back when it's reached yet.`}
+          >
+            <form
+              className="flex max-w-xl items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (maxValid && maxDirty) saveMax();
+              }}
+            >
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={BOT_MAX_TASKS_MIN}
+                max={BOT_MAX_TASKS_MAX}
+                step={1}
+                value={maxTasks}
+                onChange={(e) => setMaxTasks(e.target.value)}
+                disabled={!isAdmin || pending}
+                aria-label="Max concurrent tasks"
+                aria-invalid={!maxValid || undefined}
+                className="w-24 tabular-nums"
+              />
+              {isAdmin && maxDirty && (
+                <>
+                  <Button type="submit" disabled={pending || !maxValid}>
+                    Save
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => setMaxTasks(String(bot.maxTasks))}>
+                    Discard
+                  </Button>
+                </>
+              )}
+              {!isAdmin && <span className="text-[12.5px] text-faint">Only admins can change this.</span>}
+            </form>
+            {isAdmin && maxDirty && !maxValid && (
+              <p className="mt-1.5 text-[12.5px] text-destructive">Use a whole number from {BOT_MAX_TASKS_MIN} to {BOT_MAX_TASKS_MAX}.</p>
+            )}
           </Row>
 
           <Row title="Work" desc={`Open tasks assigned to ${bot.name}. It has created ${createdCount} task${createdCount === 1 ? "" : "s"}.`}>

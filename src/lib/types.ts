@@ -162,9 +162,18 @@ export interface BotDoc {
   roleId?: ObjectId | null;
   /** How the agent behind this bot hears about work. Set by the connect wizard. */
   connection?: BotConnectionDoc | null;
+  /** How many tasks the bot works on at once (display only for now). Unset on older bots: read as BOT_MAX_TASKS_DEFAULT. */
+  maxTasks?: number;
   createdBy: ObjectId;
   createdAt: Date;
 }
+
+export const BOT_MAX_TASKS_DEFAULT = 3;
+export const BOT_MAX_TASKS_MIN = 1;
+export const BOT_MAX_TASKS_MAX = 20;
+/** A bot's max concurrent tasks, falling back to the default for bots saved before the setting existed. */
+export const botMaxTasks = (b: { maxTasks?: number | null }) =>
+  Number.isInteger(b.maxTasks) && b.maxTasks! >= BOT_MAX_TASKS_MIN && b.maxTasks! <= BOT_MAX_TASKS_MAX ? b.maxTasks! : BOT_MAX_TASKS_DEFAULT;
 
 /** The backend that runs a bot. Vector calls it when the bot is assigned a task or @mentioned. */
 export type BotAgent = "claude" | "openai" | "hermes" | "other";
@@ -269,6 +278,8 @@ export interface Member {
   kind: "user" | "bot";
   avatar?: BotAvatar;
   description?: string;
+  /** Bots only: max concurrent tasks. */
+  maxTasks?: number;
 }
 export interface Bot {
   id: string;
@@ -280,6 +291,7 @@ export interface Bot {
   lastUsedAt: string | null;
   roleId: string | null;
   connection: BotConnection | null;
+  maxTasks: number;
   createdBy: string;
   createdAt: string;
 }

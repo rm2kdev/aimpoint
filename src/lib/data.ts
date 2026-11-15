@@ -23,6 +23,7 @@ import type {
   TaskDoc,
   TaskRef,
 } from "@/lib/types";
+import { botMaxTasks } from "@/lib/types";
 
 export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId">[] = [
   { name: "Backlog", color: "#a3a3a3", category: "backlog", order: 0 },
@@ -45,6 +46,7 @@ export const toBot = (b: BotDoc): Bot => ({
   keyRotatedAt: b.keyRotatedAt.toISOString(),
   lastUsedAt: b.lastUsedAt?.toISOString() ?? null,
   roleId: b.roleId?.toHexString() ?? null,
+  maxTasks: botMaxTasks(b),
   connection: b.connection
     ? {
         agent: b.connection.agent,
@@ -296,6 +298,7 @@ export async function loadShell(orgId: ObjectId, userId: ObjectId) {
       kind: "bot",
       avatar: b.avatar,
       description: b.description,
+      maxTasks: botMaxTasks(b),
     });
   }
   const counts = await loadCounts(orgId, userId, statuses);
