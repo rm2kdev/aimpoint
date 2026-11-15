@@ -309,7 +309,6 @@ export function TaskWorkspace({
           )}
           <div className="ml-auto flex items-center gap-3">
             <Presence />
-            <LiveIndicator />
             <div className="flex items-center gap-0.5">
               <FilterMenu value={view} onChange={setView} hideAssignee={scope.mine} />
               <SortMenu value={view.sort} onChange={(sort) => setView((v) => ({ ...v, sort }))} options={scope.archived ? ARCHIVE_SORTS : SORTS} />
@@ -586,19 +585,6 @@ function Presence() {
       </TooltipTrigger>
       <TooltipContent>Also here: {others.map((m) => m.name).join(", ")}</TooltipContent>
     </Tooltip>
-  );
-}
-
-function LiveIndicator() {
-  const { connected } = useOrg();
-  return (
-    <span
-      className="hidden items-center gap-1.5 text-[12px] text-faint md:flex"
-      title={connected ? "Changes from your team appear instantly" : "Reconnecting…"}
-    >
-      <span className={cn("size-1.5 rounded-full", connected ? "bg-[#30a46c]" : "bg-faint")} />
-      {connected ? "Live" : "Offline"}
-    </span>
   );
 }
 

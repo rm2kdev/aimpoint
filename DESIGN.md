@@ -231,7 +231,7 @@ A neutral, slightly warm stone palette with a single cobalt accent and one signa
 - **Destructive Red** (destructive / dark-destructive): validation errors and destructive actions, usually at 10–20% tint behind red text.
 
 ### Data colours (not chrome)
-- **Issue Red** (issue-red) and **Feature Green** (feature-green): the 6–8px square inside the type tag and type pickers. Feature Green also marks the "Live" connection dot.
+- **Issue Red** (issue-red) and **Feature Green** (feature-green): the 6–8px square inside the type tag and type pickers.
 - Status colours are per-organisation data shown only inside status rings. The seeded defaults are Backlog #a3a3a3, Todo #737373, In Progress #e5a00d, In Review #8b5cf6, Done #2f6fed, Cancelled #a3a3a3.
 - Project dots and avatars draw from fixed eight-colour sets (see the sidecar). Avatars are hashed by user id, so a person keeps the same colour everywhere.
 
@@ -268,7 +268,7 @@ A neutral, slightly warm stone palette with a single cobalt accent and one signa
 
 A three-column app shell: a fixed 248px sidebar, a flexible list column, and an optional detail pane at 440px (lg), 500px (xl) and 560px (2xl). Below lg (1024px) the sidebar becomes a 272px slide-over drawer and an open task replaces the list rather than sitting beside it.
 
-Every column starts with a 56px header separated by a hairline. The list header holds the view title, a mono count, a pill segmented type filter, the live indicator and the New Task button. The list content has 16px side padding (8px on mobile) and 64px of bottom padding so the last row can scroll clear.
+Every column starts with a 56px header separated by a hairline. The list header holds the view title, a mono count, a pill segmented type filter, the avatars of teammates also viewing, and the New Task button. The list content has 16px side padding (8px on mobile) and 64px of bottom padding so the last row can scroll clear.
 
 Rows sit 4px apart inside their status group, with 16px between groups. Group headers are 32px tall, sticky at the top of the scroll area, on a solid paper background (no blur). Closed statuses (done, cancelled) are collapsed behind a "Show N completed" toggle.
 
@@ -296,7 +296,7 @@ Flat, tonal and hairline-led. Surfaces are separated by the sidebar/paper tone c
 
 Soft and consistent. The base radius is 9px (`--radius: 0.5625rem`), shared by task rows, buttons, inputs, the search field and the rich-text toolbar. The scale is derived from it: 5.4px, 7.2px, 9px, 12.6px. Fixed small radii sit beside it: Kbd keys 4px, type tags 5px, sidebar nav items 7px, containers (comment bubbles, settings lists, the composer) 10px, dialogs 12.6px.
 
-Circles are reserved for people and progress: avatars, the status ring, the live dot. Pills are reserved for the type filter's segmented control. Small data marks use squircle-ish squares: project dots (2–3px radius), type squares (2px). The unassigned avatar is a dashed circle, and the backlog status is a dashed ring. Dashed means "not yet".
+Circles are reserved for people and progress: avatars and the status ring. Pills are reserved for the type filter's segmented control. Small data marks use squircle-ish squares: project dots (2–3px radius), type squares (2px). The unassigned avatar is a dashed circle, and the backlog status is a dashed ring. Dashed means "not yet".
 
 ## Components
 
