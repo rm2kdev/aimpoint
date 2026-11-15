@@ -8,7 +8,11 @@ export type Role = "admin" | "member";
 export type StatusCategory = "backlog" | "triage" | "unstarted" | "started" | "done" | "cancelled";
 /** Done and cancelled tasks are closed: they no longer hold up the tasks that depend on them. */
 export const isClosedCategory = (c: StatusCategory | null | undefined) => c === "done" || c === "cancelled";
-export type TaskType = "issue" | "feature";
+export type TaskType = "issue" | "feature" | "task";
+export const TASK_TYPES: readonly TaskType[] = ["issue", "feature", "task"];
+export function isTaskType(v: unknown): v is TaskType {
+  return typeof v === "string" && (TASK_TYPES as readonly string[]).includes(v);
+}
 export type Priority = 0 | 1 | 2 | 3; // none, low, medium, high
 
 export interface UserDoc {

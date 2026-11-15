@@ -21,7 +21,7 @@ import {
   ToolInputError,
   type ImageBlock,
 } from "@/lib/mcp/context";
-import type { BotDoc, OrgDoc, ProjectDoc, StatusDoc, TaskDoc } from "@/lib/types";
+import { isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc } from "@/lib/types";
 
 /* ---------------- types ---------------- */
 
@@ -59,6 +59,7 @@ const str = (args: Args, k: string, required = false): string | undefined => {
 };
 const bool = (args: Args, k: string, dflt: boolean) => (typeof args[k] === "boolean" ? (args[k] as boolean) : dflt);
 
+const TYPE_DESC = '"issue" = a bug or problem, "feature" = a feature request, "task" = a plain work item that is neither (e.g. a verification or chore). A type, not a status.';
 const TASK_ARG = { type: "string", description: 'Task key like "WEB-12" (or the task id).' };
 const DEPENDS_ARG = {
   type: "array",
@@ -126,8 +127,8 @@ function parsePriority(v: unknown) {
 
 function parseType(v: unknown) {
   if (v === undefined || v === null || v === "") return undefined;
-  if (v === "issue" || v === "feature") return v;
-  throw new ToolInputError('`type` is "issue" or "feature".');
+  if (isTaskType(v)) return v;
+  throw new ToolInputError('`type` is "issue", "feature" or "task".');
 }
 
 async function openStatusIds(orgId: ObjectId) {
@@ -677,7 +678,7 @@ const TOOLS: Record<string, ToolImpl> = {
         task: TASK_ARG,
         title: { type: "string" },
         description: { type: "string", description: "Markdown. Replaces the existing description." },
-        type: { type: "string", enum: ["issue", "feature"] },
+        type: { type: "string", enum: ["issue", "feature", "task"], description: TYPE_DESC },
         priority: { type: "string", enum: ["none", "low", "medium", "high"] },
         due_date: { type: ["string", "null"], description: "YYYY-MM-DD, or null to clear." },
         project: { type: "string", description: "Move to another project (key, name or id). The task gets a new key." },
@@ -735,7 +736,7 @@ const TOOLS: Record<string, ToolImpl> = {
         project: { type: "string", description: "Project key (WEB), name or id." },
         title: { type: "string" },
         description: { type: "string", description: "Markdown." },
-        type: { type: "string", enum: ["issue", "feature"], default: "issue" },
+        type: { type: "string", enum: ["issue", "feature", "task"], default: "issue", description: TYPE_DESC },
         status: { type: "string", description: "Status name. Defaults to the first not-started status." },
         assignee: { type: "string", description: 'Name, email, id or "me". Leave out for unassigned.' },
         priority: { type: "string", enum: ["none", "low", "medium", "high"] },

@@ -34,7 +34,7 @@ export const GET = botRoute(async (req, ctx) => {
   return { tasks: await withWorkingBots(docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"))) };
 }, "list_tasks");
 
-/** POST /api/v1/tasks  { title, project, type?, description?, status?, assignee?, priority?, dueDate?, dependsOn?: ["WEB-12"] } */
+/** POST /api/v1/tasks  { title, project, type?: "issue" | "feature" | "task" (default "issue"), description?, status?, assignee?, priority?, dueDate?, dependsOn?: ["WEB-12"] } */
 export const POST = botRoute(async (req, ctx) => {
   const b = await readJson(req);
   const project = await resolveProject(ctx.org._id, b.project);

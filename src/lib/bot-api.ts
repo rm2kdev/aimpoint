@@ -5,7 +5,7 @@ import { cols } from "@/lib/db";
 import { findTaskByKey } from "@/lib/data";
 import { UserError } from "@/lib/result";
 import type { Actor } from "@/lib/task-service";
-import type { BotDoc, OrgDoc } from "@/lib/types";
+import { isTaskType, type BotDoc, type OrgDoc } from "@/lib/types";
 
 export interface BotCtx {
   bot: BotDoc;
@@ -104,8 +104,8 @@ export function parsePriority(v: unknown) {
 
 export function parseType(v: unknown) {
   if (v === undefined) return undefined;
-  if (v === "issue" || v === "feature") return v;
-  throw new UserError("`type` is \"issue\" or \"feature\".");
+  if (isTaskType(v)) return v;
+  throw new UserError("`type` is \"issue\", \"feature\" or \"task\".");
 }
 
 /** `dependsOn`: a list of task keys ("WEB-12") or ids -> ids. Undefined when not provided; null clears. */

@@ -10,7 +10,7 @@ import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, tas
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, taskKeys, type By } from "@/lib/dependencies";
-import { isClosedCategory, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
+import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -317,7 +317,7 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     number: project.nextNumber,
     title,
     description: sanitizeDescription(input.description ?? ""),
-    type: input.type === "feature" ? "feature" : "issue",
+    type: isTaskType(input.type) ? input.type : "issue",
     statusId: status._id,
     assigneeId,
     priority: ([0, 1, 2, 3] as const).includes(priority) ? priority : 0,
@@ -400,7 +400,7 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   }
   if (patch.description !== undefined) set.description = sanitizeDescription(String(patch.description));
   if (patch.type && patch.type !== before.type) {
-    set.type = patch.type === "feature" ? "feature" : "issue";
+    set.type = isTaskType(patch.type) ? patch.type : "issue";
     acts.push({ kind: "type", from: before.type, to: set.type });
   }
   if (patch.priority !== undefined && patch.priority !== before.priority) {

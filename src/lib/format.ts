@@ -23,4 +23,4 @@ export function timeAgo(iso: string, now = Date.now()) {
 }
 
 export const PRIORITY_LABELS = ["No priority", "Low", "Medium", "High"] as const;
-export const TYPE_LABELS = { issue: "Issue", feature: "Feature" } as const;
+export const TYPE_LABELS = { issue: "Issue", feature: "Feature", task: "Task" } as const;
