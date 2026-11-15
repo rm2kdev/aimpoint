@@ -59,8 +59,19 @@ export async function cols() {
     botMentions: db.collection<BotMentionDoc>("botMentions"),
     notifications: db.collection<NotificationDoc>("notifications"),
     loginChallenges: db.collection<LoginChallengeDoc>("loginChallenges"),
+    deletedUsers: db.collection<DeletedUserDoc>("deletedUsers"),
   };
 }
+/**
+ * What's left of a deleted account (VEC-48): only its id and the organisations where it left tasks,
+ * comments or activity, so those render as "Deleted user" rather than "Former member". No name or email.
+ */
+export interface DeletedUserDoc {
+  _id: ObjectId;
+  orgIds: ObjectId[];
+  deletedAt: Date;
+}
+
 export type Cols = Awaited<ReturnType<typeof cols>>;
 export type { Collection };
 
@@ -95,6 +106,7 @@ async function ensureIndexes(db: Db) {
     db.collection("notifications").createIndex({ orgId: 1, userId: 1, createdAt: -1 }),
     db.collection("notifications").createIndex({ orgId: 1, userId: 1, readAt: 1 }),
     db.collection("notifications").createIndex({ taskId: 1 }),
+    db.collection("deletedUsers").createIndex({ orgIds: 1 }),
   ]);
   await migrate(db);
 }

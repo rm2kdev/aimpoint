@@ -78,6 +78,7 @@ export function OrgProvider({
   orgs,
   me,
   members,
+  deletedMembers,
   projects: serverProjects,
   projectOrder: serverOrder,
   statuses,
@@ -91,6 +92,8 @@ export function OrgProvider({
   orgs: OrgInfo[];
   me: Me;
   members: Member[];
+  /** Deleted accounts ("Deleted user"): resolvable through memberById, never offered in pickers. */
+  deletedMembers?: Member[];
   projects: Project[];
   projectOrder: ProjectOrder;
   statuses: Status[];
@@ -238,7 +241,7 @@ export function OrgProvider({
       me,
       isAdmin: me.role === "admin",
       members,
-      memberById: new Map(members.map((m) => [m.id, m])),
+      memberById: new Map([...(deletedMembers ?? []), ...members].map((m) => [m.id, m])),
       projects,
       projectById: new Map(projects.map((p) => [p.id, p])),
       reorderProjects,
@@ -253,7 +256,7 @@ export function OrgProvider({
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
     }),
-    [org, orgs, me, members, projects, reorderProjects, statuses, counts, unread, setUnread, subscribe, connected, online, workloadSnap],
+    [org, orgs, me, members, deletedMembers, projects, reorderProjects, statuses, counts, unread, setUnread, subscribe, connected, online, workloadSnap],
   );
   return <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>;
 }

@@ -15,11 +15,14 @@ export function AuthForm({
   action,
   next,
   email,
+  notice,
 }: {
   mode: Mode;
   action: (s: FormState, f: FormData) => Promise<FormState>;
   next?: string;
   email?: string;
+  /** One-line message above the form, e.g. after deleting an account. */
+  notice?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, undefined);
   const nextQs = next ? `?next=${encodeURIComponent(next)}` : "";
@@ -36,6 +39,11 @@ export function AuthForm({
         <p className="mt-1.5 text-[13.5px] text-muted-foreground">
           {mode === "login" ? "Pick up where your team left off." : "Then create an organisation or accept an invite."}
         </p>
+        {notice && (
+          <p role="status" className="mt-5 rounded-md border border-border bg-background px-3 py-2 text-[13px]">
+            {notice}
+          </p>
+        )}
         <form action={formAction} className="mt-7 grid gap-4" noValidate>
           {next && <input type="hidden" name="next" value={next} />}
           {mode === "signup" && (

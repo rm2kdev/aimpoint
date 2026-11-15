@@ -12,6 +12,8 @@ import { TwoFactorForm } from "./two-factor-form";
 import { EmailForm } from "./email-form";
 import { SessionsForm } from "./sessions-form";
 import { OrganisationsList, type AccountOrg } from "./organisations-list";
+import { DangerZone } from "./danger-zone";
+import { accountDeletionPlan } from "@/lib/account-deletion";
 import { isClosedCategory } from "@/lib/types";
 import { RECOVERY_CODE_COUNT, twoFactorStatus } from "@/lib/two-factor";
 import { format } from "date-fns";
@@ -29,12 +31,13 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
   const id = user._id.toHexString();
   const tfa = twoFactorStatus(user);
   const orgIds = memberships.map((m) => m.orgId);
-  const [admins, openStatuses] = await Promise.all([
+  const [admins, openStatuses, deletion] = await Promise.all([
     c.memberships.aggregate<{ _id: typeof orgIds[number]; n: number }>([
       { $match: { orgId: { $in: orgIds }, role: "admin" } },
       { $group: { _id: "$orgId", n: { $sum: 1 } } },
     ]).toArray(),
     c.statuses.find({ orgId: { $in: orgIds } }, { projection: { category: 1 } }).toArray(),
+    accountDeletionPlan(user._id),
   ]);
   const assigned = await c.tasks
     .aggregate<{ _id: typeof orgIds[number]; n: number }>([
@@ -123,6 +126,13 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
           desc="Organisations you belong to and your role in each. Leaving unassigns your open tasks there. An organisation always keeps at least one admin."
         >
           <OrganisationsList orgs={accountOrgs} />
+        </SettingsRow>
+        <SettingsRow title="Danger zone" desc="Deleting your account is permanent. It needs your email, your password and, when it's on, a two-factor code.">
+          <DangerZone
+            email={user.email}
+            twoFactor={tfa.enabled}
+            plan={{ blocked: deletion.blocked, soleOrgs: deletion.soleOrgs }}
+          />
         </SettingsRow>
       </div>
     </main>

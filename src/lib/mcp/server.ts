@@ -13,6 +13,7 @@ import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
 import {
   buildTaskContext,
   loadDirectory,
+  personName,
   markdownToHtml,
   PRIORITY_LABEL,
   resolvePerson,
@@ -212,7 +213,7 @@ async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
       type: t.type,
       status: st.get(t.statusId.toHexString()) ?? null,
       priority: PRIORITY_LABEL[t.priority],
-      assignee: t.assigneeId ? dir.get(t.assigneeId.toHexString())?.name ?? "Former member" : null,
+      assignee: t.assigneeId ? personName(dir, t.assigneeId) : null,
       dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null,
       archived: !!t.archivedAt,
       /** False while a task it depends on isn't done yet; `waitingOn` lists those. */
@@ -317,7 +318,7 @@ const TOOLS: Record<string, ToolImpl> = {
         const commentIds = [first, ...rest].map((m) => m.commentId);
         const [mentionComments, dir] = await Promise.all([c.comments.find({ _id: { $in: commentIds } }).sort({ createdAt: 1 }).toArray(), loadDirectory(ctx.org._id)]);
         const quote = mentionComments
-          .map((cm) => `> ${dir.get(cm.authorId.toHexString())?.name ?? "Someone"}: ${cm.body.replace(/<@([a-f0-9]{24})>/g, (_, id: string) => `@${dir.get(id)?.name ?? "former member"}`).replace(/\n/g, "\n> ")}`)
+          .map((cm) => `> ${personName(dir, cm.authorId, "Someone")}: ${cm.body.replace(/<@([a-f0-9]{24})>/g, (_, id: string) => `@${personName(dir, id, "former member")}`).replace(/\n/g, "\n> ")}`)
           .join("\n\n");
         const key = `${project.key}-${task.number}`;
         // A mention of the assignee hands the work back: claim in progress, In Review -> In Progress, Stalled clears.

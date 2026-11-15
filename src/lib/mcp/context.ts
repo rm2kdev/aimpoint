@@ -5,6 +5,7 @@ import { readLocalImage, MAX_IMAGE_BYTES } from "@/lib/storage";
 import { projectContext, toTask, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
 import { taskUrl as orgTaskUrl } from "@/lib/paths";
+import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 
 /* ---------------- people directory ---------------- */
@@ -18,13 +19,35 @@ export interface Person {
   description?: string;
 }
 
+/**
+ * People and bots by id. `deleted` holds deleted accounts (VEC-48) that can still appear in old tasks,
+ * comments and activity: they aren't entries, so nothing can assign or mention them, but names resolve to
+ * "Deleted user" rather than "Former member".
+ */
+export class Directory extends Map<string, Person> {
+  deleted = new Set<string>();
+}
+
+/** Name for an id that may belong to someone no longer in the org (left, or account deleted). */
+export function personName(dir: Map<string, Person>, id: ObjectId | string, gone = "Former member"): string {
+  const hex = typeof id === "string" ? id : id.toHexString();
+  const p = dir.get(hex);
+  if (p) return p.name;
+  return dir instanceof Directory && dir.deleted.has(hex) ? DELETED_USER_NAME : gone;
+}
+
 /** Everyone a task can be assigned to or mention: members and bots of the org. */
-export async function loadDirectory(orgId: ObjectId): Promise<Map<string, Person>> {
+export async function loadDirectory(orgId: ObjectId): Promise<Directory> {
   const c = await cols();
-  const [memberships, bots] = await Promise.all([c.memberships.find({ orgId }).toArray(), c.bots.find({ orgId }).toArray()]);
+  const [memberships, bots, deleted] = await Promise.all([
+    c.memberships.find({ orgId }).toArray(),
+    c.bots.find({ orgId }).toArray(),
+    loadDeletedUserIds(orgId),
+  ]);
   const users = await c.users.find({ _id: { $in: memberships.map((m) => m.userId) } }, { projection: { passwordHash: 0 } }).toArray();
   const roles = new Map(memberships.map((m) => [m.userId.toHexString(), m.role]));
-  const out = new Map<string, Person>();
+  const out = new Directory();
+  for (const id of deleted) out.deleted.add(id);
   for (const u of users) out.set(u._id.toHexString(), { id: u._id.toHexString(), name: u.name, kind: "user", email: u.email, role: roles.get(u._id.toHexString()) });
   for (const b of bots) out.set(b._id.toHexString(), { id: b._id.toHexString(), name: b.name, kind: "bot", description: b.description || undefined });
   return out;
@@ -34,7 +57,7 @@ const personRef = (dir: Map<string, Person>, id: ObjectId | string | null | unde
   if (!id) return null;
   const hex = typeof id === "string" ? id : id.toHexString();
   const p = dir.get(hex);
-  return p ? { id: p.id, name: p.name, kind: p.kind } : { id: hex, name: "Former member", kind: "user" as const };
+  return p ? { id: p.id, name: p.name, kind: p.kind } : { id: hex, name: personName(dir, hex), kind: "user" as const };
 };
 
 /** "me", an id, an email or a name (case-insensitive) -> person id. */
@@ -203,7 +226,7 @@ export const PRIORITY_LABEL = ["none", "low", "medium", "high"] as const;
 
 export const taskUrl = (origin: string, org: OrgDoc, key: string) => orgTaskUrl(origin, org.slug, key);
 
-const renderBody = (body: string, dir: Map<string, Person>) => body.replace(/<@([a-f0-9]{24})>/g, (_, id: string) => `@${dir.get(id)?.name ?? "former member"}`);
+const renderBody = (body: string, dir: Map<string, Person>) => body.replace(/<@([a-f0-9]{24})>/g, (_, id: string) => `@${personName(dir, id, "former member")}`);
 
 export interface TaskContextOptions {
   origin: string;

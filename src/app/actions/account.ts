@@ -3,13 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
-import { updateSession } from "@/auth";
+import { signOut, updateSession } from "@/auth";
 import { cols } from "@/lib/db";
 import { AuthError, currentUser } from "@/lib/session";
 import { guard, UserError, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { ACCOUNT_PATH } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
+import { deleteAccount as deleteAccountData } from "@/lib/account-deletion";
 import { passwordSchema } from "@/lib/password";
 import { hashPassword, reauthenticate, revokeSessions } from "@/lib/security";
 import {
@@ -269,4 +270,46 @@ export async function leaveOrganisation(orgId: string): Promise<Result<{ name: s
     revalidatePath(ACCOUNT_PATH);
     return { name: org.name };
   });
+}
+
+/* ---------------- delete account ---------------- */
+
+export type DeleteAccountField = "email" | "password" | "code";
+
+/**
+ * Delete the signed-in account for good. The user types their email and current password (plus a 2FA code
+ * when it's on), all re-checked here. Refused while they're the only admin of an org with other members;
+ * orgs where they're the only member are deleted too, but only with `deleteSoleOrgs`. Ends every session
+ * (this one included): the client then goes to /login.
+ */
+export async function deleteMyAccount(input: {
+  email: string;
+  password: string;
+  code?: string;
+  deleteSoleOrgs?: boolean;
+}): Promise<Result<{ deletedOrgs: string[] }> & { field?: DeleteAccountField }> {
+  let field: DeleteAccountField | undefined;
+  const r = await guard(async () => {
+    const user = await signedInUser();
+    field = "email";
+    if (str(input?.email).trim().toLowerCase() !== user.email) throw new UserError("Type your email address exactly as shown.");
+    field = "password";
+    if (!str(input?.password)) throw new UserError("Enter your current password.");
+    const twoFactor = hasTwoFactor(user);
+    if (twoFactor && !str(input?.code).trim()) {
+      field = "code";
+      throw new UserError("Enter a code from your authenticator app or a recovery code.");
+    }
+    await reauthenticate(user._id, str(input.password));
+    if (twoFactor) {
+      field = "code";
+      await twoFactorStep(() => verifySecondFactor(user._id, str(input.code)));
+    }
+    field = undefined;
+    const out = await deleteAccountData(user._id, { deleteSoleOrgs: input?.deleteSoleOrgs === true });
+    // The user doc is gone, so every token is already refused; clear this browser's cookie too.
+    await signOut({ redirect: false });
+    return out;
+  });
+  return !r.ok && field ? { ...r, field } : r;
 }

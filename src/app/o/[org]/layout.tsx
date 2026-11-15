@@ -3,6 +3,7 @@ import { loadShell, loadWorkloadSnapshot } from "@/lib/data";
 import { cols } from "@/lib/db";
 import { realtimeDriver } from "@/lib/realtime/server";
 import { unreadCount } from "@/lib/notifications";
+import { loadDeletedMembers } from "@/lib/deleted-users";
 import { OrgProvider } from "@/components/org-provider";
 import { AppShell } from "@/components/app-shell";
 
@@ -10,11 +11,12 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
   const { org: slug } = await params;
   const { user, org, membership } = await requireOrgPage(slug);
   const c = await cols();
-  const [shell, myMemberships, unread, workload] = await Promise.all([
+  const [shell, myMemberships, unread, workload, deletedMembers] = await Promise.all([
     loadShell(org._id, user._id),
     c.memberships.find({ userId: user._id }).toArray(),
     unreadCount(org._id, user._id),
     loadWorkloadSnapshot(org._id),
+    loadDeletedMembers(org._id),
   ]);
   const orgs = await c.orgs.find({ _id: { $in: myMemberships.map((m) => m.orgId) } }).sort({ name: 1 }).toArray();
 
@@ -24,6 +26,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
       orgs={orgs.map((o) => ({ id: o._id.toHexString(), name: o.name, slug: o.slug }))}
       me={{ id: user._id.toHexString(), name: user.name, email: user.email, role: membership.role, image: user.image ?? null }}
       members={shell.members}
+      deletedMembers={deletedMembers}
       projects={shell.projects}
       projectOrder={shell.projectOrder}
       statuses={shell.statuses}

@@ -1,7 +1,7 @@
 import "server-only";
-import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
-import { del, put } from "@vercel/blob";
+import { del, list, put } from "@vercel/blob";
 import { nanoid } from "nanoid";
 
 /**
@@ -86,6 +86,26 @@ export async function deleteAvatar(url: string | null | undefined): Promise<void
     if (storageDriver === "blob" && /\/avatars\/avatar-[a-f0-9]{24}-/.test(url)) await del(url);
   } catch {
     // already gone
+  }
+}
+
+/** Deletes every task/comment image uploaded to an organisation (`<orgId>-…` files). Best effort. */
+export async function deleteOrgImages(orgId: string): Promise<void> {
+  if (!/^[a-f0-9]{24}$/.test(orgId)) return;
+  try {
+    if (storageDriver === "blob") {
+      let cursor: string | undefined;
+      do {
+        const page = await list({ prefix: `uploads/${orgId}-`, cursor });
+        if (page.blobs.length) await del(page.blobs.map((b) => b.url));
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
+      return;
+    }
+    const names = await readdir(LOCAL_DIR).catch(() => [] as string[]);
+    await Promise.all(names.filter((n) => n.startsWith(`${orgId}-`) && SAFE_NAME.test(n)).map((n) => unlink(path.join(LOCAL_DIR, n)).catch(() => {})));
+  } catch {
+    // leftovers are unreachable anyway: /api/uploads checks membership of the org in the name
   }
 }
 
