@@ -101,6 +101,8 @@ export interface CommentDoc {
   mentions?: ObjectId[];
   createdAt: Date;
 }
+export type ActivityNote = "started_work" | "resumed_work";
+
 export interface ActivityDoc {
   _id: ObjectId;
   orgId: ObjectId;
@@ -124,8 +126,11 @@ export interface ActivityDoc {
     | "unblocked";
   from?: string | null;
   to?: string | null;
-  /** Why Vector made the change itself. "started_work": a bot picked the task up, so it moved to In Progress. */
-  note?: "started_work";
+  /**
+   * Why Vector made the change itself. "started_work": a bot picked the task up, so it moved to In Progress.
+   * "resumed_work": its assigned bot was @mentioned after finishing, so it's back at work and In Progress.
+   */
+  note?: ActivityNote;
   createdAt: Date;
 }
 export interface InviteDoc {
@@ -392,7 +397,7 @@ export interface FeedItem {
   mentions?: string[];
   from?: string | null;
   to?: string | null;
-  note?: "started_work";
+  note?: ActivityNote;
   createdAt: string;
 }
 export interface Counts {

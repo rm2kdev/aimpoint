@@ -7,7 +7,7 @@ import { unseal } from "@/lib/secrets";
 import { isPush } from "@/lib/bot-connect";
 import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
-import { markStartedByBot } from "@/lib/task-service";
+import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import type { BotConnectionDoc, BotDelivery, BotDoc, OrgDoc } from "@/lib/types";
 
 /**
@@ -168,6 +168,8 @@ async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReason) {
     await c.tasks.updateOne({ _id: reason.taskId, "closeout.botId": bot._id, "closeout.deliveredAt": null }, { $set: { "closeout.deliveredAt": new Date() } });
   } else if (reason.kind === "mentioned") {
     await c.botMentions.updateMany({ botId: bot._id, taskId: reason.taskId, deliveredAt: null }, { $set: { deliveredAt: new Date() } });
+    // The assignee is back at work: claim in progress again, In Review -> In Progress, Stalled clears.
+    await resumeOnMention(org._id, bot._id, reason.taskId);
   }
 }
 
@@ -215,6 +217,10 @@ export const CLOSEOUT_STEPS = (key: string) =>
 const STARTED_NOTE =
   "Vector moves it to In Progress for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and Done, or In Review only when a named person must check something.";
 
+/** Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. */
+const RESUMED_NOTE =
+  "You're its assignee, so this hands the work back to you: Vector moves it back to In Progress as this is delivered (the task below may still show In Review and Stalled). Reply to the comment and do what it asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment.";
+
 const TOOLS_HINT =
   "Act on the ticket with the `vector` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Moving a task to a done status releases the tasks that depend on it; In Review does not, so finish with Done when the work meets its acceptance criteria, and use In Review only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects, statuses and people.";
 
@@ -249,7 +255,9 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE}`
       : reason.kind === "ready"
         ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE}`
-        : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. Reply to it.`;
+        : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
+            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? RESUMED_NOTE : "Reply to it."
+          }`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
   const projectBlock = meta.length
     ? `\n\nProject context for ${project!.key} (${project!.name}), set by the team. Follow it while you work:\n${meta.map((m) => `- ${m.key}: ${m.value.replace(/\n/g, "\n  ")}`).join("\n")}`

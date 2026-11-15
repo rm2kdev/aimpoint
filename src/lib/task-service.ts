@@ -9,7 +9,7 @@ import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, tas
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, taskKeys, type By } from "@/lib/dependencies";
-import { isClosedCategory, type ActivityDoc, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
+import { isClosedCategory, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -83,7 +83,7 @@ const STARTABLE = new Set<StatusCategory>(["backlog", "unstarted", "started"]);
  * broadcasts the task. Returns true when it moved; the caller can then skip its own working-state publish,
  * since this upsert carries the claim too.
  */
-export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId: ObjectId): Promise<boolean> {
+export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId: ObjectId, note: ActivityNote = "started_work"): Promise<boolean> {
   try {
     const c = await cols();
     const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1 } });
@@ -96,7 +96,7 @@ export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId:
     // Conditional on the status we read, so a concurrent move by a person wins.
     const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId, statusId: current._id }, { $set: { statusId: target._id, updatedAt: now } }, { returnDocument: "after" });
     if (!after) return false;
-    const act: ActivityDoc = { _id: new ObjectId(), orgId, taskId, actorId: botId, kind: "status", from: current._id.toHexString(), to: target._id.toHexString(), note: "started_work", createdAt: now };
+    const act: ActivityDoc = { _id: new ObjectId(), orgId, taskId, actorId: botId, kind: "status", from: current._id.toHexString(), to: target._id.toHexString(), note, createdAt: now };
     await c.activity.insertOne(act);
     const project = await c.projects.findOne({ _id: after.projectId }, { projection: { key: 1 } });
     const orgHex = orgId.toHexString();
@@ -107,6 +107,56 @@ export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId:
   } catch (err) {
     // The pickup itself already happened; a failed status follow-up shouldn't fail it.
     console.error("[tasks] markStartedByBot failed", err);
+    return false;
+  }
+}
+
+/**
+ * Whether an @mention of `botId` on this task hands the work back to it: the bot is the assignee and the
+ * task is open (not archived, not in a triage, done or cancelled status) and ready (nothing it waits on). Mentions of any other bot are a
+ * question, not a hand-over. Used for the wake-up wording before delivery and by resumeOnMention after it.
+ */
+export async function mentionResumesWork(orgId: ObjectId, botId: ObjectId, taskId: ObjectId): Promise<boolean> {
+  const c = await cols();
+  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { assigneeId: 1, statusId: 1, archivedAt: 1, waitingOn: 1 } });
+  // Still waiting on dependencies: it isn't ready, so a mention can't start work on it (the ready hand-off will).
+  if (!task || task.archivedAt || task.waitingOn?.length || !task.assigneeId?.equals(botId)) return false;
+  const st = await c.statuses.findOne({ _id: task.statusId, orgId }, { projection: { category: 1 } });
+  return !!st && st.category !== "triage" && !isClosedCategory(st.category);
+}
+
+/**
+ * An @mention reached the task's assigned bot (push delivery or check_for_work): it's working on the task
+ * again. Reopens its claim to in_progress (a finished one, or a fresh one if it never picked the task up),
+ * moves In Review / Todo back to In Progress via markStartedByBot, and broadcasts, so the working ring shows
+ * and the derived Stalled state clears live (publish recomputes `stalled` along with `workingBotIds`).
+ * Returns true when the bot is now working on it; false for a non-assignee bot or a closed task.
+ */
+export async function resumeOnMention(orgId: ObjectId, botId: ObjectId, taskId: ObjectId): Promise<boolean> {
+  try {
+    if (!(await mentionResumesWork(orgId, botId, taskId))) return false;
+    const c = await cols();
+    const now = new Date();
+    const claim = await c.agentClaims.findOne({ botId, taskId });
+    if (claim?.kind === "triage") return false; // it's triaging, not working, on this task
+    let changed = false;
+    if (!claim) {
+      try {
+        await c.agentClaims.insertOne({ _id: new ObjectId(), orgId, botId, taskId, state: "in_progress", claimedAt: now, finishedAt: null });
+        changed = true;
+      } catch (err) {
+        if ((err as { code?: number }).code !== 11000) throw err; // a concurrent pickup took it: already working
+      }
+    } else if (claim.state !== "in_progress") {
+      const res = await c.agentClaims.updateOne({ _id: claim._id, state: claim.state }, { $set: { state: "in_progress", claimedAt: now, finishedAt: null } });
+      changed = res.modifiedCount > 0;
+    }
+    // The move's upsert carries the reopened claim (and the cleared stall); otherwise publish the claim alone.
+    const moved = await markStartedByBot(orgId, botId, taskId, "resumed_work");
+    if (changed && !moved) await publishWorking(orgId, botId, [taskId]);
+    return true;
+  } catch (err) {
+    console.error("[tasks] resumeOnMention failed", err);
     return false;
   }
 }

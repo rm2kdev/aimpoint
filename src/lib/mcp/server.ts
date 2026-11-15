@@ -4,7 +4,7 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { toolsForBot } from "@/lib/bots";
-import { addCommentAs, createTaskAs, markStartedByBot, recordTriagedBy, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
+import { addCommentAs, createTaskAs, markStartedByBot, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, taskKeys } from "@/lib/dependencies";
 import { CLOSEOUT_STEPS, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
@@ -294,7 +294,7 @@ async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment
 const TOOLS: Record<string, ToolImpl> = {
   check_for_work: {
     description:
-      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply; (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved to In Progress for you (from Backlog, Todo or In Review). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
+      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply (if you're the task's assignee and it's open, the mention hands the work back: it's picked up by you again and moved back to In Progress, so finish it with complete_task again); (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved to In Progress for you (from Backlog, Todo or In Review). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
     inputSchema: { type: "object", properties: { include_images: IMAGES_ARG }, additionalProperties: false },
     run: async (args, ctx) => {
       const c = await cols();
@@ -320,12 +320,18 @@ const TOOLS: Record<string, ToolImpl> = {
           .map((cm) => `> ${dir.get(cm.authorId.toHexString())?.name ?? "Someone"}: ${cm.body.replace(/<@([a-f0-9]{24})>/g, (_, id: string) => `@${dir.get(id)?.name ?? "former member"}`).replace(/\n/g, "\n> ")}`)
           .join("\n\n");
         const key = `${project.key}-${task.number}`;
+        // A mention of the assignee hands the work back: claim in progress, In Review -> In Progress, Stalled clears.
+        const resumed = await resumeOnMention(ctx.org._id, ctx.bot._id, task._id);
+        const fresh = resumed ? ((await c.tasks.findOne({ _id: task._id })) ?? task) : task;
+        const resumeNote = resumed
+          ? ` You're its assignee, so this hands the work back to you: it's picked up by you again and Vector moved it back to In Progress (no need to set that yourself). Do what the comment asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment.`
+          : "";
         return taskResult(
           ctx,
-          task,
+          fresh,
           project,
-          `You've been mentioned in a comment on ${key} "${task.title}" (project ${project.name}).\n\n${quote}\n\nRead the task and the whole thread below, then respond with add_comment (task "${key}"). The comments marked "new": true are the ones that mentioned you.`,
-          { includeImages, highlight: commentIds, extra: { kind: "mention", mentionCommentIds: commentIds.map((id) => id.toHexString()), queue: await queueCounts(ctx) } },
+          `You've been mentioned in a comment on ${key} "${task.title}" (project ${project.name}).\n\n${quote}\n\nRead the task and the whole thread below, then respond with add_comment (task "${key}"). The comments marked "new": true are the ones that mentioned you.${resumeNote}`,
+          { includeImages, highlight: commentIds, extra: { kind: "mention", resumed, mentionCommentIds: commentIds.map((id) => id.toHexString()), queue: await queueCounts(ctx) } },
         );
       }
 

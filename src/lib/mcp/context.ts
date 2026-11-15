@@ -252,7 +252,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const pr = (v?: string | null) => PRIORITY_LABEL[Number(v)] ?? v;
     switch (a.kind) {
       case "created": return "created the task";
-      case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : ""}`;
+      case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : ""}`;
       case "assignee": return a.to ? `assigned it to ${name(a.to)}` : `unassigned ${name(a.from)}`;
       case "priority": return `changed priority from ${pr(a.from)} to ${pr(a.to)}`;
       case "type": return `changed type from ${a.from} to ${a.to}`;
