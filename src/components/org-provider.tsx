@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Counts, Member, Project, Status } from "@/lib/types";
+import type { BotWorkload, Counts, Member, Project, Status, WorkloadSnapshot } from "@/lib/types";
 import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
@@ -38,6 +38,10 @@ interface Ctx {
   connected: boolean;
   /** Members who currently have this organisation open. */
   online: string[];
+  /** Live per-bot active task counts (every bot in the org; see loadBotWorkload). */
+  workload: BotWorkload[];
+  /** Active task count by bot id; 0 for bots not in the map. */
+  activeByBot: Map<string, number>;
 }
 
 const OrgCtx = createContext<Ctx | null>(null);
@@ -67,6 +71,7 @@ export function OrgProvider({
   statuses,
   counts: initialCounts,
   unread: initialUnread,
+  workload: initialWorkload,
   realtime,
   children,
 }: {
@@ -78,6 +83,7 @@ export function OrgProvider({
   statuses: Status[];
   counts: Counts;
   unread: number;
+  workload: WorkloadSnapshot;
   realtime: { driver: "local" | "pusher"; key?: string; cluster?: string };
   children: React.ReactNode;
 }) {
@@ -89,6 +95,15 @@ export function OrgProvider({
   useEffect(() => setCounts(initialCounts), [initialCounts]);
   const [unread, setUnreadState] = useState(initialUnread);
   useEffect(() => setUnreadState(initialUnread), [initialUnread]);
+  // Server render (layout, refreshed on org.changed) and live bots.workload events both feed this; whichever
+  // snapshot is newer (`at`) wins, so a slow RSC refresh can't roll back a newer live count.
+  const [workloadSnap, setWorkloadSnap] = useState(initialWorkload);
+  const [seenWorkload, setSeenWorkload] = useState(initialWorkload);
+  if (seenWorkload !== initialWorkload) {
+    // New server snapshot: adjust during render (no effect), keeping a newer live one.
+    setSeenWorkload(initialWorkload);
+    if (initialWorkload.at >= workloadSnap.at) setWorkloadSnap(initialWorkload);
+  }
   const setUnread = useCallback((fn: (n: number) => number) => setUnreadState((n) => Math.max(0, fn(n))), []);
 
   const subscribe = useCallback((fn: (e: RealtimeEvent) => void) => {
@@ -109,6 +124,10 @@ export function OrgProvider({
   useEffect(() => {
     const dispatch = (e: RealtimeEvent) => {
       if (e.type === "presence") return setOnline(e.userIds);
+      if (e.type === "bots.workload") {
+        const snap: WorkloadSnapshot = { at: e.at, bots: e.bots };
+        setWorkloadSnap((cur) => (snap.at >= cur.at ? snap : cur));
+      }
       if (e.type === "org.changed") router.refresh();
       if (e.type === "task.upsert" || e.type === "task.delete") refreshCounts();
       if (e.type === "notification" || e.type === "notifications.read") {
@@ -185,8 +204,10 @@ export function OrgProvider({
       subscribe,
       connected,
       online,
+      workload: workloadSnap.bots,
+      activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
     }),
-    [org, orgs, me, members, projects, statuses, counts, unread, setUnread, subscribe, connected, online],
+    [org, orgs, me, members, projects, statuses, counts, unread, setUnread, subscribe, connected, online, workloadSnap],
   );
   return <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>;
 }

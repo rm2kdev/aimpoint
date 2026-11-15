@@ -1,5 +1,5 @@
 import { requireOrgPage } from "@/lib/session";
-import { loadShell } from "@/lib/data";
+import { loadShell, loadWorkloadSnapshot } from "@/lib/data";
 import { cols } from "@/lib/db";
 import { realtimeDriver } from "@/lib/realtime/server";
 import { unreadCount } from "@/lib/notifications";
@@ -10,10 +10,11 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
   const { org: slug } = await params;
   const { user, org, membership } = await requireOrgPage(slug);
   const c = await cols();
-  const [shell, myMemberships, unread] = await Promise.all([
+  const [shell, myMemberships, unread, workload] = await Promise.all([
     loadShell(org._id, user._id),
     c.memberships.find({ userId: user._id }).toArray(),
     unreadCount(org._id, user._id),
+    loadWorkloadSnapshot(org._id),
   ]);
   const orgs = await c.orgs.find({ _id: { $in: myMemberships.map((m) => m.orgId) } }).sort({ name: 1 }).toArray();
 
@@ -27,6 +28,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
       statuses={shell.statuses}
       counts={shell.counts}
       unread={unread}
+      workload={workload}
       realtime={{
         driver: realtimeDriver,
         key: process.env.NEXT_PUBLIC_PUSHER_KEY,

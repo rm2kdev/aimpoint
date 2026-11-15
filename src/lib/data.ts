@@ -8,6 +8,8 @@ import type {
   BotDoc,
   BotRole,
   BotRoleDoc,
+  BotWorkload,
+  WorkloadSnapshot,
   CommentDoc,
   Counts,
   FeedItem,
@@ -165,6 +167,41 @@ export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> 
   const stalled = await loadStalled(tasks);
   for (const t of tasks) t.stalled = stalled.get(t.id) ?? null;
   return tasks;
+}
+
+/**
+ * Per-bot active task count for the org: non-triage `in_progress` claims on open (not done/cancelled),
+ * unarchived tasks, the same rules withWorkingBots uses for the ring, so a claim left on a closed task never
+ * counts. Every bot in the org gets an entry (0 when idle). Kept live by refreshWorkload() in publish().
+ */
+export async function loadBotWorkload(orgId: ObjectId): Promise<BotWorkload[]> {
+  const c = await cols();
+  const [bots, claims] = await Promise.all([
+    c.bots.find({ orgId }, { projection: { _id: 1 } }).sort({ createdAt: 1 }).toArray(),
+    c.agentClaims.find({ orgId, state: "in_progress", kind: { $ne: "triage" } }, { projection: { taskId: 1, botId: 1 } }).toArray(),
+  ]);
+  const active = new Map<string, Set<string>>(bots.map((b) => [b._id.toHexString(), new Set<string>()]));
+  if (claims.length) {
+    const closed = await c.statuses.find({ orgId, category: { $in: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray();
+    const open = await c.tasks
+      .find(
+        { _id: { $in: [...new Set(claims.map((cl) => cl.taskId.toHexString()))].map((id) => new ObjectId(id)) }, orgId, archivedAt: null, statusId: { $nin: closed.map((s) => s._id) } },
+        { projection: { _id: 1 } },
+      )
+      .toArray();
+    const openIds = new Set(open.map((t) => t._id.toHexString()));
+    for (const cl of claims) {
+      const task = cl.taskId.toHexString();
+      if (openIds.has(task)) active.get(cl.botId.toHexString())?.add(task);
+    }
+  }
+  return [...active].map(([botId, tasks]) => ({ botId, active: tasks.size }));
+}
+
+/** loadBotWorkload stamped with the time taken before the query (see WorkloadSnapshot). */
+export async function loadWorkloadSnapshot(orgId: ObjectId): Promise<WorkloadSnapshot> {
+  const at = Date.now();
+  return { at, bots: await loadBotWorkload(orgId) };
 }
 
 /** Which of these status ids are done or cancelled. */

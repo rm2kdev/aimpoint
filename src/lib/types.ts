@@ -281,6 +281,16 @@ export interface Member {
   /** Bots only: max concurrent tasks. */
   maxTasks?: number;
 }
+/** How many tasks a bot is working on right now (see loadBotWorkload). Every bot in the org has an entry. */
+export interface BotWorkload {
+  botId: string;
+  active: number;
+}
+/** A workload snapshot; `at` (ms, taken before the query) orders snapshots so an older one never replaces a newer one. */
+export interface WorkloadSnapshot {
+  at: number;
+  bots: BotWorkload[];
+}
 export interface Bot {
   id: string;
   name: string;

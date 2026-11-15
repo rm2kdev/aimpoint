@@ -1,4 +1,4 @@
-import type { FeedItem, Notification, Task } from "@/lib/types";
+import type { FeedItem, Notification, Task, WorkloadSnapshot } from "@/lib/types";
 
 export type RealtimeEvent =
   /** `task.workingBotIds` is filled in by publish(). `workingOnly`: only which bots are working on it changed. */
@@ -8,4 +8,5 @@ export type RealtimeEvent =
   | { type: "org.changed"; actorId: string } // statuses, projects or members changed
   | { type: "notification"; userId: string; notification: Notification } // for one person; others ignore it
   | { type: "notifications.read"; userId: string; ids: string[] | "all" } // keeps that person's other tabs in step
-  | { type: "presence"; userIds: string[] }; // who has the org open (local driver)
+  | { type: "presence"; userIds: string[] } // who has the org open (local driver)
+  | ({ type: "bots.workload" } & WorkloadSnapshot); // per-bot active task counts, sent by publish() after task/org events
