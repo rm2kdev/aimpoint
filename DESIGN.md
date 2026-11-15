@@ -209,7 +209,7 @@ Motion is small and causal. Rows glide to their new position when their status c
 A neutral, slightly warm stone palette with a single cobalt accent and one signal yellow reserved for live changes.
 
 ### Primary
-- **Cobalt Selection Blue** (brand-blue / dark-brand-blue): the only interface accent. Focus rings, the text caret, checkmarks in menus, the empty-state ring's filled arc, rich-text links. Never used as a large fill.
+- **Cobalt Selection Blue** (brand-blue / dark-brand-blue): the only interface accent. Focus rings, the text caret, checkmarks in menus, the empty-state ring's filled arc, rich-text links, the drag-to-reorder drop line. Never used as a large fill.
 - **Selection Wash** and **Selection Ink** (selection-wash / selection-ink, dark variants): the selected task row, the active sidebar item, and `::selection`. The wash fills; the ink colours text and icons on top of it.
 
 ### Secondary
@@ -349,6 +349,26 @@ An 18px SVG ring (14–20px depending on context) in the status's own colour.
 
 The same ring heads every status group, every status picker and the detail pane title. The empty state reuses it at 44px, with a faint track and a blue quarter arc.
 
+### Drag to Reorder (`SortableList`)
+Every user-ordered list (sidebar projects, later statuses and list rows) reorders through one primitive, `SortableList` in `src/components/ui/sortable-list.tsx`, with pure helpers (`moveItem`, gap maths) in `src/lib/reorder.ts`. Call sites never handle pointer or keyboard events themselves.
+- **Drop line:** while dragging, a 2px Cobalt Selection Blue line (`bg-brand`, so it follows light/dark) with fully rounded ends spans the full row width, centred in the gap at the exact insertion point. It glides between gaps over 100ms. Gaps directly above or below the dragged row would not change the order, so they show no line. This is the only drag affordance: no ghost, no gap opening up.
+- **Dragged row:** dims to 45% in place, so no row moves until the drop. Rows under the pointer get no hover wash mid-drag.
+- **Starting a drag:** mouse and pen need 4px of travel, so plain clicks on row links still navigate (the click that ends a real drag is swallowed). Touch needs a 250ms long-press; moving first scrolls as normal. Pass `handle` to start drags only from a grip.
+- **Keyboard:** focus the row's handle element (its link), Space lifts (the line appears as you move), Up/Down/Home/End move, Space or Enter drops, Escape or Tab cancels. Each step is announced in an assertive live region, and focus stays on the moved row.
+- **Cancel:** Escape, a pointer cancel, or releasing more than 24px outside the list calls nothing. Dropping in place calls nothing.
+- Under `prefers-reduced-motion` the line jumps between gaps and the dim is instant.
+
+```tsx
+<SortableList
+  items={projects}
+  getId={(p) => p.id}
+  getLabel={(p) => p.name}
+  onReorder={(ids, { movedId, fromIndex, toIndex }) => saveOrder(ids)}
+  renderItem={(p, { handleProps }) => <Link href={p.href} {...handleProps}>{p.name}</Link>}
+/>
+```
+`onReorder` gets the complete new id order. The list keeps no order of its own, so update `items` optimistically in the callback (`moveItem(items, fromIndex, toIndex)`). Vertical lists only for now.
+
 ### Priority Icon
 Three ascending 3px bars in a 14px box. Filled bars are Muted Ink, or Ink at urgent (3); unfilled bars are Input Stroke. No priority is three short faint dashes.
 
@@ -367,7 +387,7 @@ A 640px dialog with no close button, anchored at 14vh from the top and radiused 
 ### Do:
 - **Do** build lists from 40px rows with a 9px radius and a 4px gap, grouped under sticky 32px status headers.
 - **Do** put colour on data (status ring, project dot, type square, avatar) and keep chrome in the neutral stone palette.
-- **Do** reserve Cobalt Selection Blue for selection, focus rings, carets and checkmarks.
+- **Do** reserve Cobalt Selection Blue for selection, focus rings, carets, checkmarks and the drag drop line.
 - **Do** set every task key and count in Geist Mono with tabular numerals.
 - **Do** use the status ring wherever a status appears, in that status's colour.
 - **Do** separate surfaces with 1px hairlines and the sidebar/paper tone change. Use shadows only on floating layers.
