@@ -61,7 +61,6 @@ export function TaskWorkspace({
   // Rows a teammate changed live: id -> actor id. Cleared once seen (hovered or opened).
   const [fresh, setFresh] = useState<Map<string, Fresh>>(new Map());
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [showClosed, setShowClosed] = useState(false);
   const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : "priority");
   const [collapsed, toggleGroup] = useCollapsedGroups(`vector:collapsed:${pathname}`);
 
@@ -179,10 +178,10 @@ export function TaskWorkspace({
 
   const isClosed = (s: Status) => s.category === "done" || s.category === "cancelled";
   const openGroups = groups.filter((g) => !isClosed(g.status));
-  const closedGroups = groups.filter((g) => isClosed(g.status));
-  const closedCount = closedGroups.reduce((n, g) => n + g.tasks.length, 0);
   const openCount = openGroups.reduce((n, g) => n + g.tasks.length, 0);
-  const shown = scope.archived ? [] : showClosed ? groups : openGroups;
+  const shown = useMemo(() => (scope.archived ? [] : groups), [scope.archived, groups]);
+  // Done and cancelled groups start folded until opened from their heading.
+  const isFolded = (s: Status) => collapsed.get(s.id) ?? isClosed(s);
 
   /* ----- glide rows to their new position (FLIP) ----- */
   const rowEls = useRef(new Map<string, HTMLElement>());
@@ -206,7 +205,7 @@ export function TaskWorkspace({
   /* ----- selection & keyboard ----- */
   // Tasks in folded groups are out of sight, so j/k skips them.
   const flat = useMemo(
-    () => (scope.archived ? archivedList : shown.flatMap((g) => (collapsed.has(g.status.id) ? [] : g.tasks))),
+    () => (scope.archived ? archivedList : shown.flatMap((g) => ((collapsed.get(g.status.id) ?? isClosed(g.status)) ? [] : g.tasks))),
     [scope.archived, archivedList, shown, collapsed],
   );
   const open = useCallback(
@@ -365,17 +364,17 @@ export function TaskWorkspace({
             </ul>
           ) : (
             <>
-              {openGroups.length === 0 && !showClosed && (
+              {openGroups.length === 0 && (
                 <EmptyState title="All clear" hint="Every task in this view is done. Nice." onNew={() => newTask()} compact />
               )}
               {shown.map((g) => {
-                const folded = collapsed.has(g.status.id);
+                const folded = isFolded(g.status);
                 return (
                 <div key={g.status.id} className="mt-4 first:mt-2">
                   <h2 className="sticky top-0 z-10 flex h-8 items-center bg-background px-1 text-[12.5px] font-semibold">
                     <button
                       type="button"
-                      onClick={() => toggleGroup(g.status.id)}
+                      onClick={() => toggleGroup(g.status.id, !folded)}
                       aria-expanded={!folded}
                       aria-controls={`group-${g.status.id}`}
                       title={folded ? `Show ${g.status.name}` : `Hide ${g.status.name}`}
@@ -419,16 +418,6 @@ export function TaskWorkspace({
                 </div>
                 );
               })}
-              {closedCount > 0 && (
-                <button
-                  onClick={() => setShowClosed((s) => !s)}
-                  className="mt-5 ml-3 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px] text-muted-foreground hover:bg-accent hover:text-foreground"
-                  aria-expanded={showClosed}
-                >
-                  <ChevronDownIcon className={cn("size-3.5 transition-transform", !showClosed && "-rotate-90")} />
-                  {showClosed ? "Hide" : "Show"} {closedCount} completed
-                </button>
-              )}
             </>
           )}
         </div>
@@ -649,34 +638,36 @@ function EmptyState({
   );
 }
 
-/** Status groups folded away in this view, remembered per view in localStorage. */
+/**
+ * Status groups the user folded or unfolded in this view (id -> folded), remembered per view in
+ * localStorage. Groups without an entry use their default (done/cancelled folded, others open).
+ */
 function useCollapsedGroups(storageKey: string) {
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Map<string, boolean>>(() => new Map());
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
 
   useEffect(() => {
-    let ids: string[] = [];
+    const entries: [string, boolean][] = [];
     try {
-      const raw: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "[]");
-      if (Array.isArray(raw)) ids = raw.filter((x): x is string => typeof x === "string");
+      const raw: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
+      // Older format: an array of folded ids.
+      if (Array.isArray(raw)) for (const x of raw) if (typeof x === "string") entries.push([x, true]);
+      if (raw && typeof raw === "object" && !Array.isArray(raw))
+        for (const [k, v] of Object.entries(raw)) if (typeof v === "boolean") entries.push([k, v]);
     } catch {}
     // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage is client-only; read after hydration
-    setCollapsed(new Set(ids));
+    setCollapsed(new Map(entries));
     setLoadedKey(storageKey);
   }, [storageKey]);
 
   useEffect(() => {
     if (loadedKey !== storageKey) return;
-    if (collapsed.size) localStorage.setItem(storageKey, JSON.stringify([...collapsed]));
+    if (collapsed.size) localStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(collapsed)));
     else localStorage.removeItem(storageKey);
   }, [collapsed, storageKey, loadedKey]);
 
-  const toggle = useCallback((id: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(id)) next.add(id);
-      return next;
-    });
+  const toggle = useCallback((id: string, folded: boolean) => {
+    setCollapsed((prev) => new Map(prev).set(id, folded));
   }, []);
 
   return [collapsed, toggle] as const;
