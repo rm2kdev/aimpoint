@@ -634,7 +634,7 @@ function GroupHeading({
   });
   const over = isOver && accepting;
   return (
-    <h2 ref={ref} data-drop-over={over ? "" : undefined} className="sticky top-0 z-10 flex h-8 items-center bg-background px-1 text-[12.5px] font-semibold">
+    <h2 ref={ref} data-drop-over={over ? "" : undefined} className="sticky top-0 z-20 flex h-8 items-center bg-background px-1 text-[12.5px] font-semibold">
       <button
         type="button"
         onClick={onToggle}

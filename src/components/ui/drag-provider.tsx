@@ -376,6 +376,23 @@ export function createDragStore() {
       g.style.width = `${Math.min(r.width, GHOST_MAX_WIDTH)}px`
       g.style.display = "none"
       document.body.appendChild(g)
+      // Promote it to the top layer where supported, so nothing on the page can paint over it (VEC-76):
+      // a z-index alone loses to the sticky status headings where the engine composites them separately
+      // from the list scroller (seen in Safari). Undo the UA popover box styles so it keeps the row's look.
+      if (typeof g.showPopover === "function") {
+        g.popover = "manual"
+        g.style.inset = "0 auto auto 0"
+        g.style.margin = "0"
+        g.style.padding = "0"
+        g.style.border = "0"
+        g.style.overflow = "visible"
+        g.style.color = "inherit"
+        try {
+          g.showPopover()
+        } catch {
+          // Stays a plain fixed overlay.
+        }
+      }
       ghost = g
     }
 
