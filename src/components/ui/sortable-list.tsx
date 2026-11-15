@@ -31,6 +31,8 @@ import { gapFromPointer, gapOffset, gapToIndex, indexToGap, isNoopGap, moveItem,
  * - Keyboard: focus the element carrying `handleProps`, Space lifts, Up/Down (Home/End)
  *   move, Space or Enter drops, Escape or Tab cancels. Every step is announced in an
  *   assertive live region.
+ * - Inside a scrolling container, holding the pointer near its top or bottom edge
+ *   auto-scrolls it; the line follows the scroll.
  * - Escape, pointer cancel, or releasing more than 24px outside the list cancels without
  *   calling `onReorder`; dropping in the same place is a no-op.
  * - `onReorder` gets the full new id order plus what moved. The list does not keep its own
@@ -78,6 +80,10 @@ const MOUSE_THRESHOLD = 4
 const TOUCH_DELAY_MS = 250
 const TOUCH_SLOP = 8
 const OUTSIDE_MARGIN = 24
+/** Distance from a scroll container's top/bottom edge where a pointer drag starts auto-scrolling. */
+const AUTOSCROLL_EDGE = 36
+/** Max auto-scroll speed in px per frame (reached right at the edge). */
+const AUTOSCROLL_MAX = 14
 const IGNORE = "input, textarea, select, [contenteditable=''], [contenteditable='true'], [data-sortable-ignore]"
 
 type DragState = {
@@ -90,6 +96,15 @@ type DragState = {
 }
 
 type Session = { cleanup: () => void }
+
+/** Nearest ancestor that scrolls vertically (the list itself counts), or null. */
+function scrollParent(el: HTMLElement | null): HTMLElement | null {
+  for (let node = el; node && node !== document.body; node = node.parentElement) {
+    const oy = getComputedStyle(node).overflowY
+    if ((oy === "auto" || oy === "scroll") && node.scrollHeight > node.clientHeight) return node
+  }
+  return null
+}
 
 export function SortableList<T>({
   items,
@@ -198,6 +213,8 @@ export function SortableList<T>({
     let lastX = startX
     let lastY = startY
     let timer: ReturnType<typeof setTimeout> | undefined
+    let scroller: HTMLElement | null = null
+    let raf = 0
     const prevBody = { userSelect: document.body.style.userSelect, cursor: document.body.style.cursor }
 
     const update = (x: number, y: number) => {
@@ -221,6 +238,34 @@ export function SortableList<T>({
       if (touch) navigator.vibrate?.(10)
       setAnnouncement(`Picked up ${label(id)}.`)
       update(lastX, lastY)
+      // Long lists inside a scrolling container (e.g. the sidebar): scroll while the pointer
+      // is near its top or bottom edge, and keep the line in place when it scrolls.
+      scroller = scrollParent(listRef.current)
+      if (scroller) {
+        scroller.addEventListener("scroll", onScroll, { passive: true })
+        raf = requestAnimationFrame(autoScroll)
+      }
+    }
+
+    const onScroll = () => {
+      if (active) update(lastX, lastY)
+    }
+
+    const autoScroll = () => {
+      if (!active || !scroller) return
+      const r = scroller.getBoundingClientRect()
+      const top = lastY - r.top
+      const bottom = r.bottom - lastY
+      let dy = 0
+      if (top < AUTOSCROLL_EDGE && lastY > r.top - OUTSIDE_MARGIN) dy = -Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(top, 0) / AUTOSCROLL_EDGE))
+      else if (bottom < AUTOSCROLL_EDGE && lastY < r.bottom + OUTSIDE_MARGIN) dy = Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(bottom, 0) / AUTOSCROLL_EDGE))
+      // Only scroll while part of the list is still hidden that way, so holding at the edge
+      // stops at the list's end instead of scrolling unrelated content into view.
+      const list = listRef.current?.getBoundingClientRect()
+      if (list && dy > 0) dy = Math.min(dy, Math.max(0, Math.ceil(list.bottom - r.bottom)))
+      if (list && dy < 0) dy = Math.max(dy, Math.min(0, Math.floor(list.top - r.top)))
+      if (dy) scroller.scrollTop += dy // fires onScroll, which moves the line
+      raf = requestAnimationFrame(autoScroll)
     }
 
     const onMove = (ev: PointerEvent) => {
@@ -280,6 +325,8 @@ export function SortableList<T>({
 
     function cleanup() {
       if (timer) clearTimeout(timer)
+      if (raf) cancelAnimationFrame(raf)
+      scroller?.removeEventListener("scroll", onScroll)
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
       window.removeEventListener("pointercancel", onCancel)

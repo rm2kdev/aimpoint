@@ -60,6 +60,10 @@ export interface MembershipDoc {
   userId: ObjectId;
   role: Role;
   createdAt: Date;
+  /** This person's sidebar project order in this org (VEC-53). Unlisted projects follow by createdAt. */
+  projectOrder?: ObjectId[];
+  /** When projectOrder was last saved; lets clients keep the newer of server render vs live events. */
+  projectOrderAt?: Date;
 }
 export interface ProjectDoc {
   _id: ObjectId;

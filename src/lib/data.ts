@@ -26,6 +26,7 @@ import type {
   TaskRef,
 } from "@/lib/types";
 import { botMaxTasks } from "@/lib/types";
+import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
 
 export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId">[] = [
   { name: "Backlog", color: "#a3a3a3", category: "backlog", order: 0 },
@@ -339,7 +340,19 @@ export async function loadShell(orgId: ObjectId, userId: ObjectId) {
     });
   }
   const counts = await loadCounts(orgId, userId, statuses);
-  return { projects: projects.map(toProject), statuses: statuses.map(toStatus), members, counts };
+  // The signed-in person's own sidebar order (none for bots, which have no membership).
+  const mine = memberships.find((m) => m.userId.equals(userId));
+  const projectOrder: ProjectOrder = {
+    ids: (mine?.projectOrder ?? []).map((id) => id.toHexString()),
+    at: mine?.projectOrderAt?.getTime() ?? 0,
+  };
+  return {
+    projects: sortByProjectOrder(projects.map(toProject), projectOrder.ids),
+    projectOrder,
+    statuses: statuses.map(toStatus),
+    members,
+    counts,
+  };
 }
 
 export async function loadCounts(orgId: ObjectId, userId: ObjectId, statuses?: StatusDoc[]): Promise<Counts> {

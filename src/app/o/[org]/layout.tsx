@@ -25,6 +25,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
       me={{ id: user._id.toHexString(), name: user.name, email: user.email, role: membership.role, image: user.image ?? null }}
       members={shell.members}
       projects={shell.projects}
+      projectOrder={shell.projectOrder}
       statuses={shell.statuses}
       counts={shell.counts}
       unread={unread}

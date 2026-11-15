@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArchiveIcon,
   BotIcon,
@@ -34,11 +34,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SortableList, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
 import { accountPath, orgPath, projectPath } from "@/lib/paths";
 
 export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
-  const { org, orgs, projects, counts, isAdmin, unread } = useOrg();
+  const { org, orgs, counts, isAdmin, unread } = useOrg();
   const pathname = usePathname();
 
   return (
@@ -73,21 +75,7 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
         </NavItem>
 
         <SectionLabel action={isAdmin ? { href: `${orgPath(org.slug, "settings", "projects")}?new=1`, label: "New project" } : undefined}>Projects</SectionLabel>
-        {projects.filter((p) => !p.archived).map((p) => {
-          const href = projectPath(org.slug, p.key);
-          return (
-            <NavItem
-              key={p.id}
-              href={href}
-              active={pathname === href}
-              icon={<ProjectDot color={p.color} className="mx-[4px] size-2.5" />}
-              count={counts.projects[p.id] ?? 0}
-              onNavigate={onNavigate}
-            >
-              {p.name}
-            </NavItem>
-          );
-        })}
+        <SidebarProjects onNavigate={onNavigate} />
 
         <div className="mt-3">
           <NavItem href={orgPath(org.slug, "archived")} active={pathname === orgPath(org.slug, "archived")} icon={<ArchiveIcon />} count={counts.archived} quiet onNavigate={onNavigate}>
@@ -120,6 +108,43 @@ export function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavi
   );
 }
 
+/** Active projects in the person's own order; drag (or Space + arrows) to reorder (VEC-54). */
+function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
+  const { org, projects, counts, reorderProjects } = useOrg();
+  const pathname = usePathname();
+  const active = useMemo(() => projects.filter((p) => !p.archived), [projects]);
+  return (
+    <SortableList
+      items={active}
+      getId={(p) => p.id}
+      getLabel={(p) => p.name}
+      aria-label="Projects"
+      onReorder={(ids) => {
+        // Applied at once by the provider; it rolls back itself if the server refuses.
+        void reorderProjects(ids).then((r) => {
+          if (!r.ok) toast.error(r.error || "Couldn't save the project order.");
+        });
+      }}
+      renderItem={(p, { handleProps, isDragging }) => {
+        const href = projectPath(org.slug, p.key);
+        return (
+          <NavItem
+            href={href}
+            active={pathname === href}
+            icon={<ProjectDot color={p.color} className="mx-[4px] size-2.5" />}
+            count={counts.projects[p.id] ?? 0}
+            onNavigate={onNavigate}
+            handleProps={handleProps}
+            dragging={isDragging}
+          >
+            {p.name}
+          </NavItem>
+        );
+      }}
+    />
+  );
+}
+
 function NavItem({
   href,
   active,
@@ -129,6 +154,8 @@ function NavItem({
   badge,
   children,
   onNavigate,
+  handleProps,
+  dragging,
 }: {
   href: string;
   active: boolean;
@@ -140,15 +167,21 @@ function NavItem({
   badge?: boolean;
   children: React.ReactNode;
   onNavigate?: () => void;
+  /** Row is reorderable: spread the SortableList handle props on the link. */
+  handleProps?: SortableHandleProps;
+  /** Lifted with the keyboard or dragged: keep a focus ring on it. */
+  dragging?: boolean;
 }) {
   return (
     <Link
       href={href}
       onClick={onNavigate}
       aria-current={active ? "page" : undefined}
+      {...handleProps}
       className={cn(
-        "group mb-px flex h-[30px] shrink-0 items-center gap-2.5 rounded-[7px] px-2 text-[13.5px] transition-colors [&_svg]:size-4 [&_svg]:shrink-0",
+        "group mb-px flex h-[30px] shrink-0 items-center gap-2.5 rounded-[7px] px-2 text-[13.5px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&_svg]:size-4 [&_svg]:shrink-0",
         active ? "bg-selected font-medium text-selected-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent",
+        dragging && "cursor-grabbing",
       )}
     >
       <span className={cn("flex", active ? "text-selected-foreground" : "text-muted-foreground")}>{icon}</span>

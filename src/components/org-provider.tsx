@@ -6,6 +6,9 @@ import type { BotWorkload, Counts, Member, Project, Status, WorkloadSnapshot } f
 import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
+import { reorderProjectsAction } from "@/app/actions/project-order";
+import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
+import type { Result } from "@/lib/result";
 
 export interface OrgInfo {
   id: string;
@@ -27,8 +30,15 @@ interface Ctx {
   isAdmin: boolean;
   members: Member[];
   memberById: Map<string, Member>;
+  /** Every project (archived too), in the signed-in person's own sidebar order (see lib/project-order). */
   projects: Project[];
   projectById: Map<string, Project>;
+  /**
+   * Save a new project order for the signed-in person (ids top first; archived/unknown ids are dropped
+   * server-side, unlisted projects go after in createdAt order). Applied here at once, rolled back if the
+   * server refuses; their other tabs follow through a `projects.order` event.
+   */
+  reorderProjects: (projectIds: string[]) => Promise<Result<ProjectOrder>>;
   statuses: Status[];
   statusById: Map<string, Status>;
   counts: Counts;
@@ -68,7 +78,8 @@ export function OrgProvider({
   orgs,
   me,
   members,
-  projects,
+  projects: serverProjects,
+  projectOrder: serverOrder,
   statuses,
   counts: initialCounts,
   unread: initialUnread,
@@ -81,6 +92,7 @@ export function OrgProvider({
   me: Me;
   members: Member[];
   projects: Project[];
+  projectOrder: ProjectOrder;
   statuses: Status[];
   counts: Counts;
   unread: number;
@@ -105,6 +117,33 @@ export function OrgProvider({
     setSeenWorkload(initialWorkload);
     if (initialWorkload.at >= workloadSnap.at) setWorkloadSnap(initialWorkload);
   }
+  // Project order: the server render (layout, refreshed on org.changed) and this person's own reorders
+  // (this tab optimistically, other tabs via projects.order) both feed it; the newer `at` wins, so a slow
+  // RSC refresh can't roll back a newer order. A pending reorder in this tab outranks everything.
+  const [liveOrder, setLiveOrder] = useState<ProjectOrder | null>(null);
+  const liveOrderRef = useRef(liveOrder);
+  useEffect(() => {
+    liveOrderRef.current = liveOrder;
+  });
+  const projects = useMemo(
+    () => (liveOrder && liveOrder.at > serverOrder.at ? sortByProjectOrder(serverProjects, liveOrder.ids) : serverProjects),
+    [liveOrder, serverOrder.at, serverProjects],
+  );
+  const reorderProjects = useCallback(
+    async (projectIds: string[]): Promise<Result<ProjectOrder>> => {
+      const before = liveOrderRef.current;
+      const pending: ProjectOrder = { ids: projectIds, at: Number.MAX_SAFE_INTEGER };
+      liveOrderRef.current = pending;
+      setLiveOrder(pending);
+      const r = await reorderProjectsAction(org.slug, projectIds).catch(
+        (): Result<ProjectOrder> => ({ ok: false, error: "Couldn't save the project order. Try again." }),
+      );
+      // A later reorder in this tab replaced ours meanwhile: leave it to settle.
+      setLiveOrder((cur) => (cur !== pending ? cur : r.ok && r.data ? r.data : before));
+      return r;
+    },
+    [org.slug],
+  );
   const setUnread = useCallback((fn: (n: number) => number) => setUnreadState((n) => Math.max(0, fn(n))), []);
 
   const subscribe = useCallback((fn: (e: RealtimeEvent) => void) => {
@@ -130,6 +169,11 @@ export function OrgProvider({
         setWorkloadSnap((cur) => (snap.at >= cur.at ? snap : cur));
       }
       if (e.type === "org.changed") router.refresh();
+      if (e.type === "projects.order") {
+        if (e.userId !== me.id) return; // someone else's sidebar
+        const next: ProjectOrder = { ids: e.projectIds, at: e.at };
+        setLiveOrder((cur) => (!cur || next.at > cur.at ? next : cur));
+      }
       if (e.type === "task.upsert" || e.type === "task.delete") refreshCounts();
       if (e.type === "notification" || e.type === "notifications.read") {
         if (e.userId !== me.id) return; // someone else's inbox
@@ -197,6 +241,7 @@ export function OrgProvider({
       memberById: new Map(members.map((m) => [m.id, m])),
       projects,
       projectById: new Map(projects.map((p) => [p.id, p])),
+      reorderProjects,
       statuses,
       statusById: new Map(statuses.map((s) => [s.id, s])),
       counts,
@@ -208,7 +253,7 @@ export function OrgProvider({
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
     }),
-    [org, orgs, me, members, projects, statuses, counts, unread, setUnread, subscribe, connected, online, workloadSnap],
+    [org, orgs, me, members, projects, reorderProjects, statuses, counts, unread, setUnread, subscribe, connected, online, workloadSnap],
   );
   return <OrgCtx.Provider value={value}>{children}</OrgCtx.Provider>;
 }
