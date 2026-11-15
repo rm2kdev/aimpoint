@@ -78,6 +78,12 @@ export type DropTargetOptions = {
   dwellMs?: number
   onDwell?: (item: DragItem) => void
   disabled?: boolean
+  /**
+   * The target sits over lists (a sticky status heading over its group): an item it refuses drops nothing
+   * while over its box, instead of falling through to the list underneath, and the floating preview stays
+   * up as over any other target (VEC-78).
+   */
+  opaque?: boolean
 }
 
 type TargetRegistration = { el: HTMLElement | null; opts: DropTargetOptions }
@@ -266,13 +272,22 @@ export function createDragStore() {
     return { kind: "list", listId: reg.listId, gap, lineTop }
   }
 
+  /** Set by the last hit test: the pointer is over an opaque target that refuses the item (VEC-78). */
+  let blocked = false
+
   const hitTest = (item: DragItem, x: number, y: number): DropOver | null => {
+    blocked = false
     for (const [id, ref] of targets) {
       const { el, opts } = ref.current
-      if (!el?.isConnected || opts.disabled || (opts.accepts && !opts.accepts(item))) continue
+      if (!el?.isConnected || opts.disabled) continue
+      const refused = !!opts.accepts && !opts.accepts(item)
+      if (refused && !opts.opaque) continue
       const r = rectOf(el)
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { kind: "target", id }
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue
+      if (!refused) return { kind: "target", id }
+      blocked = true // keep looking: an accepting target on top of it still wins
     }
+    if (blocked) return null
     const candidates = [...lists.values()].map((r) => r.current).filter((r) => accepts(r, item))
     const i = pickBox(candidates.map((r) => rectOf(r.el!)), x, y, OUTSIDE_MARGIN)
     return i < 0 ? null : overList(candidates[i], item, y)
@@ -399,7 +414,7 @@ export function createDragStore() {
     const placeGhost = () => {
       if (!ghost || !snap) return
       const over = snap.over
-      const show = !row.isConnected || (over !== null && !(over.kind === "list" && over.listId === item.listId))
+      const show = !row.isConnected || blocked || (over !== null && !(over.kind === "list" && over.listId === item.listId))
       ghost.style.display = show ? "" : "none"
       ghost.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
     }

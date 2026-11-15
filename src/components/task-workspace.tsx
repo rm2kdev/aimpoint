@@ -625,6 +625,8 @@ function GroupHeading({
   const { ref, isOver, canDrop: accepting } = useDropTarget<HTMLHeadingElement>(`status-heading:${status.id}`, {
     label: status.name,
     disabled: !canDrop,
+    // Its own tasks are refused but must not fall through to the group under the sticky heading (VEC-78).
+    opaque: true,
     // Tasks from other groups (or other projects); the group itself takes its own rows through its list.
     accepts: (item) => {
       const t = item.data as Task | undefined;
