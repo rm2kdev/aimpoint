@@ -232,6 +232,9 @@ export interface BotDelivery {
   reason: string;
   status?: number;
   error?: string;
+  /** The queued wake-up this attempt was for (BotWakeDoc._id), and which attempt it was (1 = first). Task wake-ups only. */
+  wakeId?: ObjectId;
+  attempt?: number;
 }
 
 export interface BotConnectionDoc {
@@ -250,6 +253,39 @@ export interface BotConnectionDoc {
   vectorKeySealed?: string;
   updatedAt: Date;
   lastDelivery?: BotDelivery;
+  /** The last BOT_DELIVERY_HISTORY deliveries, oldest first (lastDelivery is only the newest), so a failure isn't lost to the next one. */
+  deliveries?: BotDelivery[];
+}
+
+export const BOT_DELIVERY_HISTORY = 20;
+
+/** Task wake-up kinds that are queued and retried until they reach the bot (lib/wake-queue.ts). */
+export type QueuedWakeKind = "assigned" | "ready" | "closeout" | "mentioned";
+
+/**
+ * A push wake-up that hasn't reached its bot yet (lib/wake-queue.ts). Written before the first attempt and deleted
+ * once a delivery succeeds, so a failed or lost send is retried with backoff instead of dropped. One per
+ * (bot, task, kind). `failedAt` is set after the last attempt: the task then shows as Stalled ("undelivered") and a
+ * person was told (`notifiedAt`).
+ */
+export interface BotWakeDoc {
+  _id: ObjectId;
+  orgId: ObjectId;
+  botId: ObjectId;
+  taskId: ObjectId;
+  kind: QueuedWakeKind;
+  /** The WakeReason to send (task key, title, who, detail; commentId for mentions). */
+  reason: { kind: QueuedWakeKind; taskId: ObjectId; taskKey: string; title: string; by: string; detail?: string; commentId?: ObjectId };
+  /** Attempts made so far. */
+  attempts: number;
+  /** When the next attempt is due; also a lease while an attempt is in flight. */
+  nextAttemptAt: Date;
+  lastError: string | null;
+  /** When the hand-off happened: anything the bot did on the task after this means the wake-up reached it. */
+  createdAt: Date;
+  updatedAt: Date;
+  failedAt: Date | null;
+  notifiedAt: Date | null;
 }
 
 /** A named set of MCP tool permissions that can be applied to bots. */
@@ -297,8 +333,9 @@ export interface BotMentionDoc {
 }
 
 /** Something a person should look at. Bots get wake-ups and check_for_work instead. */
-/** "review": a bot finished a task but left it open (e.g. In Review) while other tasks wait on it. */
-export type NotificationKind = "assigned" | "mentioned" | "ready" | "review";
+/** "review": a bot finished a task but left it open (e.g. In Review) while other tasks wait on it.
+ * "undelivered": Vector couldn't hand a task to its push bot after retrying (actorId = the bot). */
+export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered";
 export interface NotificationDoc {
   _id: ObjectId;
   orgId: ObjectId;
@@ -423,16 +460,18 @@ export interface Task {
  * "unassigned": nobody is assigned to it.
  * "needs_owner": nobody is assigned, but it is still waiting on open dependencies of its own, so it isn't holding
  * anything up yet. Not stalled: a softer hint (neutral, not red) to give it an owner before those clear (VEC-86).
+ * "undelivered": its bot (`botId`) was never reached: Vector couldn't deliver the hand-off after retrying, so
+ * nobody is working on it even though it says ready. Shown whether or not other tasks wait on it.
  * A person assignee, or a bot that hasn't picked it up yet or is working on it, isn't stalled.
  */
 export interface Stalled {
   reason: StalledReason;
-  /** Bot that finished it ("finished" only). */
+  /** Bot that finished it ("finished") or couldn't be reached ("undelivered"). */
   botId: string | null;
   /** Keys of the open tasks waiting on it, e.g. ["VEC-16", "VEC-17"]. */
   blocking: string[];
 }
-export type StalledReason = "finished" | "unassigned" | "needs_owner";
+export type StalledReason = "finished" | "unassigned" | "needs_owner" | "undelivered";
 /** True for reasons that mean the task really is holding others up (red Stalled), false for the needs_owner hint. */
 export const isStalledReason = (r: StalledReason) => r !== "needs_owner";
 /** A task mentioned from another task: a dependency or a dependent. */

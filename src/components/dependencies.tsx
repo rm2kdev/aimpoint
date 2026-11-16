@@ -112,6 +112,8 @@ export function stalledText(stalled: Stalled, botName: string | null) {
   const keys = n <= 1 ? stalled.blocking.join("") : `${stalled.blocking.slice(0, -1).join(", ")} and ${stalled.blocking[n - 1]}`;
   const waiting = `${keys} ${n === 1 ? "is" : "are"} waiting on it`;
   if (stalled.reason === "needs_owner") return `Nobody is assigned yet. ${waiting}, and it can start once its own dependencies are done, so assign it before then.`;
+  if (stalled.reason === "undelivered")
+    return `Vector couldn't hand it to ${botName ?? "its bot"}: the wake-up still failed after several retries, so nobody is working on it${n ? `, and ${waiting}` : ""}. Check the bot's connection, then reassign it or @mention the bot to send it again.`;
   return stalled.reason === "finished"
     ? `${botName ?? "Its bot"} finished its work but left it open, and ${waiting}. Review it and move it to Done to release ${n === 1 ? "it" : "them"}, or reassign it.`
     : `Nobody is assigned, and ${waiting}. Assign it to someone.`;

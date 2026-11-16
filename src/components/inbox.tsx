@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AtSignIcon, CheckCheckIcon, CircleCheckIcon, EyeIcon, HourglassIcon, InboxIcon, UserPlusIcon } from "lucide-react";
+import { AtSignIcon, CheckCheckIcon, CircleCheckIcon, EyeIcon, HourglassIcon, InboxIcon, UnplugIcon, UserPlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
@@ -20,6 +20,7 @@ const KIND_ICON = {
   mentioned: AtSignIcon,
   ready: CircleCheckIcon,
   review: EyeIcon,
+  undelivered: UnplugIcon,
 } as const;
 
 export function Inbox({ initial }: { initial: Notification[] }) {

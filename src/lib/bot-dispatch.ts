@@ -8,13 +8,18 @@ import { isPush } from "@/lib/bot-connect";
 import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
-import { isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
+import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
+import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
 /**
  * Push delivery: when a bot with a backend (Claude, OpenAI, Hermes, webhook) is assigned a task or
  * @mentioned, Vector calls that backend with the task, its description and the whole thread. The agent
  * then acts on the ticket through Vector's MCP tools. A successful delivery marks the work as picked up
  * (assignment) or delivered (mention), so check_for_work doesn't hand it out a second time.
+ *
+ * Task wake-ups (assigned, ready, close-out, mention) go through the wake queue (lib/wake-queue.ts): queued before
+ * the first attempt, retried with backoff when a delivery fails, re-sent by a reconciler when a hand-off never got
+ * that far, and shown as Stalled with a person notified when they still can't be delivered.
  */
 
 export type WakeReason =
@@ -62,7 +67,8 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
         c.bots.find({ orgId, _id: { $in: botIds }, "connection.method": { $exists: true } }).toArray(),
       ]);
       if (!org) return;
-      await Promise.all(bots.filter((b) => b.connection && isPush(b.connection.method)).map((b) => deliver(b, org, reason)));
+      const push = bots.filter((b) => b.connection && isPush(b.connection.method));
+      await Promise.all(push.map((b) => (isQueuedWake(reason) ? dispatchWake(b, org, reason) : deliver(b, org, reason))));
     } catch (err) {
       console.error("[bot wake]", err);
     }
@@ -122,22 +128,39 @@ export function wakeTriage(orgId: ObjectId, task: { taskId: ObjectId; taskKey: s
   }
 }
 
-/** Delivers one wake-up now and records the outcome on the bot. */
-export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason): Promise<BotDelivery> {
+/** A queued wake-up being delivered: its id (stable across retries) and which attempt this is (1 = first). */
+export interface WakeAttempt {
+  wakeId: ObjectId;
+  attempt: number;
+}
+
+/**
+ * Delivers one wake-up now and records the outcome on the bot (lastDelivery plus a capped history). Failures are
+ * logged; retrying them is the wake queue's job.
+ */
+export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake?: WakeAttempt): Promise<BotDelivery> {
   const conn = bot.connection!;
   let out: BotDelivery;
+  const meta = wake ? { wakeId: wake.wakeId, attempt: wake.attempt } : {};
   try {
     const msg = await wakeMessage(bot, org, conn, reason);
-    const res = await send(bot, org, conn, reason, msg);
+    const res = await send(bot, org, conn, reason, msg, wake);
     if (res.ok) await markHandedOver(bot, org, reason);
     out = res.ok
-      ? { at: new Date(), ok: true, reason: reasonLabel(reason), status: res.status }
-      : { at: new Date(), ok: false, reason: reasonLabel(reason), status: res.status, error: res.error };
+      ? { at: new Date(), ok: true, reason: reasonLabel(reason), status: res.status, ...meta }
+      : { at: new Date(), ok: false, reason: reasonLabel(reason), status: res.status, error: res.error, ...meta };
   } catch (err) {
     const e = err as Error;
-    out = { at: new Date(), ok: false, reason: reasonLabel(reason), error: e.name === "TimeoutError" ? "Timed out after 15 seconds." : friendlyNetworkError(e) };
+    out = { at: new Date(), ok: false, reason: reasonLabel(reason), error: e.name === "TimeoutError" ? "Timed out after 15 seconds." : friendlyNetworkError(e), ...meta };
   }
-  await (await cols()).bots.updateOne({ _id: bot._id, "connection.method": conn.method }, { $set: { "connection.lastDelivery": out } });
+  if (!out.ok) {
+    const cause = (wake ? `attempt ${wake.attempt}: ` : "") + (out.error ?? `status ${out.status}`);
+    console.error(`[bot wake] delivery failed: ${bot.name} (${conn.method}) ${out.reason}, ${cause}`);
+  }
+  await (await cols()).bots.updateOne(
+    { _id: bot._id, "connection.method": conn.method },
+    { $set: { "connection.lastDelivery": out }, $push: { "connection.deliveries": { $each: [out], $slice: -BOT_DELIVERY_HISTORY } } },
+  );
   return out;
 }
 
@@ -146,13 +169,17 @@ function friendlyNetworkError(e: Error) {
   if (code === "ECONNREFUSED") return "Connection refused. Is the agent running and listening on that address?";
   if (code === "ENOTFOUND") return "That host name doesn't resolve.";
   if (code === "ECONNRESET") return "The connection was reset.";
+  if (code === "UND_ERR_CONNECT_TIMEOUT") return "Couldn't connect: no answer from that address (connect timed out).";
   return e.message || "Couldn't reach it.";
 }
 
 type SendResult = { ok: true; status: number } | { ok: false; status?: number; error: string };
 
-/** The task is now this bot's: same bookkeeping check_for_work does when it hands work out. */
-async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReason) {
+/**
+ * The task is now this bot's: same bookkeeping check_for_work does when it hands work out. Also used by the wake
+ * queue when a retry finds the bot already acting on the task (an earlier attempt reached it after all).
+ */
+export async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReason) {
   const c = await cols();
   if (reason.kind === "assigned" || reason.kind === "ready") {
     // Re-read: it may have been closed or archived between the wake-up and delivery. A closed task gets no
@@ -179,7 +206,7 @@ async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReason) {
   }
 }
 
-async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason, msg: WakeMessage): Promise<SendResult> {
+async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason, msg: WakeMessage, wake?: WakeAttempt): Promise<SendResult> {
   const secret = conn.secretSealed ? unseal(conn.secretSealed) : null;
   if (conn.method === "claude-api" || conn.method === "openai-api") {
     const vectorKey = conn.vectorKeySealed ? unseal(conn.vectorKeySealed) : null;
@@ -190,9 +217,9 @@ async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: Wa
   if (!conn.url || !secret) return { ok: false, error: "The connection is missing its address or key. Run setup again." };
   switch (conn.method) {
     case "hermes-api":
-      return hermesRun(bot, org, conn.url, secret, reason, msg);
+      return hermesRun(bot, org, conn.url, secret, reason, msg, wake);
     case "webhook":
-      return webhook(bot, org, conn.url, secret, reason, msg);
+      return webhook(bot, org, conn.url, secret, reason, msg, wake);
     default:
       return { ok: false, error: "This connection method doesn't push." };
   }
@@ -289,13 +316,15 @@ export function wakeInstructions(bot: BotDoc, org: OrgDoc) {
 
 export const hermesBase = (url: string) => url.trim().replace(/\/+$/, "").replace(/\/v1$/, "");
 
-async function hermesRun(bot: BotDoc, org: OrgDoc, url: string, key: string, reason: WakeReason, msg: WakeMessage): Promise<SendResult> {
+async function hermesRun(bot: BotDoc, org: OrgDoc, url: string, key: string, reason: WakeReason, msg: WakeMessage, wake?: WakeAttempt): Promise<SendResult> {
   const res = await fetch(`${hermesBase(url)}/v1/runs`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": `vector-${randomUUID()}`,
+      // One key per queued wake-up, the same on every retry: if an attempt that timed out did start a run, Hermes
+      // refuses the retry instead of starting a second one.
+      "Idempotency-Key": `vector-${wake ? wake.wakeId.toHexString() : randomUUID()}`,
     },
     body: JSON.stringify({
       input: msg.prompt,
@@ -306,6 +335,8 @@ async function hermesRun(bot: BotDoc, org: OrgDoc, url: string, key: string, rea
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   if (res.ok) return { ok: true, status: res.status };
+  // 409 on a retry: Hermes already admitted a run under this wake-up's key (the earlier attempt got through).
+  if (res.status === 409 && wake && wake.attempt > 1) return { ok: true, status: res.status };
   return { ok: false, status: res.status, error: await httpError(res, "Hermes") };
 }
 
@@ -412,8 +443,9 @@ export async function providerProbe(provider: "anthropic" | "openai", apiKey: st
 
 /* ---------------- Generic webhook ---------------- */
 
-async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, reason: WakeReason, msg: WakeMessage): Promise<SendResult> {
-  const id = randomUUID();
+async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, reason: WakeReason, msg: WakeMessage, wake?: WakeAttempt): Promise<SendResult> {
+  // Retries of one queued wake-up share the delivery id, so a receiver can drop a repeat of one it already handled.
+  const id = wake ? `wake-${wake.wakeId.toHexString()}` : randomUUID();
   const ts = Math.floor(Date.now() / 1000).toString();
   const body = JSON.stringify({
     type: reason.kind === "test" ? "ping" : `task.${reason.kind}`,

@@ -234,6 +234,16 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
   const open = candidates.filter((t) => openStatus.has(t.statusId));
   if (!open.length) return out;
   const openIds = new Set(open.map((t) => t.id));
+  // Its bot was never reached: a wake-up for it gave up after every retry (VEC-101). Stalled whether or not anything
+  // waits on it, since nobody is working on a task that says it's ready.
+  const assignedOpen = open.filter((t) => t.assigneeId);
+  const undelivered = assignedOpen.length
+    ? await c.botWakes
+        .find({ taskId: { $in: assignedOpen.map((t) => new ObjectId(t.id)) }, failedAt: { $ne: null } }, { projection: { taskId: 1, botId: 1 } })
+        .toArray()
+    : [];
+  const unreached = new Set(undelivered.map((w) => `${w.taskId.toHexString()}:${w.botId.toHexString()}`));
+  for (const t of assignedOpen) if (unreached.has(`${t.id}:${t.assigneeId}`)) out.set(t.id, { reason: "undelivered", botId: t.assigneeId, blocking: [] });
   const waiters = await c.tasks
     .find({ waitingOn: { $in: ids.filter((id) => openIds.has(id.toHexString())) }, archivedAt: null }, { projection: { waitingOn: 1, projectId: 1, number: 1, statusId: 1, orgId: 1 } })
     .toArray();
@@ -280,6 +290,11 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
   const byKey = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
   for (const t of blocked) {
     const keys = blocking.get(t.id)!.sort(byKey);
+    const unreachedBot = out.get(t.id);
+    if (unreachedBot?.reason === "undelivered") {
+      unreachedBot.blocking = keys;
+      continue;
+    }
     // Unassigned but still waiting on its own open dependencies: nothing is held up by it yet, so only hint that
     // it needs an owner (VEC-86); it turns into red "unassigned" Stalled once those close.
     if (!t.assigneeId) out.set(t.id, { reason: t.waitingOn.length ? "needs_owner" : "unassigned", botId: null, blocking: keys });

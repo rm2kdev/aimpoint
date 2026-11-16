@@ -15,6 +15,7 @@ import type {
   BotRoleDoc,
   AgentClaimDoc,
   BotMentionDoc,
+  BotWakeDoc,
   NotificationDoc,
   LoginChallengeDoc,
 } from "./types";
@@ -58,6 +59,7 @@ export async function cols() {
     botRoles: db.collection<BotRoleDoc>("botRoles"),
     agentClaims: db.collection<AgentClaimDoc>("agentClaims"),
     botMentions: db.collection<BotMentionDoc>("botMentions"),
+    botWakes: db.collection<BotWakeDoc>("botWakes"),
     notifications: db.collection<NotificationDoc>("notifications"),
     loginChallenges: db.collection<LoginChallengeDoc>("loginChallenges"),
     deletedUsers: db.collection<DeletedUserDoc>("deletedUsers"),
@@ -105,6 +107,10 @@ async function ensureIndexes(db: Db) {
     db.collection("agentClaims").createIndex({ taskId: 1, kind: 1 }, { unique: true, partialFilterExpression: { kind: "triage" }, name: "one_triage_claim_per_task" }),
     db.collection("botMentions").createIndex({ botId: 1, deliveredAt: 1, createdAt: 1 }),
     db.collection("botMentions").createIndex({ taskId: 1 }),
+    // Queued push wake-ups (lib/wake-queue.ts): one per hand-off, due ones found by nextAttemptAt.
+    db.collection("botWakes").createIndex({ botId: 1, taskId: 1, kind: 1 }, { unique: true }),
+    db.collection("botWakes").createIndex({ failedAt: 1, nextAttemptAt: 1 }),
+    db.collection("botWakes").createIndex({ taskId: 1 }),
     db.collection("notifications").createIndex({ orgId: 1, userId: 1, createdAt: -1 }),
     db.collection("notifications").createIndex({ orgId: 1, userId: 1, readAt: 1 }),
     db.collection("notifications").createIndex({ taskId: 1 }),

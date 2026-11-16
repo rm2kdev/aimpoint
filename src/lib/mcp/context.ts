@@ -301,6 +301,8 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
         reason:
           stalled.reason === "finished"
             ? `${personRef(dir, stalled.botId)?.name ?? "Its bot"} finished its work but left it open`
+            : stalled.reason === "undelivered"
+            ? `Vector couldn't deliver the hand-off to ${personRef(dir, stalled.botId)?.name ?? "its bot"} after several retries, so nobody is working on it`
             : stalled.reason === "needs_owner"
               ? "nobody is assigned yet; it is still waiting on its own dependencies, so it isn't holding anything up yet, but it needs an owner before they're done"
               : "nobody is assigned",
@@ -317,7 +319,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     dependsOn: refs.dependencies.map(refOut),
     /** Tasks waiting for this one. Moving this task to a done status releases them to their assignees. */
     blocks: refs.dependents.map(refOut),
-    /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open. People see it flagged as stalled. kind "needs_owner" = unassigned but still waiting on its own dependencies: people see a neutral "Needs owner" hint, not Stalled. */
+    /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open (or, waiters or not, Vector couldn't deliver the hand-off to its bot). People see it flagged as stalled. kind "needs_owner" = unassigned but still waiting on its own dependencies: people see a neutral "Needs owner" hint, not Stalled. */
     stalled: stalledOut,
   };
 
