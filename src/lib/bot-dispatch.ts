@@ -9,6 +9,7 @@ import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
+import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
 import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
 /**
@@ -227,22 +228,26 @@ async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: Wa
 
 /* ---------------- prompts ---------------- */
 
-export const TRIAGE_STEPS = (key: string) =>
+/**
+ * Prompt texts name statuses through the task's project's own names (VEC-116: statuses are per project and can be
+ * renamed), passed as `w` (lib/statuses.ts statusWords). The defaults read like the stock workflow.
+ */
+export const TRIAGE_STEPS = (key: string, w: StatusWords = DEFAULT_STATUS_WORDS) =>
   [
-    `1. Read ${key}: description, comments, the project's context and any images. get_workspace lists projects, statuses, and the people and bots you can assign (bots' descriptions say what each one does).`,
+    `1. Read ${key}: description, comments, the project's context and any images. get_workspace lists projects with each project's own statuses, and the people and bots you can assign (bots' descriptions say what each one does).`,
     `2. Work out the concrete tasks needed to deliver it, each small enough for one person or bot. If it's already that small, skip to step 4 and just route it.`,
     `3. create_task for each, in order, so earlier keys exist when later tasks name them in \`depends_on\`. Give each a clear title, a Markdown description with acceptance criteria, a priority and an assignee where the owner is clear. Tasks with nothing to wait for can run in parallel; an assignee is only handed a task once everything it depends on is done.`,
     `4. Turn ${key} into the umbrella: update_task with \`depends_on\` set to the new tasks (at least the last ones in each chain) and a description summarising the plan, so it becomes ready, and its assignee hears about it, when the work is finished.`,
-    `5. complete_task on ${key} with a short comment listing the tasks you created and a \`status\` to move it out of Triage (e.g. Todo). That ends your triage of it. You stay its triager: when the last task it depends on is closed (done or cancelled), Vector calls you back (a close-out wake-up, or kind "closeout" on check_for_work) to summarise what was delivered and close ${key} out.`,
-    `Until you call complete_task (or release_task to hand it back) you may edit ${key} like its creator: title, description, project, dependencies, status, assignee, priority, type and due date. Don't create new tasks in a Triage status.`,
+    `5. complete_task on ${key} with a short comment listing the tasks you created and a \`status\` of ${key}'s project to move it out of ${w.triage} (e.g. ${w.unstarted}). That ends your triage of it. You stay its triager: when the last task it depends on is closed (done or cancelled), Vector calls you back (a close-out wake-up, or kind "closeout" on check_for_work) to summarise what was delivered and close ${key} out.`,
+    `Until you call complete_task (or release_task to hand it back) you may edit ${key} like its creator: title, description, project, dependencies, status, assignee, priority, type and due date. Don't create new tasks in a triage-stage status. Statuses are per project: a task only takes its own project's status names.`,
   ].join("\n");
 
 /** What a triager does when its umbrella's sub-tasks are all done (wake-up and check_for_work). */
-export const CLOSEOUT_STEPS = (key: string) =>
+export const CLOSEOUT_STEPS = (key: string, w: StatusWords = DEFAULT_STATUS_WORDS) =>
   [
     `1. Read each task ${key} depends on (\`dependencies.dependsOn\`) with get_task: its status and its comments, which hold what was delivered and anything left open.`,
     `2. add_comment on ${key}: a short summary of what was delivered, task by task. Comments are plain text, so no Markdown (no **bold** or headings); a plain "- " list is fine.`,
-    `3. complete_task on ${key} with \`status\` "Done". If any of those tasks was Cancelled, or its comments leave issues open, use "In Review" instead and say why in the comment so a person can decide.`,
+    `3. complete_task on ${key} with \`status\` "${w.done}". If any of those tasks was cancelled, or its comments leave issues open, use ${w.review ? `"${w.review}"` : reviewWord(w)} instead and say why in the comment so a person can decide.`,
     `As its triager you can only comment on ${key} and move it to a closing status; anything else needs its creator, its assignee or an admin.`,
   ].join("\n");
 
@@ -258,13 +263,15 @@ export const BLOCKER_NOTE =
   "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
 
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
-const STARTED_NOTE = `Vector moves it to In Progress for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and Done, or In Review only when a named person must check something. ${BLOCKER_NOTE}`;
+const STARTED_NOTE = (w: StatusWords) =>
+  `Vector moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something. ${BLOCKER_NOTE}`;
 
 /** Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. */
-const RESUMED_NOTE = `You're its assignee, so this hands the work back to you: Vector moves it back to In Progress as this is delivered (the task below may still show In Review and Stalled). Reply to the comment and do what it asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
+const RESUMED_NOTE = (w: StatusWords) =>
+  `You're its assignee, so this hands the work back to you: Vector moves it back to ${w.started} as this is delivered (the task below may still show its earlier status and Stalled). Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
 
-const TOOLS_HINT =
-  "Act on the ticket with the `vector` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Moving a task to a done status releases the tasks that depend on it; In Review does not, so finish with Done when the work meets its acceptance criteria, and use In Review only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects, statuses and people.";
+const TOOLS_HINT = (w: StatusWords) =>
+  `Act on the ticket with the \`vector\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people.`;
 
 /** What the backend receives: who did what, the full task and thread, and how to act on it. */
 async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason): Promise<WakeMessage> {
@@ -278,6 +285,7 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const task = await c.tasks.findOne({ _id: reason.taskId, orgId: org._id });
   const project = task && (await c.projects.findOne({ _id: task.projectId }));
   let context: unknown = null;
+  const w = task ? await loadStatusWords(org._id, task.projectId) : DEFAULT_STATUS_WORDS;
   if (task && project) {
     const built = await buildTaskContext(task, project, {
       origin: conn.vectorUrl ?? "",
@@ -290,22 +298,22 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   }
   const head =
     reason.kind === "triage"
-      ? `${reason.by} put ${reason.taskKey} "${reason.title}" in Triage in Vector (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey)}`
+      ? `${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Vector (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
       : reason.kind === "closeout"
-      ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey)}`
+      ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
       : reason.kind === "assigned"
-      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE}\n\n${PROGRESS_HINT}`
+      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE(w)}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
-        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE}\n\n${PROGRESS_HINT}`
+        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE(w)}\n\n${PROGRESS_HINT}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
-            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE}\n\n${PROGRESS_HINT}` : "Reply to it."
+            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE(w)}\n\n${PROGRESS_HINT}` : "Reply to it."
           }`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
   const projectBlock = meta.length
     ? `\n\nProject context for ${project!.key} (${project!.name}), set by the team. Follow it while you work:\n${meta.map((m) => `- ${m.key}: ${m.value.replace(/\n/g, "\n  ")}`).join("\n")}`
     : "";
   return {
-    prompt: `${head}${projectBlock}\n\n${TOOLS_HINT}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
+    prompt: `${head}${projectBlock}\n\n${TOOLS_HINT(w)}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
     task: context,
   };
 }

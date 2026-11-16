@@ -7,6 +7,7 @@ import {
   resolveAssignee,
   resolveProject,
   resolveStatus,
+  resolveStatusFilter,
   resolveTaskRefs,
   toDescriptionHtml,
 } from "@/lib/bot-api";
@@ -15,13 +16,17 @@ import { toTask, withWorkingBots } from "@/lib/data";
 import { assignedBlockersOf, createTaskAs } from "@/lib/task-service";
 import type { TaskDoc } from "@/lib/types";
 
-/** GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&archived=true&limit=50  (archived tasks are excluded unless archived=true) */
+/**
+ * GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&archived=true&limit=50  (archived tasks are excluded unless archived=true).
+ * Statuses are per project: with `project`, `status` must be one of that project's (400 otherwise); without it,
+ * `status` matches every project's status of that name.
+ */
 export const GET = botRoute(async (req, ctx) => {
   const q = new URL(req.url).searchParams;
   const filter: Filter<TaskDoc> = { orgId: ctx.org._id, archivedAt: q.get("archived") === "true" ? { $ne: null } : null };
   if (q.get("project")) filter.projectId = (await resolveProject(ctx.org._id, q.get("project")))._id;
-  const status = await resolveStatus(ctx.org._id, q.get("status"));
-  if (status) filter.statusId = new ObjectId(status);
+  const status = await resolveStatusFilter(ctx.org._id, q.get("status"), filter.projectId as ObjectId | undefined);
+  if (status) filter.statusId = { $in: status };
   const assignee = await resolveAssignee(ctx, q.get("assignee") ?? undefined);
   if (assignee !== undefined) filter.assigneeId = assignee ? new ObjectId(assignee) : null;
   const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
@@ -34,7 +39,11 @@ export const GET = botRoute(async (req, ctx) => {
   return { tasks: await withWorkingBots(docs.map((d) => toTask(d as TaskDoc, keys.get(d.projectId.toHexString()) ?? "?"))) };
 }, "list_tasks");
 
-/** POST /api/v1/tasks  { title, project, type?: "issue" | "feature" | "task" (default "issue"), description?, status?, assignee?, priority?, dueDate?, dependsOn?: ["WEB-12"] } */
+/**
+ * POST /api/v1/tasks  { title, project, type?: "issue" | "feature" | "task" (default "issue"), description?, status?, assignee?, priority?, dueDate?, dependsOn?: ["WEB-12"] }
+ * `status` is a name (or stage, or id) of that project's own statuses (GET /api/v1/statuses?project=WEB); another
+ * project's status is a 400. Defaults to the project's first not-started status.
+ */
 export const POST = botRoute(async (req, ctx) => {
   const b = await readJson(req);
   const project = await resolveProject(ctx.org._id, b.project);

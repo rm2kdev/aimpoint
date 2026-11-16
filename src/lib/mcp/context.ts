@@ -339,8 +339,20 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     dueDate: task.dueDate ? task.dueDate.toISOString().slice(0, 10) : null,
     archived: !!task.archivedAt,
     dependencies,
-    /** `context` is the project's admin-set key/value metadata: repos, environments, conventions and the like. */
-    project: { id: project._id.toHexString(), key: project.key, name: project.name, archived: !!project.archivedAt, context: projectContext(project) },
+    /**
+     * `context` is the project's admin-set key/value metadata: repos, environments, conventions and the like.
+     * `statuses` is this project's own workflow in order (statuses are per project): the only names set_status,
+     * update_task and complete_task accept for this task. `stage` is what Vector acts on: a done or cancelled
+     * stage releases the tasks waiting on it, started = being worked on, unstarted = planned.
+     */
+    project: {
+      id: project._id.toHexString(),
+      key: project.key,
+      name: project.name,
+      archived: !!project.archivedAt,
+      context: projectContext(project),
+      statuses: statuses.filter((s) => s.projectId.equals(project._id)).map((s) => ({ name: s.name, stage: s.category })),
+    },
     organisation: { id: orgHex, name: org.name, slug: org.slug },
     assignee: personRef(dir, task.assigneeId),
     /** The bot that broke this task down in Triage. It may close it out once nothing it depends on is open. */

@@ -95,8 +95,72 @@ export async function resolveProjectStatus(orgId: ObjectId, projectId: ObjectId,
   const list = await loadStatuses(orgId, projectId);
   const hit = pickStatus(list, r);
   if (hit) return hit;
-  throw new UserError(`Unknown status "${r}". ${await projectLabel(orgId, projectId)}'s statuses are: ${names(list)}.`);
+  const here = await projectLabel(orgId, projectId);
+  // A name another project uses (VEC-116): say so, so the caller doesn't think the name is mistyped.
+  const c = await cols();
+  const elsewhere = r ? await c.statuses.find({ orgId, projectId: { $ne: projectId }, name: { $regex: `^${escapeRegex(r)}$`, $options: "i" } }, { projection: { projectId: 1, name: 1 } }).toArray() : [];
+  if (elsewhere.length) {
+    const keys = [...new Set(await Promise.all(elsewhere.map((s) => projectLabel(orgId, s.projectId))))].sort();
+    throw new UserError(`"${elsewhere[0].name}" is a status of ${keys.join(", ")}, not ${here}. Statuses are per project; ${here}'s statuses are: ${names(list)}.`);
+  }
+  throw new UserError(`Unknown status "${r}". ${here}'s statuses are: ${names(list)}.`);
 }
+
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Status ids matching a list filter (VEC-116). With `projectId`, the one status of that project (resolved like a
+ * write). Without, every project's status with that name (or that id), so "Done" finds done tasks in every project
+ * that has a status called Done. Throws a UserError listing the known names when nothing matches.
+ */
+export async function statusFilterIds(orgId: ObjectId, ref: string, projectId?: ObjectId): Promise<ObjectId[]> {
+  if (projectId) return [(await resolveProjectStatus(orgId, projectId, ref))._id];
+  const r = ref.trim();
+  const all = await (await cols()).statuses.find({ orgId }).sort({ order: 1 }).toArray();
+  const byId = ObjectId.isValid(r) && r.length === 24 ? all.filter((s) => hex(s._id) === r.toLowerCase()) : [];
+  const hits = byId.length ? byId : all.filter((s) => s.name.toLowerCase() === r.toLowerCase());
+  if (hits.length) return hits.map((s) => s._id);
+  throw new UserError(`Unknown status "${r}". Statuses in this organisation's projects: ${[...new Set(all.map((s) => s.name))].join(", ")}.`);
+}
+
+/**
+ * The names one project uses for the statuses Vector's texts talk about (VEC-116), so a wake-up or tool reply
+ * still reads right when a project renamed them: `started` is where a bot's pickup moves the task (first started
+ * status), `done` / `cancelled` the first of those stages, `review` a started-stage status named like "review"
+ * (null when the project has none), `unstarted` the first not-started status, `triage` the first triage status.
+ */
+export interface StatusWords {
+  started: string;
+  done: string;
+  cancelled: string;
+  review: string | null;
+  unstarted: string;
+  triage: string;
+}
+
+export const DEFAULT_STATUS_WORDS: StatusWords = { started: "In Progress", done: "Done", cancelled: "Cancelled", review: "In Review", unstarted: "Todo", triage: "Triage" };
+
+export function statusWords(list: readonly { name: string; category: StatusCategory; order: number }[]): StatusWords {
+  const sorted = [...list].sort((a, b) => a.order - b.order);
+  const first = (stage: StatusCategory) => sorted.find((s) => s.category === stage)?.name;
+  const started = sorted.filter((s) => s.category === "started");
+  return {
+    started: started[0]?.name ?? DEFAULT_STATUS_WORDS.started,
+    done: first("done") ?? DEFAULT_STATUS_WORDS.done,
+    cancelled: first("cancelled") ?? DEFAULT_STATUS_WORDS.cancelled,
+    review: started.find((s, i) => i > 0 && /review/i.test(s.name))?.name ?? null,
+    unstarted: first("unstarted") ?? DEFAULT_STATUS_WORDS.unstarted,
+    triage: first("triage") ?? DEFAULT_STATUS_WORDS.triage,
+  };
+}
+
+/** statusWords for one project, read from the DB. */
+export async function loadStatusWords(orgId: ObjectId, projectId: ObjectId): Promise<StatusWords> {
+  return statusWords(await loadStatuses(orgId, projectId));
+}
+
+/** "In Review" as a status to name in a text, or a stage-worded fallback when the project has no review status. */
+export const reviewWord = (w: StatusWords) => w.review ?? `an open status other than ${w.done}`;
 
 /** The project's status that corresponds to `statusId` (from any project of the org): used when a task changes project. */
 export async function statusInProject(orgId: ObjectId, projectId: ObjectId, statusId: ObjectId): Promise<StatusDoc | null> {

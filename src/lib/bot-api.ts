@@ -4,7 +4,7 @@ import { authenticateBot, toolsForBot } from "@/lib/bots";
 import { cols } from "@/lib/db";
 import { findTaskByKey } from "@/lib/data";
 import { UserError } from "@/lib/result";
-import { resolveProjectStatus } from "@/lib/statuses";
+import { resolveProjectStatus, statusFilterIds } from "@/lib/statuses";
 import type { Actor } from "@/lib/task-service";
 import { isTaskType, type BotDoc, type OrgDoc } from "@/lib/types";
 
@@ -66,18 +66,23 @@ export async function resolveProject(orgId: ObjectId, ref: unknown) {
 }
 
 /**
- * Status by name (case-insensitive) or id. With `projectId` (every write) it resolves within that project's own
- * statuses (VEC-115); without it (list filters) it searches the org.
+ * Status for a write, by name (case-insensitive), stage or id, within `projectId`'s own statuses (VEC-115/116:
+ * statuses are per project). A name or id of another project's status is a 400 naming both projects.
+ * Undefined when not provided.
  */
-export async function resolveStatus(orgId: ObjectId, ref: unknown, projectId?: ObjectId) {
+export async function resolveStatus(orgId: ObjectId, ref: unknown, projectId: ObjectId) {
   if (ref === undefined || ref === null || ref === "") return undefined;
-  if (projectId) return (await resolveProjectStatus(orgId, projectId, String(ref)))._id.toHexString();
-  const c = await cols();
-  const s = String(ref).trim();
-  const statuses = await c.statuses.find({ orgId }).toArray();
-  const st = statuses.find((x) => x._id.toHexString() === s) ?? statuses.find((x) => x.name.toLowerCase() === s.toLowerCase());
-  if (!st) throw new UserError(`Unknown status "${s}". Use one of: ${statuses.map((x) => x.name).join(", ")}.`);
-  return st._id.toHexString();
+  if (typeof ref !== "string") throw new UserError("`status` is a status name or id (a string).");
+  return (await resolveProjectStatus(orgId, projectId, ref))._id.toHexString();
+}
+
+/**
+ * Status ids for a list filter: within `projectId` when the request names a project, else every project's
+ * status of that name. Undefined when not provided.
+ */
+export async function resolveStatusFilter(orgId: ObjectId, ref: unknown, projectId?: ObjectId) {
+  if (ref === undefined || ref === null || ref === "") return undefined;
+  return statusFilterIds(orgId, String(ref), projectId);
 }
 
 /** Assignee by "me", null, user/bot id, member email or bot name. Returns undefined when not provided. */

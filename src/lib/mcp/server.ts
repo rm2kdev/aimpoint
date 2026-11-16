@@ -3,7 +3,7 @@ import { ObjectId, type Filter } from "mongodb";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
-import { resolveProjectStatus } from "@/lib/statuses";
+import { groupStatusesByProject, loadStatusWords, resolveProjectStatus, reviewWord, statusFilterIds } from "@/lib/statuses";
 import { toolsForBot } from "@/lib/bots";
 import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
@@ -22,7 +22,7 @@ import {
   ToolInputError,
   type ImageBlock,
 } from "@/lib/mcp/context";
-import { isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc } from "@/lib/types";
+import { isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type TaskDoc } from "@/lib/types";
 
 /* ---------------- types ---------------- */
 
@@ -111,17 +111,17 @@ async function resolveProject(ctx: McpCtx, ref: string) {
 }
 
 /**
- * A status by name or id. With `projectId` (every write) it resolves within that project's own statuses
- * (VEC-115: a task only takes its own project's statuses). Without it (list filters) it searches the org.
+ * A status by name, stage or id, within ONE project's own statuses (VEC-115/116: a task only takes its own project's
+ * statuses). A name only another project uses is refused with a message naming that project and listing this one's.
+ * List filters use statusFilterIds instead.
  */
-async function resolveStatus(ctx: McpCtx, ref: string, projectId?: ObjectId, statuses?: StatusDoc[]) {
-  if (projectId) return resolveProjectStatus(ctx.org._id, projectId, ref);
-  statuses ??= await (await cols()).statuses.find({ orgId: ctx.org._id }).sort({ order: 1 }).toArray();
-  const s = ref.trim().toLowerCase();
-  const st = statuses.find((x) => x._id.toHexString() === s) ?? statuses.find((x) => x.name.toLowerCase() === s);
-  if (!st) throw new ToolInputError(`Unknown status "${ref}". Statuses: ${statuses.map((x) => x.name).join(", ")}.`);
-  return st;
+async function resolveStatus(ctx: McpCtx, ref: string, projectId: ObjectId) {
+  return resolveProjectStatus(ctx.org._id, projectId, ref);
 }
+
+/** How the stages work, said once in get_workspace / check_for_triage (VEC-116). */
+const STAGES_NOTE =
+  'Statuses are per project: each project has its own ordered list (its `statuses`), and a task only takes a status of its own project, by that project\'s names. Every status has a stage, which is what Vector acts on whatever the status is called: "backlog" (not planned yet), "triage" (waiting for a triage bot to break it down), "unstarted" (planned, not started; new tasks default to the first one), "started" (being worked on; a bot\'s pickup moves the task to the first one, and review statuses are started too), "done" (finished: releases the tasks waiting on it) and "cancelled" (dropped: also releases them).';
 
 function parsePriority(v: unknown) {
   if (v === undefined || v === null || v === "") return undefined;
@@ -234,7 +234,7 @@ async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
   });
 }
 
-/** Projects (with their context), statuses in workflow order, and people and bots: what get_workspace returns. */
+/** Projects (with their context and their own statuses in workflow order), and people and bots: what get_workspace returns. */
 async function workspaceSummary(ctx: McpCtx) {
   const c = await cols();
   const [projects, statuses, dir] = await Promise.all([
@@ -242,10 +242,19 @@ async function workspaceSummary(ctx: McpCtx) {
     c.statuses.find({ orgId: ctx.org._id }).sort({ order: 1 }).toArray(),
     loadDirectory(ctx.org._id),
   ]);
+  const byProject = groupStatusesByProject(statuses);
   return {
     organisation: { id: ctx.org._id.toHexString(), name: ctx.org.name, slug: ctx.org.slug },
-    projects: projects.map((p) => ({ id: p._id.toHexString(), key: p.key, name: p.name, archived: !!p.archivedAt, context: projectContext(p) })),
-    statuses: statuses.map((s) => ({ id: s._id.toHexString(), name: s.name, stage: s.category })),
+    statusStages: STAGES_NOTE,
+    projects: projects.map((p) => ({
+      id: p._id.toHexString(),
+      key: p.key,
+      name: p.name,
+      archived: !!p.archivedAt,
+      context: projectContext(p),
+      /** This project's statuses in workflow order. Tasks in this project only take these names. */
+      statuses: (byProject.get(p._id.toHexString()) ?? []).map((s) => ({ id: s._id.toHexString(), name: s.name, stage: s.category })),
+    })),
     people: [...dir.values()],
   };
 }
@@ -290,7 +299,7 @@ async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment
   const orgId = ctx.org._id;
   const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1, createdBy: 1, archivedAt: 1, waitingOn: 1, assigneeId: 1 } });
   if (!task || task.archivedAt) return "";
-  const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1, name: 1 } });
+  const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1, name: 1, projectId: 1 } });
   if (!st || isClosedCategory(st.category)) return "";
   const blocked = await c.tasks.find({ orgId, waitingOn: taskId, archivedAt: null }, { projection: { _id: 1 } }).toArray();
   if (!blocked.length) return "";
@@ -318,13 +327,14 @@ async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment
   const who = notified.length
     ? ` ${names(notified)} ${mentioned.length ? "got your mention" : notified.length === 1 ? "has been notified" : "have been notified"} to review it.`
     : " No person could be notified, so nobody will pick this up.";
-  return ` Note: ${st.name} isn't a closing status, so ${waiting} until it's moved to Done (or Cancelled).${who} If the work already meets its acceptance criteria, move ${key} to Done with set_status instead.`;
+  const w = await loadStatusWords(orgId, st.projectId);
+  return ` Note: ${st.name} isn't a closing status, so ${waiting} until it's moved to ${w.done} (or ${w.cancelled}).${who} If the work already meets its acceptance criteria, move ${key} to ${w.done} with set_status instead.`;
 }
 
 const TOOLS: Record<string, ToolImpl> = {
   check_for_work: {
     description:
-      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply (if you're the task's assignee and it's open, the mention hands the work back: it's picked up by you again and moved back to In Progress, so finish it with complete_task again); (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved to In Progress for you (from Backlog, Todo or In Review). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
+      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply (if you're the task's assignee and it's open, the mention hands the work back: it's picked up by you again and moved back to its project's first started status, so finish it with complete_task again); (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved for you to its project's first started-stage status (In Progress by default; from a backlog, not-started or other started status such as In Review). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
     inputSchema: { type: "object", properties: { include_images: IMAGES_ARG }, additionalProperties: false },
     run: async (args, ctx) => {
       const c = await cols();
@@ -353,8 +363,9 @@ const TOOLS: Record<string, ToolImpl> = {
         // A mention of the assignee hands the work back: claim in progress, In Review -> In Progress, Stalled clears.
         const resumed = await resumeOnMention(ctx.org._id, ctx.bot._id, task._id);
         const fresh = resumed ? ((await c.tasks.findOne({ _id: task._id })) ?? task) : task;
+        const w = await loadStatusWords(ctx.org._id, fresh.projectId);
         const resumeNote = resumed
-          ? ` You're its assignee, so this hands the work back to you: it's picked up by you again and Vector moved it back to In Progress (no need to set that yourself). Do what the comment asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`
+          ? ` You're its assignee, so this hands the work back to you: it's picked up by you again and Vector moved it back to ${w.started} (no need to set that yourself). Do what the comment asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`
           : "";
         return taskResult(
           ctx,
@@ -381,7 +392,7 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           task,
           project,
-          `${key} "${task.title}" in project ${project.name} is ready to close out: everything it depends on is done. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(key)}`,
+          `${key} "${task.title}" in project ${project.name} is ready to close out: everything it depends on is done. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(key, await loadStatusWords(ctx.org._id, task.projectId))}`,
           { includeImages, extra: { kind: "closeout", queue: await queueCounts(ctx) } },
         );
       }
@@ -401,12 +412,13 @@ const TOOLS: Record<string, ToolImpl> = {
         const project = task && (await c.projects.findOne({ _id: task.projectId }));
         if (!task || !project) continue;
         const key = `${project.key}-${task.number}`;
+        const w = await loadStatusWords(ctx.org._id, task.projectId);
         const deps = task.dependsOn?.length ? ` Everything it depends on is done (see \`dependencies.dependsOn\`); their comments may hold results you need.` : "";
         return taskResult(
           ctx,
           task,
           project,
-          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to In Progress for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back). Finish with Done when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use In Review only when a named person must check or decide something, and @mention them. ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
+          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to ${w.started} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back). Finish with ${w.done} when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use ${reviewWord(w)} only when a named person must check or decide something, and @mention them. Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
           { includeImages, extra: { kind: "assigned", queue: await queueCounts(ctx) } },
         );
       }
@@ -431,7 +443,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   check_for_triage: {
     description:
-      "\"Is there anything to triage?\" Returns ONE task waiting in a Triage status (oldest first) that no other bot is triaging, with its full context and the workspace (projects, statuses, people and bots), and marks it as being triaged by you so no other bot is handed it. Your job is to break it into the concrete tasks needed to deliver it, created with create_task and chained with `depends_on` so the work happens in a logical order, then make the original task depend on them and move it out of Triage with complete_task. You stay its triager: when the tasks it depends on are all done, you're called back (a push wake-up, or `kind: \"closeout\"` on check_for_work) to summarise what was delivered and close it out. While you triage it you can edit it like its creator (not archive it). release_task hands it back. Returns `kind: \"idle\"` when nothing is waiting.",
+      "\"Is there anything to triage?\" Returns ONE task waiting in a Triage status (oldest first) that no other bot is triaging, with its full context and the workspace (projects with their own statuses, people and bots), and marks it as being triaged by you so no other bot is handed it. Your job is to break it into the concrete tasks needed to deliver it, created with create_task and chained with `depends_on` so the work happens in a logical order, then make the original task depend on them and move it out of Triage with complete_task. You stay its triager: when the tasks it depends on are all done, you're called back (a push wake-up, or `kind: \"closeout\"` on check_for_work) to summarise what was delivered and close it out. While you triage it you can edit it like its creator (not archive it). release_task hands it back. Returns `kind: \"idle\"` when nothing is waiting.",
     inputSchema: { type: "object", properties: { include_images: IMAGES_ARG }, additionalProperties: false },
     run: async (args, ctx) => {
       const c = await cols();
@@ -439,7 +451,7 @@ const TOOLS: Record<string, ToolImpl> = {
       if (!hasTriage) {
         return {
           content: [
-            text("This organisation has no Triage status, so there's nothing to triage. An admin can add one under Settings → Statuses with the Triage stage."),
+            text("No project in this organisation has a triage-stage status, so there's nothing to triage. An admin can add one to a project under Settings → Statuses with the Triage stage."),
             json({ kind: "idle", waitingInTriage: 0 }),
           ],
         };
@@ -460,7 +472,7 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           task,
           project,
-          `Triage ${key} "${task.title}" in project ${project.name}. It's now being triaged by you; no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(key)}`,
+          `Triage ${key} "${task.title}" in project ${project.name}. It's now being triaged by you; no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(key, await loadStatusWords(ctx.org._id, task.projectId))}`,
           { includeImages: bool(args, "include_images", true), extra: { kind: "triage", waitingInTriage: tasks.length - i - 1, workspace: await workspaceSummary(ctx) } },
         );
       }
@@ -501,13 +513,13 @@ const TOOLS: Record<string, ToolImpl> = {
 
   complete_task: {
     description:
-      "Say you've finished your work on a task. Optionally post a final comment and move it to a status. (When you picked the task up, Vector already moved it to In Progress for you, so pass the status it should end in.) Use Done when the work meets its acceptance criteria: only a done (or cancelled) status releases the tasks that depend on it. In Review leaves them waiting until a person closes it, so use it only when a person really has to check or decide something, and @mention that person in the comment. The task won't be offered again by check_for_work unless someone assigns it to you afresh. Mentions on it still reach you. For a task you're triaging, this ends the triage: pass a `status` that moves it out of Triage. You stay its triager afterwards: once everything it depends on is done you're called back (push wake-up, or `kind: \"closeout\"` on check_for_work) and close it out with complete_task and a closing status (e.g. Done, or In Review if something was cancelled or left open).",
+      "Say you've finished your work on a task. Optionally post a final comment and move it to a status. (When you picked the task up, Vector already moved it to a started status for you, so pass the status it should end in.) Statuses are per project: pass a name from the task's own project (\`project.statuses\` in get_task, or get_workspace); the default names are used below, and a project may have renamed them. Use Done (a done-stage status) when the work meets its acceptance criteria: only a done (or cancelled) status releases the tasks that depend on it. In Review (an open status) leaves them waiting until a person closes it, so use it only when a person really has to check or decide something, and @mention that person in the comment. The task won't be offered again by check_for_work unless someone assigns it to you afresh. Mentions on it still reach you. For a task you're triaging, this ends the triage: pass a `status` that moves it out of Triage. You stay its triager afterwards: once everything it depends on is done you're called back (push wake-up, or `kind: \"closeout\"` on check_for_work) and close it out with complete_task and a closing status (e.g. Done, or In Review if something was cancelled or left open).",
     inputSchema: {
       type: "object",
       properties: {
         task: TASK_ARG,
         comment: { type: "string", description: "Optional closing comment, e.g. a summary of what you did. Mention people with <@id>." },
-        status: { type: "string", description: "Optional status name to move the task to (needs you to be its creator or assignee; as its triager, a closing status once it's ready)." },
+        status: { type: "string", description: "Optional status name (or stage) of the task's own project to move it to (needs you to be its creator or assignee; as its triager, a closing status once it's ready). A name only another project has is refused." },
       },
       required: ["task"],
       additionalProperties: false,
@@ -601,7 +613,7 @@ const TOOLS: Record<string, ToolImpl> = {
       type: "object",
       properties: {
         project: { type: "string", description: "Project key (WEB), name or id." },
-        status: { type: "string", description: "Status name or id." },
+        status: { type: "string", description: "Status name or id. With `project`, a status of that project; without, every project's status of that name." },
         assignee: { type: "string", description: '"me", "none", a person\'s name or email, a bot\'s name, or an id.' },
         query: { type: "string", description: "Text to find in titles." },
         include_archived: { type: "boolean", default: false },
@@ -615,7 +627,7 @@ const TOOLS: Record<string, ToolImpl> = {
       const project = str(args, "project");
       if (project) filter.projectId = (await resolveProject(ctx, project))._id;
       const status = str(args, "status");
-      if (status) filter.statusId = (await resolveStatus(ctx, status))._id;
+      if (status) filter.statusId = { $in: await statusFilterIds(ctx.org._id, status, filter.projectId as ObjectId | undefined) };
       const assignee = str(args, "assignee");
       if (assignee) filter.assigneeId = assignee.toLowerCase() === "none" ? null : new ObjectId(resolvePerson(await loadDirectory(ctx.org._id), ctx.bot._id, assignee));
       const query = str(args, "query");
@@ -628,7 +640,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   get_workspace: {
     readOnly: true,
-    description: "Who you are, the tools your role allows, and the organisation's projects (with each project's context: admin-set key/value notes such as repos and conventions), statuses (in workflow order) and people and bots with their ids, for assigning and @mentioning.",
+    description: "Who you are, the tools your role allows, the organisation's projects (each with its context: admin-set key/value notes such as repos and conventions, and its own statuses in workflow order with their stage; statuses are per project and a task only takes its own project's), how the stages work, and people and bots with their ids, for assigning and @mentioning.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     run: async (_args, ctx) => {
       const c = await cols();
@@ -673,8 +685,8 @@ const TOOLS: Record<string, ToolImpl> = {
   },
 
   set_status: {
-    description: "Move a task to another status, by name (see get_workspace for the workflow). Works on tasks you created or are assigned to. On a task you triaged, you can move it to a closing status (e.g. Done, In Review or Cancelled) once nothing it depends on is open.",
-    inputSchema: { type: "object", properties: { task: TASK_ARG, status: { type: "string", description: 'Status name, e.g. "In Progress".' } }, required: ["task", "status"], additionalProperties: false },
+    description: "Move a task to another status of its own project, by name. Statuses are per project: the task's project's names are under `project.statuses` in get_task (and per project in get_workspace); a name only another project has is refused and the task is left unchanged. Works on tasks you created or are assigned to. On a task you triaged, you can move it to a closing status (a done, cancelled or review status) once nothing it depends on is open.",
+    inputSchema: { type: "object", properties: { task: TASK_ARG, status: { type: "string", description: 'A status name of the task\'s project, e.g. "In Progress" (or a stage such as "done" for its first status of that stage).' } }, required: ["task", "status"], additionalProperties: false },
     run: async (args, ctx) => {
       const { task } = await findTask(ctx, str(args, "task", true)!);
       const st = await resolveStatus(ctx, str(args, "status", true)!, task.projectId);
@@ -719,7 +731,7 @@ const TOOLS: Record<string, ToolImpl> = {
         depends_on: DEPENDS_ARG,
         before: { type: "string", description: "Reorder: task key it should sit directly above." },
         after: { type: "string", description: "Reorder: task key it should sit directly below." },
-        status: { type: "string", description: 'Status name, e.g. "Todo". With before/after it moves there in the same write.' },
+        status: { type: "string", description: 'Status name of the task\'s project (of the destination project when `project` is given), e.g. "Todo". With before/after it moves there in the same write.' },
       },
       required: ["task"],
       additionalProperties: false,
@@ -772,7 +784,7 @@ const TOOLS: Record<string, ToolImpl> = {
         title: { type: "string" },
         description: { type: "string", description: "Markdown." },
         type: { type: "string", enum: ["issue", "feature", "task"], default: "issue", description: TYPE_DESC },
-        status: { type: "string", description: "Status name. Defaults to the first not-started status." },
+        status: { type: "string", description: "Status name of that project (statuses are per project, see get_workspace). Defaults to the project's first not-started status." },
         assignee: {
           type: "string",
           description:
@@ -862,6 +874,7 @@ Typical loop: call check_for_work. It returns one item at a time:
 - kind "assigned": a task assigned to you, now picked up by you and moved to In Progress for you. Do the work, hand it on with assign_task if needed, then call complete_task with Done (releases the tasks waiting on it), or In Review only when a named person must check something (@mention them).
 - kind "idle": nothing new.
 While you work an assigned task (or one a mention handed back to you), keep its ticket posted with add_comment: a short plan when you pick it up, then a few plain-text lines at each milestone and at least every ~10 minutes saying what's done and what's next, never one per tool call, and straight away when you're blocked or waiting on someone (@mention them). The assigned hand-out repeats the details.
-Call check_for_work again until it says idle. Use get_workspace for project keys, statuses and people's ids.
+Call check_for_work again until it says idle. Use get_workspace for project keys, each project's statuses and people's ids.
+Statuses are per project: every project has its own list, a task only takes a status of its own project (by that project's names; a task's context lists them under \`project.statuses\`), and Vector acts on each status's stage (backlog, triage, unstarted, started, done, cancelled), not its name. The names used here (Todo, In Progress, In Review, Done, Cancelled) are the defaults; a project may have renamed them.
 If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task, chain them with \`depends_on\` so they run in a logical order, make the original depend on them, then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
 Tasks can depend on other tasks (\`depends_on\` on create_task / update_task). A task isn't offered or pushed to its assignee until everything it depends on is closed (a done or cancelled status; the ready message says which were cancelled); moving your task to a done or cancelled status (set_status or complete_task with a status) releases the tasks waiting on it. A task you file that blocks your own work needs an owner: create it with \`assignee\` ("me" by default, or whoever should do it). If you send your task back to wait on new blockers, every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you.\nComments are plain text: write add_comment and complete_task comments without Markdown (no **bold**, headings or tables); plain "- " lists are fine. Task descriptions do accept Markdown.`;

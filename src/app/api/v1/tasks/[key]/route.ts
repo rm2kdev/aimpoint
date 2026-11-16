@@ -18,6 +18,8 @@ const MOVE_FIELDS = new Set(["before", "after", "status", "project"]);
 
 /**
  * PATCH /api/v1/tasks/WEB-12  Same rights as a person: creator edits anything, assignee moves and sets details. `dependsOn` replaces the list.
+ * `status` is a status of the task's own project (of the destination when `project` moves it); statuses are per
+ * project, so another project's name or id is a 400 and nothing changes. A project move without `status` keeps the stage.
  * `before` / `after` (task keys) reorder it in the shared manual order: it goes directly above `before` / below
  * `after`, optionally with `status` and `project` in the same write. Creator or admin only.
  */
