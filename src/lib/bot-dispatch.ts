@@ -263,12 +263,20 @@ export const BLOCKER_NOTE =
   "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
 
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
-const STARTED_NOTE = (w: StatusWords) =>
-  `Vector moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something. ${BLOCKER_NOTE}`;
+const STARTED_NOTE = (w: StatusWords, current: string) =>
+  `${
+    w.started
+      ? `Vector moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
+      : `This project has no started status, so the task stays in ${current} while you work (nothing to set for that)`
+  }; finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something. ${BLOCKER_NOTE}`;
 
 /** Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. */
-const RESUMED_NOTE = (w: StatusWords) =>
-  `You're its assignee, so this hands the work back to you: Vector moves it back to ${w.started} as this is delivered (the task below may still show its earlier status and Stalled). Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
+const RESUMED_NOTE = (w: StatusWords, current: string) =>
+  `You're its assignee, so this hands the work back to you: ${
+    w.started
+      ? `Vector moves it back to ${w.started} as this is delivered (the task below may still show its earlier status and Stalled)`
+      : `it's picked up by you again and stays in ${current}, since this project has no started status (the task below may still show Stalled)`
+  }. Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
 
 const TOOLS_HINT = (w: StatusWords) =>
   `Act on the ticket with the \`vector\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people.`;
@@ -286,6 +294,8 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const project = task && (await c.projects.findOne({ _id: task.projectId }));
   let context: unknown = null;
   const w = task ? await loadStatusWords(org._id, task.projectId) : DEFAULT_STATUS_WORDS;
+  // Named when the project has no started status, so the note says where the task stays (VEC-120).
+  const current = (task && !w.started && (await c.statuses.findOne({ _id: task.statusId, orgId: org._id }, { projection: { name: 1 } }))?.name) || "its current status";
   if (task && project) {
     const built = await buildTaskContext(task, project, {
       origin: conn.vectorUrl ?? "",
@@ -302,11 +312,11 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       : reason.kind === "closeout"
       ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
       : reason.kind === "assigned"
-      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE(w)}\n\n${PROGRESS_HINT}`
+      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
-        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE(w)}\n\n${PROGRESS_HINT}`
+        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
-            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE(w)}\n\n${PROGRESS_HINT}` : "Reply to it."
+            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE(w, current)}\n\n${PROGRESS_HINT}` : "Reply to it."
           }`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
   const projectBlock = meta.length

@@ -126,11 +126,11 @@ export async function statusFilterIds(orgId: ObjectId, ref: string, projectId?: 
 /**
  * The names one project uses for the statuses Vector's texts talk about (VEC-116), so a wake-up or tool reply
  * still reads right when a project renamed them: `started` is where a bot's pickup moves the task (first started
- * status), `done` / `cancelled` the first of those stages, `review` a started-stage status named like "review"
+ * status; null when the project has none, so nothing moves and texts must not name one, VEC-120), `done` / `cancelled` the first of those stages, `review` a started-stage status named like "review"
  * (null when the project has none), `unstarted` the first not-started status, `triage` the first triage status.
  */
 export interface StatusWords {
-  started: string;
+  started: string | null;
   done: string;
   cancelled: string;
   review: string | null;
@@ -145,7 +145,7 @@ export function statusWords(list: readonly { name: string; category: StatusCateg
   const first = (stage: StatusCategory) => sorted.find((s) => s.category === stage)?.name;
   const started = sorted.filter((s) => s.category === "started");
   return {
-    started: started[0]?.name ?? DEFAULT_STATUS_WORDS.started,
+    started: started[0]?.name ?? null,
     done: first("done") ?? DEFAULT_STATUS_WORDS.done,
     cancelled: first("cancelled") ?? DEFAULT_STATUS_WORDS.cancelled,
     review: started.find((s, i) => i > 0 && /review/i.test(s.name))?.name ?? null,
