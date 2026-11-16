@@ -436,7 +436,7 @@ function Report({
               title="Backlog"
               description={`Open tasks at the end of each ${UNIT_WORDS[g]}: ${formatNumber(tickets.backlog.start)} at the start, ${formatNumber(tickets.backlog.end)} at the end`}
               data={series}
-              series={[{ key: "backlog", label: "Open tasks", color: 3 }]}
+              series={[{ key: "backlog", label: "Open tasks", color: 3, summary: "level" }]}
               variant="area"
               granularity={g}
               loading={loading}

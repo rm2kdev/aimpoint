@@ -15,7 +15,7 @@ import {
   type Series,
   type ValueFormatter,
 } from "./chart-frame"
-import { formatCompact, formatExact, formatNumber, formatTick, type Granularity, type TimeValue } from "./format"
+import { formatCompact, formatExact, formatNumber, formatTick, spanOf, type Granularity, type TimeValue } from "./format"
 
 export type TimePoint = { t: TimeValue } & Record<string, number | TimeValue | null | undefined>
 
@@ -56,6 +56,7 @@ export function TimeSeriesChart({
 }: TimeSeriesChartProps) {
   const config = React.useMemo(() => seriesConfig(series), [series])
   const rows = React.useMemo(() => data.map((d, i) => ({ ...d, __i: i })), [data])
+  const span = React.useMemo(() => spanOf(data, (d) => d.t), [data])
   const empty = !data.length || !series.length
   const area = stacked || variant === "area"
   // A lone bucket has no line to draw, so always show dots on short series.
@@ -89,7 +90,7 @@ export function TimeSeriesChart({
         minTickGap={28}
         interval="preserveStartEnd"
         tick={AXIS_TICK}
-        tickFormatter={(i: number) => (rows[i] ? formatTick(rows[i].t, granularity) : "")}
+        tickFormatter={(i: number) => (rows[i] ? formatTick(rows[i].t, granularity, span) : "")}
       />
       <YAxis
         tickLine={false}
@@ -201,7 +202,15 @@ function describe(
         peakAt = d.t
       }
     }
-    return `${s.label} total ${fmt(total)}, peak ${fmt(peak)} on ${formatExact(peakAt, g)}`
+    const peakText = `peak ${fmt(peak)} on ${formatExact(peakAt, g)}`
+    if (s.summary === "level") {
+      const first = num(data[0][s.key])
+      const last = num(data[data.length - 1][s.key])
+      return data.length === 1
+        ? `${s.label} ${fmt(first)}`
+        : `${s.label} from ${fmt(first)} to ${fmt(last)}, ${peakText}`
+    }
+    return `${s.label} total ${fmt(total)}, ${peakText}`
   })
   const kind = stacked ? "Stacked area chart" : "Chart"
   return `${kind} of ${title}, ${data.length} ${data.length === 1 ? "point" : "points"}, ${range}. ${parts.join("; ")}.`

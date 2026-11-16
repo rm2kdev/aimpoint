@@ -31,6 +31,12 @@ export interface Series {
   key: string
   label: string
   color?: ChartColor
+  /**
+   * How the accessible summary reads the series. "sum" (default) is for flows (opened, closed,
+   * comments per bucket) and states a total; "level" is for stocks sampled per bucket (open
+   * tasks at the end of each day), where a total means nothing, so it states start and end.
+   */
+  summary?: "sum" | "level"
 }
 
 /**
