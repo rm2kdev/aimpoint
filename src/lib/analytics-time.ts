@@ -65,6 +65,16 @@ function offsetMs(date: Date, tz: string): number {
   return wall - (date.getTime() - date.getUTCMilliseconds());
 }
 
+/** ISO 8601 with the zone's offset at that instant: "2026-11-17T00:00:00+08:00" (used by the CSV export). */
+export function isoWithOffset(date: Date, tz: string): string {
+  const p = zonedParts(date, tz);
+  const off = Math.round(offsetMs(date, tz) / 60_000);
+  const pad = (n: number, w = 2) => String(n).padStart(w, "0");
+  const sign = off < 0 ? "-" : "+";
+  const abs = Math.abs(off);
+  return `${pad(p.y, 4)}-${pad(p.mo)}-${pad(p.d)}T${pad(p.h)}:${pad(p.mi)}:${pad(p.s)}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
 /** The instant whose wall clock in `tz` reads y-mo-d h:00 (fields may overflow, like Date.UTC). */
 export function zonedTime(y: number, mo: number, d: number, h: number, tz: string): Date {
   const guess = Date.UTC(y, mo - 1, d, h);

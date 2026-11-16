@@ -3,7 +3,7 @@
  * the MCP server (src/lib/mcp/server.ts) implements it.
  */
 
-export type ToolGroup = "work" | "triage" | "read" | "write";
+export type ToolGroup = "work" | "triage" | "read" | "write" | "reporting";
 
 export interface ToolInfo {
   name: string;
@@ -27,6 +27,11 @@ export const TOOL_GROUPS: { id: ToolGroup; title: string; desc: string }[] = [
   },
   { id: "read", title: "Read", desc: "Look up tasks, projects, statuses and people." },
   { id: "write", title: "Contribute", desc: "Comment, tag people, move and assign tasks, create new ones." },
+  {
+    id: "reporting",
+    title: "Reporting",
+    desc: "Read the organisation's analytics, the same numbers admins see on the Analytics screen. Off unless a role switches it on.",
+  },
 ];
 
 export const MCP_TOOLS: ToolInfo[] = [
@@ -49,6 +54,13 @@ export const MCP_TOOLS: ToolInfo[] = [
   { name: "assign_task", title: "Assign", summary: "Assign a task to a person, a bot, itself, or nobody.", group: "write" },
   { name: "update_task", title: "Edit task", summary: "Change title, description, type, priority, due date, project, dependencies or manual order.", group: "write" },
   { name: "create_task", title: "Create task", summary: "Create a new task in any project, optionally depending on other tasks.", group: "write" },
+  {
+    name: "get_analytics",
+    title: "Get analytics",
+    summary: "The analytics report for a period: tickets opened/closed, backlog, cycle time, comments, interactions, per project and per contributor. Also allows GET /api/v1/analytics.",
+    group: "reporting",
+    optIn: true,
+  },
 ];
 
 export const TOOL_NAMES = MCP_TOOLS.map((t) => t.name);

@@ -110,6 +110,7 @@ Task context includes the organisation, project, status, priority, assignee, cre
 | `get_task`, `list_tasks`, `get_workspace` | read tasks, projects, statuses, people and bots |
 | `add_comment` | comment; tag people via `mention` (names, emails or ids) or `<@id>` |
 | `set_status`, `assign_task`, `update_task`, `create_task` | move, assign, edit and create (descriptions accept Markdown) |
+| `get_analytics` | the organisation's analytics report (opt-in, Reporting group): `from`, `to`, `granularity`, `project`, `person` / `bot`, `tz`; same params and data as `GET /api/v1/analytics` |
 
 ### Task dependencies
 
@@ -136,7 +137,7 @@ Moving a task back into Triage clears earlier triage (and any pending close-out)
 
 People get notifications for assignments (with what the task waits on), @mentions and tasks of theirs becoming ready: an Inbox view with unread count in the sidebar and a live toast. Bots get wake-ups and `check_for_work` instead.
 
-**Bot roles** (Settings → Bot roles) are named allow/deny lists over these tools. A bot with a role only sees and can call its allowed tools, and the equivalent REST endpoints answer 403. Bots without a role get every tool except opt-in ones (`check_for_triage`). A role can't be deleted while a bot uses it.
+**Bot roles** (Settings → Bot roles) are named allow/deny lists over these tools. A bot with a role only sees and can call its allowed tools, and the equivalent REST endpoints answer 403. Bots without a role get every tool except opt-in ones (`check_for_triage`, `get_analytics`). A role can't be deleted while a bot uses it.
 
 ### REST API
 
@@ -154,8 +155,18 @@ curl $HOST/api/v1/tasks -H "Authorization: Bearer vec_…" -H "Content-Type: app
 | `GET /api/v1/tasks/WEB-12` | task with description, `dependencies`, `dependents` and activity |
 | `PATCH /api/v1/tasks/WEB-12` | same fields as create, plus `"archived": true/false`; all fields on tasks the bot created; status, assignee, priority, type and due date on tasks assigned to it |
 | `POST /api/v1/tasks/WEB-12/comments` | `{ "body": "…" }`; mention people or bots with `<@id>` (ids from `/members`) |
+| `GET /api/v1/analytics?from=2026-11-01&to=2026-11-30&granularity=week&project=WEB` | `{ project, report }`, the Analytics screen's report. Only bots whose role switches on `get_analytics` (else 403). `from` / `to`: ISO 8601 date-time with offset, or a date (`to` as a date includes that day); default the last 30 days. `granularity` hour/day/week/month (default by length, max 3000 buckets), `project` key or id, `person` or `bot` id, `tz` IANA (default Australia/Perth). Unknown project/person/bot, `from` >= `to`, more than 3660 days, bad granularity/date/timezone: 400 with the reason |
 
 Errors are JSON `{ "error": "…" }` with 400/401/403/404. `pnpm seed` creates a demo "Triage Bot" and prints its key.
+
+### Analytics export
+
+Admins get **Export CSV** on the Analytics screen: `GET /o/<slug>/analytics/export?from&to&granularity&project&person|bot&tz` (same params as the REST endpoint; the button passes exactly the period on screen) returns a zip of UTF-8 CSVs with ISO 8601 times carrying the timezone's offset. Signed out 401, members 403, bad params 400. Columns are documented in the zip's `README.txt` (`src/lib/analytics-export.ts`):
+
+- `period.csv`: the filter and the previous period.
+- `summary.csv`: one row per metric (`metric, unit, total, people, bots, previous, previous_people, previous_bots`): tickets opened/closed/done/cancelled/reopened, comments, interactions by kind, bot pickups/completions, backlog start/end, cycle time and open-task age median/p90 in hours.
+- `timeseries.csv`: one row per bucket (`bucket_start, bucket_end`, then each metric per bucket); columns sum to the summary totals.
+- `projects.csv`, `breakdown.csv` (stage/priority/type), `contributors.csv` (top people and bots).
 
 ## Notes
 

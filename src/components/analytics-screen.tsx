@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { BotIcon, CalendarRangeIcon, ChartNoAxesColumnIcon, UserIcon, XIcon } from "lucide-react";
 import { MobileNavButton } from "@/components/app-shell";
+import { AnalyticsExportButton } from "@/components/analytics-export-button";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
 import { refreshAnalytics } from "@/app/actions/analytics";
 import type { AnalyticsView } from "@/lib/analytics-view";
@@ -119,6 +120,7 @@ export function AnalyticsScreen(props: AnalyticsView) {
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
         <MobileNavButton />
         <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">Analytics</h1>
+        <AnalyticsExportButton report={report} filters={{ project: view.project, person: view.person, bot: view.bot }} />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto" data-analytics-scroll>
         <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 pt-4 pb-16 sm:px-7">

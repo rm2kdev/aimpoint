@@ -11,6 +11,8 @@ import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage }
 import { publishWorking } from "@/lib/claims";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
+import { computeAnalytics } from "@/lib/analytics";
+import { ANALYTICS_PARAM_DOCS, resolveAnalyticsExport } from "@/lib/analytics-export";
 import {
   buildTaskContext,
   loadDirectory,
@@ -22,7 +24,7 @@ import {
   ToolInputError,
   type ImageBlock,
 } from "@/lib/mcp/context";
-import { isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type TaskDoc } from "@/lib/types";
+import { ANALYTICS_GRANULARITIES, isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type TaskDoc } from "@/lib/types";
 
 /* ---------------- types ---------------- */
 
@@ -652,6 +654,36 @@ const TOOLS: Record<string, ToolImpl> = {
             ...ws,
             mentions: "To tag someone in a comment, write <@id> in the body or pass their name in `mention`.",
           }),
+        ],
+      };
+    },
+  },
+
+  get_analytics: {
+    readOnly: true,
+    description:
+      "The organisation's analytics report for a period (the same data as the admin Analytics screen and its CSV export): tickets opened, closed (done/cancelled), reopened, backlog and open-task age over time, cycle time (median/p90 ms), comments and interactions split people vs bots, per-project breakdowns, tasks by stage/priority/type and top contributors. Every count has `total`, `previous` (the equal-length period before) and `series` (one value per entry of `buckets`, bucket starts as ISO instants). Archived tasks are left out; closed = moved into a done or cancelled stage. Doesn't change any state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: ANALYTICS_PARAM_DOCS.from },
+        to: { type: "string", description: ANALYTICS_PARAM_DOCS.to },
+        granularity: { type: "string", enum: [...ANALYTICS_GRANULARITIES], description: ANALYTICS_PARAM_DOCS.granularity },
+        project: { type: "string", description: ANALYTICS_PARAM_DOCS.project },
+        person: { type: "string", description: ANALYTICS_PARAM_DOCS.person },
+        bot: { type: "string", description: ANALYTICS_PARAM_DOCS.bot },
+        tz: { type: "string", description: ANALYTICS_PARAM_DOCS.tz },
+      },
+      additionalProperties: false,
+    },
+    run: async (args, ctx) => {
+      const { query, project } = await resolveAnalyticsExport(ctx.org._id, args);
+      const r = await computeAnalytics(ctx.org._id, query);
+      const t = r.tickets;
+      return {
+        content: [
+          text(`Analytics for ${project ? `${project.key} (${project.name})` : "all projects"}${r.period.contributor ? `, ${r.period.contributor.name} only` : ""}, ${r.period.from} to ${r.period.to} by ${r.period.granularity} (${r.period.tz}): ${t.opened.total} opened, ${t.closed.total} closed, backlog ${t.backlog.start} -> ${t.backlog.end}, ${r.messages.comments.total} comments.`),
+          json({ project: project ? { id: project._id.toHexString(), key: project.key, name: project.name } : null, report: r }),
         ],
       };
     },
