@@ -240,6 +240,10 @@ export function TaskWorkspace({
   const shown = useMemo(() => (scope.archived ? [] : groups), [scope.archived, groups]);
   // Done and cancelled groups start folded until opened from their heading.
   const isFolded = (g: Group) => collapsed.get(g.id) ?? isClosedCategory(g.stage);
+  // No open tasks: the group new tasks land in (first not-started one, else the first open group showing)
+  // carries the empty message inline (VEC-122).
+  const openShown = openCount === 0 ? shown.filter((g) => !isClosedCategory(g.stage) && !isFolded(g)) : [];
+  const promptGroupId = (openShown.find((g) => g.stage === "unstarted") ?? openShown[0])?.id;
 
   /* ----- selection & keyboard ----- */
   // Tasks in folded groups are out of sight, so j/k skips them.
@@ -605,13 +609,9 @@ export function TaskWorkspace({
         <FilterChips value={view} onChange={setView} statusOptions={statusFilterOptions} />
 
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-16 sm:px-4">
-          {tasks.size === 0 ? (
-            scope.archived ? (
-              <EmptyState title="Nothing archived" hint={emptyHint} icon="archive" />
-            ) : (
-              <EmptyState title={scope.mine ? "Nothing assigned to you" : "No tasks yet"} hint={emptyHint} onNew={() => newTask()} />
-            )
-          ) : visible.length === 0 && filtering ? (
+          {tasks.size === 0 && scope.archived ? (
+            <EmptyState title="Nothing archived" hint={emptyHint} icon="archive" />
+          ) : visible.length === 0 && filtering && tasks.size > 0 ? (
             <EmptyState
               title="Nothing matches these filters"
               hint="Loosen a filter to see more tasks."
@@ -634,9 +634,6 @@ export function TaskWorkspace({
             </ul>
           ) : (
             <>
-              {openCount === 0 && (
-                <EmptyState title="All clear" hint="Every task in this view is done. Nice." onNew={() => newTask()} compact />
-              )}
               {shown.map((g) => {
                 const folded = isFolded(g);
                 return (
@@ -697,7 +694,18 @@ export function TaskWorkspace({
                     renderItem={manual && g.tasks.length > 1 ? renderers.movable : renderers.fixed}
                   />
                   )}
-                  {!folded && g.tasks.length === 0 && <EmptyGroup />}
+                  {!folded && g.tasks.length === 0 && (
+                    <EmptyGroup
+                      prompt={
+                        g.id === promptGroupId
+                          ? {
+                              text: tasks.size === 0 ? (scope.mine ? "Nothing assigned to you." : "No tasks yet.") : "All clear, every task here is closed.",
+                              onNew: () => newTask(g.status ? { statusId: g.status.id } : undefined),
+                            }
+                          : undefined
+                      }
+                    />
+                  )}
                 </div>
                 );
               })}
@@ -784,11 +792,29 @@ function GroupHeading({
   );
 }
 
-/** An empty, unfolded group: a slim "No tasks" line, which the list's drop zone replaces during a drag. */
-function EmptyGroup() {
+/**
+ * An empty, unfolded group: a slim "No tasks" line, which the list's drop zone replaces during a drag. When the
+ * view has no open tasks, the group new tasks land in carries the view's empty message and a New task link
+ * instead (VEC-122), so the status groups stay the page's structure rather than a block sitting above them.
+ */
+function EmptyGroup({ prompt }: { prompt?: { text: string; onNew: () => void } }) {
   const dragging = useDragSelector((d) => d?.item.group === TASK_GROUP);
   if (dragging) return null;
-  return <p className="flex h-9 items-center px-3 text-[12.5px] text-faint">No tasks</p>;
+  if (!prompt) return <p className="flex h-9 items-center px-3 text-[12.5px] text-faint">No tasks</p>;
+  return (
+    <p className="flex h-9 items-center gap-1 px-3 text-[12.5px] text-faint">
+      {prompt.text}
+      <button
+        type="button"
+        onClick={prompt.onNew}
+        className="ml-1 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        <PlusIcon className="size-3.5" />
+        New task
+        <Kbd>N</Kbd>
+      </button>
+    </p>
+  );
 }
 
 /** What a row can do. One object for the whole view (stable identity), so memoised rows skip re-rendering. */
@@ -1110,18 +1136,16 @@ function EmptyState({
   hint,
   onNew,
   action,
-  compact,
   icon,
 }: {
   title: string;
   hint: string;
   onNew?: () => void;
   action?: React.ReactNode;
-  compact?: boolean;
   icon?: "archive";
 }) {
   return (
-    <div className={cn("mx-auto flex max-w-sm flex-col items-center text-center", compact ? "py-10" : "py-[18vh]")}>
+    <div className="mx-auto flex max-w-sm flex-col items-center py-[18vh] text-center">
       {icon === "archive" ? <ArchiveIcon className="mb-4 size-9 stroke-1 text-faint/60" /> : <svg width="40" height="40" viewBox="0 0 20 20" aria-hidden className="mb-4 text-faint/60">
         <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="1" />
         <path d="m6.6 10.2 2.3 2.3 4.5-4.6" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
