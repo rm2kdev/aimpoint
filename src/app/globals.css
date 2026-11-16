@@ -41,6 +41,13 @@
   --color-live: var(--live);
   --color-live-border: var(--live-border);
   --color-chip: var(--chip);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-positive: var(--positive);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -75,6 +82,14 @@
   --live: #fff6d6;
   --live-border: #f0d98a;
   --chip: #f3f3f1;
+  /* Analytics chart series (data colours, VEC-133): never the live yellow, never the selection blue. */
+  --chart-1: #3e63dd;
+  --chart-2: #12a594;
+  --chart-3: #8e4ec6;
+  --chart-4: #d6409f;
+  --chart-5: #e5641a;
+  --chart-6: #8b8d98;
+  --positive: #218358;
   --sidebar: #f7f7f5;
   --sidebar-foreground: #171717;
   --sidebar-border: #ececea;
@@ -112,6 +127,13 @@
   --live: #2a2310;
   --live-border: #5c4a14;
   --chip: #1a1a1a;
+  --chart-1: #5b7cf0;
+  --chart-2: #16b8a4;
+  --chart-3: #a26ad8;
+  --chart-4: #e35aae;
+  --chart-5: #f07a30;
+  --chart-6: #7d808c;
+  --positive: #3dd68c;
   --sidebar: #111111;
   --sidebar-foreground: #ededed;
   --sidebar-border: #1f1f1f;

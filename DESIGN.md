@@ -383,6 +383,16 @@ Every user-ordered list (sidebar projects, later statuses, list rows and board c
 ```
 `onReorder` gets the complete new id order. Lists keep no order of their own, so update `items` optimistically in the callback (`moveItem(items, fromIndex, toIndex)`, or `transferItem(from, to, fromIndex, toIndex)` for a move). Vertical lists only for now.
 
+### Analytics charts (`src/components/analytics/`)
+Recharts under the shadcn `chart` wrapper (`src/components/ui/chart.tsx`), wrapped in a small kit: `KpiTile`, `TimeSeriesChart` (line, area, stacked area), `BarChart` (grouped, stacked, horizontal) and `DonutChart`. Charts are data, so they carry chroma; the chrome around them stays neutral.
+- **Series colours:** `--chart-1` to `--chart-6` (indigo, teal, violet, pink, orange, slate; lighter variants in dark), handed out in order or picked per series with `color`. Never the live yellow, never the selection blue, never status colours.
+- **Delta semantics:** `KpiTile` colours a change by whether it is good (`goodDirection` up, down or neutral): `--positive` green at a 10% tint for good, destructive red at a 10% tint for bad, Chip grey for no change or neutral. Arrows and the spoken text carry the direction, so colour is never the only signal.
+- **Card:** 10px radius, hairline border, paper fill, no shadow; title 13.5px/600, description 12.5px Muted Ink. Axis ticks 11px Faint Ink, horizontal grid lines in Hairline only, no axis lines. Legends sit under the plot as small 2px-radius squares.
+- **Tooltip:** a popover-surface float (float ring + popover lift) with the exact date (and time for hourly buckets), one row per series with its exact value in mono, and a total for stacked charts.
+- **States:** loading is a static stone-wash bar skeleton (no pulse), empty is a dashed Input Stroke box reading "No data for this period", a single point draws dots.
+- **Motion:** none. Chart animations are off in every mode (tooltips and series appear in place), which also satisfies reduced motion.
+- **Access:** each plot is a `role="figure"` with a generated summary (range, totals, peaks) as its label; the surface is keyboard-focusable (arrow keys move the tooltip) with a focus ring; every chart has a Chart/Table toggle that swaps in a real data table.
+
 ### Priority Icon
 Three ascending 3px bars in a 14px box. Filled bars are Muted Ink, or Ink at urgent (3); unfilled bars are Input Stroke. No priority is three short faint dashes.
 
