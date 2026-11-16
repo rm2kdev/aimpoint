@@ -132,6 +132,11 @@ export interface TaskDoc {
    * higher. Backfilled once by the `2026-11-task-rank` migration; new tasks get one above everything else.
    */
   rank?: string;
+  /**
+   * VEC-108: set when Vector told someone this task went red Stalled because nobody owns it (a "stalled"
+   * notification), so it isn't sent again while that lasts; cleared once the task leaves that state (re-arms).
+   */
+  stalledNoticeAt?: Date | null;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -338,8 +343,9 @@ export interface BotMentionDoc {
 
 /** Something a person should look at. Bots get wake-ups and check_for_work instead. */
 /** "review": a bot finished a task but left it open (e.g. In Review) while other tasks wait on it.
- * "undelivered": Vector couldn't hand a task to its push bot after retrying (actorId = the bot). */
-export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered";
+ * "undelivered": Vector couldn't hand a task to its push bot after retrying (actorId = the bot).
+ * "stalled": an open, ready task nobody is assigned to is holding other open tasks up (VEC-108). */
+export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered" | "stalled";
 export interface NotificationDoc {
   _id: ObjectId;
   orgId: ObjectId;

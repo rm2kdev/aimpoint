@@ -13,5 +13,7 @@ export function notificationHeadline(n: Notification, actorName: string | null) 
       return `${actorName ?? "Someone"} needs your review on ${n.taskKey}`;
     case "undelivered":
       return `${n.taskKey} never reached ${actorName ?? "its bot"}`;
+    case "stalled":
+      return `${n.taskKey} is stalled: nobody is assigned to it`;
   }
 }

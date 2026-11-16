@@ -61,6 +61,8 @@ export async function publish(orgId: string, event: RealtimeEvent, opts: { worki
     // Real-time is best-effort; the write already succeeded.
     console.error("[realtime] publish failed", err);
   }
+  // Every change that can move a task in or out of "unassigned" Stalled ends in its task.upsert (VEC-108).
+  if (event.type === "task.upsert") await (await import("@/lib/stalled-notice")).syncStalledNotice(orgId, event.task);
   if (WORKLOAD_TRIGGERS.has(event.type)) await refreshWorkload(orgId);
 }
 
