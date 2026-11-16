@@ -196,10 +196,11 @@ function SortableListInner<T>(props: SortableListProps<T>) {
     regRef.current = registration(latest.current.props, listId, group, listRef.current)
     // Rows added, moved or removed, or the drop zone shown: cached row positions are stale. A re-render that
     // changed neither (a teammate edited a row's fields) keeps them, so live edits cost no layout reads.
+    // Mid-drag the open gap is re-applied to the new rows too, or it stays keyed to the old ones (VEC-104).
     const sig = `${showEmpty}|${items.map(getId).join(",")}`
     if (sig !== layoutSig.current) {
       layoutSig.current = sig
-      store.invalidate()
+      store.rowsChanged()
     }
     // A drop just ended and this list renders the dropped row: the floating card glides onto it (VEC-96).
     store.claimSettle(listRef.current)

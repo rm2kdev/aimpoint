@@ -217,7 +217,8 @@ export function createDragStore() {
   const listeners = new Set<() => void>()
   const lists = new Map<string, Ref<ListRegistration>>()
   const targets = new Map<string, Ref<TargetRegistration>>()
-  let pending: { cleanup: () => void; rehit: () => void } | null = null
+  /** `rehitNow` hit-tests again at once (no frame wait), with the path-independent rule (VEC-104). */
+  let pending: { cleanup: () => void; rehit: () => void; rehitNow: () => void } | null = null
   let pendingFocus: { listId: string; id: string } | null = null
   let hover: { id: string; at: number; timer?: ReturnType<typeof setTimeout> } | null = null
   const endListeners = new Set<(item: DragItem, dropped: boolean) => void>()
@@ -431,6 +432,30 @@ export function createDragStore() {
     }
   }
 
+  /**
+   * A list's rows changed mid-drag (a teammate added, removed or moved a task, VEC-104). The gap index in the
+   * snapshot still names the same visual slot (it counts the rows before the gap, which is what a row
+   * appearing or leaving above it keeps), but the shifts in `gapped` were written for the old rows: a row that
+   * moved up into the gap's range has none, a row that left still has one. Re-apply every list's gap against
+   * fresh measurements, then hit-test again so the gap follows the pointer if the rows under it changed.
+   * `set()` alone can't do it: its early return sees the same `over` and never reaches `applyGaps()`. Once per
+   * commit (a microtask after the lists' layout effects, before paint), and only on a row-set change, so a
+   * pointer move costs nothing extra.
+   */
+  let rowsDirty = false
+  const rowsChanged = () => {
+    invalidate()
+    if (rowsDirty || snap?.mode !== "pointer" || !gapItem) return
+    rowsDirty = true
+    queueMicrotask(() => {
+      rowsDirty = false
+      if (snap?.mode !== "pointer" || !gapItem) return
+      invalidate()
+      applyGaps()
+      pending?.rehitNow()
+    })
+  }
+
   /** The source row is lifted: the gap it opens elsewhere is its height. */
   const beginGaps = (row: HTMLElement) => {
     gapUndo?.()
@@ -599,6 +624,9 @@ export function createDragStore() {
 
   // ---- Hit testing -----------------------------------------------------------------------
 
+  /** The next list hit test picks the gap holding the pointer instead of keeping the current one (VEC-104). */
+  let freshHit = false
+
   const overList = (reg: ListRegistration, item: DragItem, y: number): DropOver => {
     const el = reg.el!
     const m = measureCached(el)
@@ -607,12 +635,26 @@ export function createDragStore() {
     // above the pointer. Measuring against the shifted rows keeps the gap under the pointer (against the
     // unshifted layout, rows pushed down would keep the gap a row ahead of a pointer moving down), and it's
     // stable: a row that slides past the pointer leaves its middle on the far side.
-    const shift = gapped.get(reg.listId)?.offsets
+    const st = gapped.get(reg.listId)
+    const shift = st?.offsets
     const from = reg.listId === item.listId ? m.rows.findIndex((r) => r.dataset.sortableId === item.id) : -1
     let to = 0
-    m.rows.forEach((row, i) => {
-      if (i !== from && pos > (m.spans[i].start + m.spans[i].end) / 2 + (shift?.get(row) ?? 0)) to++
-    })
+    if (freshHit && gapItem) {
+      // Right after the rows changed under a still pointer (VEC-104): the shifts in place were chosen for the
+      // old rows, so their midpoints can tie or sit a row off (a group above grew by a row and this list moved
+      // down under the pointer). Pick the gap whose hole holds the pointer, from where the other rows show
+      // with any gap: packed in order, the lifted row's slot closed up. Stable under the midpoint rule below.
+      const lift = gapItem.height + (st?.spacing ?? 0)
+      m.rows.forEach((_, i) => {
+        if (i === from) return
+        const top = m.spans[i].start - (from >= 0 && i > from ? lift : 0)
+        if (top + (m.spans[i].end - m.spans[i].start) + (st?.spacing ?? 0) <= pos) to++
+      })
+    } else {
+      m.rows.forEach((row, i) => {
+        if (i !== from && pos > (m.spans[i].start + m.spans[i].end) / 2 + (shift?.get(row) ?? 0)) to++
+      })
+    }
     const gap = from >= 0 ? indexToGap(from, to) : to
     // A pointer drag shows where it lands by opening a gap there (applyGaps), not with the line.
     return { kind: "list", listId: reg.listId, gap, lineTop: null }
@@ -622,6 +664,12 @@ export function createDragStore() {
   let blocked = false
 
   const hitTest = (item: DragItem, x: number, y: number): DropOver | null => {
+    const over = hitTestOnce(item, x, y)
+    freshHit = false
+    return over
+  }
+
+  const hitTestOnce = (item: DragItem, x: number, y: number): DropOver | null => {
     blocked = false
     for (const [id, ref] of targets) {
       const { el, opts } = ref.current
@@ -978,7 +1026,13 @@ export function createDragStore() {
       window.addEventListener("contextmenu", onContextMenu)
       timer = setTimeout(activate, TOUCH_DELAY_MS)
     }
-    pending = { cleanup: () => cancel(), rehit }
+    const rehitNow = () => {
+      invalidate()
+      if (!active) return
+      freshHit = true
+      update()
+    }
+    pending = { cleanup: () => cancel(), rehit, rehitNow }
   }
 
   // ---- Keyboard --------------------------------------------------------------------------
@@ -1104,6 +1158,11 @@ export function createDragStore() {
     announce,
     /** Layout around the lists may have changed (a list re-rendered): re-measure on the next hit test. */
     invalidate,
+    /**
+     * A list's rows were added, removed or reordered, or its drop zone appeared: re-measure, and mid pointer
+     * drag re-apply the landing gap to the new rows and hit-test again (VEC-104).
+     */
+    rowsChanged,
     registerList(listId: string, ref: Ref<ListRegistration>) {
       lists.set(listId, ref)
       invalidate()
