@@ -41,7 +41,7 @@ const chip =
   "inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent";
 
 export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults | null; onClose: () => void }) {
-  const { org, projects, statuses, statusById, memberById, projectById } = useOrg();
+  const { org, projects, statuses, statusById, statusesByProject, memberById, projectById } = useOrg();
   const router = useRouter();
   const open = defaults !== null;
   const firstOpen = statuses.find((s) => s.category === "unstarted") ?? statuses[0];
@@ -81,7 +81,8 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const projectOptions = useProjectOptions();
   const project = projectById.get(projectId);
   // Statuses are per project (VEC-115): a status picked for (or defaulted from) another project maps to this one's counterpart.
-  const projectStatuses = statuses.filter((s) => s.projectId === projectId);
+  // The picker lists only the chosen project's statuses and follows a project change (VEC-117).
+  const projectStatuses = statusesByProject.get(projectId) ?? [];
   const picked = statusById.get(statusId);
   const status =
     picked?.projectId === projectId ? picked : ((picked && matchStatus(projectStatuses, picked)) ?? projectStatuses.find((s) => s.category === "unstarted") ?? projectStatuses[0]);
@@ -147,9 +148,9 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
           />
         </div>
         <div className="flex flex-wrap items-center gap-1.5 px-5 pt-1 pb-4">
-          <Picker label="Status" value={statusId} options={statusOptions} onChange={setStatusId} searchable={false}>
+          <Picker label="Status" value={status?.id ?? null} options={statusOptions} onChange={setStatusId} searchable={false}>
             <button className={chip}>
-              <StatusRing status={status} statuses={statuses} size={14} />
+              <StatusRing status={status} statuses={projectStatuses} size={14} />
               {status?.name ?? "Status"}
             </button>
           </Picker>

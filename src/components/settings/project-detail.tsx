@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
 import { DetailHeader, SettingsRow, Tag } from "@/components/settings/ui";
 import { ColorDots, ProjectTile } from "@/components/settings/org-settings";
+import { ProjectStatuses } from "@/components/settings/project-statuses";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -153,6 +154,8 @@ export function ProjectDetail({ project: initial, taskCount, archivedTaskCount }
           )}
         </div>
       </Row>
+
+      <ProjectStatuses projectId={project.id} projectName={project.name} />
 
       <Row
         title="Agent context"

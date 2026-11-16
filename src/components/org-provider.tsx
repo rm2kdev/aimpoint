@@ -40,8 +40,11 @@ interface Ctx {
    * server refuses; their other tabs follow through a `projects.order` event.
    */
   reorderProjects: (projectIds: string[]) => Promise<Result<ProjectOrder>>;
+  /** Every project's statuses (VEC-114: statuses belong to a project). Prefer `statusesByProject`. */
   statuses: Status[];
   statusById: Map<string, Status>;
+  /** Each project's statuses in workflow order (VEC-117). A task only ever takes its own project's. */
+  statusesByProject: Map<string, Status[]>;
   counts: Counts;
   /** Unread notifications for the signed-in person. */
   unread: number;
@@ -103,7 +106,7 @@ export function OrgProvider({
   deletedMembers,
   projects: serverProjects,
   projectOrder: serverOrder,
-  statuses,
+  statuses: serverStatuses,
   counts: initialCounts,
   unread: initialUnread,
   workload: initialWorkload,
@@ -259,6 +262,22 @@ export function OrgProvider({
     return () => es.close();
   }, [org.id, org.slug, me.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts]);
 
+  // Statuses keep their identity across server refreshes that didn't change them (every org.changed refreshes
+  // the layout), so OrgBase, and with it every task row, re-renders only when a status really changed.
+  const statusSig = JSON.stringify(serverStatuses);
+  const [stable, setStable] = useState({ sig: statusSig, statuses: serverStatuses });
+  if (stable.sig !== statusSig) setStable({ sig: statusSig, statuses: serverStatuses });
+  const statuses = stable.statuses;
+  const statusMaps = useMemo(() => {
+    const byProject = new Map<string, Status[]>();
+    for (const s of [...statuses].sort((a, b) => a.order - b.order)) {
+      const list = byProject.get(s.projectId);
+      if (list) list.push(s);
+      else byProject.set(s.projectId, [s]);
+    }
+    return { byId: new Map(statuses.map((s) => [s.id, s])), byProject };
+  }, [statuses]);
+
   // From the server's list, not the ordered one: a reorder keeps the same map (and the same OrgBase).
   const projectById = useMemo(() => new Map(serverProjects.map((p) => [p.id, p])), [serverProjects]);
   const base = useMemo<OrgBase>(
@@ -271,10 +290,11 @@ export function OrgProvider({
       memberById: new Map([...(deletedMembers ?? []), ...members].map((m) => [m.id, m])),
       projectById,
       statuses,
-      statusById: new Map(statuses.map((s) => [s.id, s])),
+      statusById: statusMaps.byId,
+      statusesByProject: statusMaps.byProject,
       subscribe,
     }),
-    [org, orgs, me, members, deletedMembers, projectById, statuses, subscribe],
+    [org, orgs, me, members, deletedMembers, projectById, statuses, statusMaps, subscribe],
   );
   const value = useMemo<Ctx>(
     () => ({

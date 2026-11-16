@@ -1,26 +1,21 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDownIcon, ArrowUpIcon, Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { EntityList, EntityRow, SettingsRow, Tag, useAction } from "@/components/settings/ui";
-import { ProjectDot, StatusRing } from "@/components/bits";
+import { ProjectDot } from "@/components/bits";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   createProject,
-  deleteStatus,
   removeMember,
   renameOrg,
-  reorderStatuses,
-  saveStatus,
 } from "@/app/actions/org";
-import type { Role, Status, StatusCategory } from "@/lib/types";
+import type { Role } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 
 export interface InviteRow {
@@ -203,196 +198,3 @@ export function ColorDots({ value, onChange, disabled }: { value: string; onChan
     </div>
   );
 }
-
-/* ---------------- Statuses ---------------- */
-
-const STAGES: [StatusCategory, string][] = [
-  ["backlog", "Backlog"],
-  ["triage", "Triage"],
-  ["unstarted", "Not started"],
-  ["started", "In progress"],
-  ["done", "Done"],
-  ["cancelled", "Cancelled"],
-];
-
-export function StatusesSettings() {
-  const { org, statuses, isAdmin } = useOrg();
-  const { pending, run } = useAction();
-  const [adding, setAdding] = useState(false);
-
-  // Statuses are per project (VEC-115): reorder within the moved status's project. VEC-117 brings the per-project editor.
-  const move = (i: number, d: -1 | 1) => {
-    const moved = statuses[i];
-    const ids = statuses.filter((s) => s.projectId === moved.projectId).map((s) => s.id);
-    const k = ids.indexOf(moved.id);
-    const j = k + d;
-    if (j < 0 || j >= ids.length) return;
-    [ids[k], ids[j]] = [ids[j], ids[k]];
-    run(() => reorderStatuses(org.slug, moved.projectId, ids));
-  };
-
-  return (
-    <Row
-      title="Workflow statuses"
-      desc="Tasks are grouped by status in this order. Each status has a stage: the ring fills as tasks move through the not-started and in-progress stages."
-    >
-      <ul className="divide-y divide-border rounded-[10px] border border-border">
-        {statuses.map((s, i) => (
-          <StatusEditor
-            key={s.id}
-            status={s}
-            canEdit={isAdmin}
-            first={i === 0}
-            last={i === statuses.length - 1}
-            onMove={(d) => move(i, d)}
-            busy={pending}
-          />
-        ))}
-      </ul>
-      {isAdmin &&
-        (adding ? (
-          <ul className="mt-3 rounded-[10px] border border-border">
-            <StatusEditor
-              status={{ id: "", projectId: "", name: "", color: "#737373", category: "started", order: 999 }}
-              canEdit
-              isNew
-              onDone={() => setAdding(false)}
-              busy={pending}
-            />
-          </ul>
-        ) : (
-          <Button variant="outline" className="mt-3" onClick={() => setAdding(true)}>
-            Add status
-          </Button>
-        ))}
-    </Row>
-  );
-}
-
-function StatusEditor({
-  status,
-  canEdit,
-  first,
-  last,
-  onMove,
-  isNew,
-  onDone,
-  busy,
-}: {
-  status: Status;
-  canEdit: boolean;
-  first?: boolean;
-  last?: boolean;
-  onMove?: (d: -1 | 1) => void;
-  isNew?: boolean;
-  onDone?: () => void;
-  busy: boolean;
-}) {
-  const { org, statuses } = useOrg();
-  const [name, setName] = useState(status.name);
-  const [category, setCategory] = useState<StatusCategory>(status.category);
-  const [color, setColor] = useState(status.color);
-  const [deleting, setDeleting] = useState(false);
-  const [moveTo, setMoveTo] = useState("");
-  const { run } = useAction();
-  useEffect(() => {
-    setName(status.name);
-    setCategory(status.category);
-    setColor(status.color);
-  }, [status]);
-  const dirty = name !== status.name || category !== status.category || color !== status.color;
-  const save = () =>
-    run(async () => {
-      const r = await saveStatus(org.slug, { id: status.id || undefined, projectId: status.projectId, name, color, category });
-      if (r.ok) onDone?.();
-      return r;
-    }, isNew ? "Status added" : "Status saved");
-  const preview: Status = { ...status, color, category, id: status.id || "preview" };
-
-  return (
-    <li className="px-3.5 py-2.5">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <StatusRing status={preview} statuses={isNew ? [...statuses, preview] : statuses} size={16} />
-        <ColorDots value={color} disabled={!canEdit} onChange={setColor} />
-        <Input
-          value={name}
-          disabled={!canEdit}
-          autoFocus={isNew}
-          placeholder="Status name"
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && dirty && name.trim() && save()}
-          aria-label="Status name"
-          maxLength={40}
-          className="h-8 w-44 border-transparent bg-transparent shadow-none hover:border-input focus-visible:border-input dark:bg-transparent"
-        />
-        <Select value={category} onValueChange={(v) => setCategory(v as StatusCategory)} disabled={!canEdit}>
-          <SelectTrigger size="sm" className="w-36" aria-label="Stage">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {STAGES.map(([v, l]) => (
-              <SelectItem key={v} value={v}>
-                {l}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {canEdit && (
-          <div className="ml-auto flex items-center gap-1">
-            {(dirty || isNew) && (
-              <>
-                {isNew && (
-                  <Button size="sm" variant="ghost" onClick={onDone}>
-                    Cancel
-                  </Button>
-                )}
-                <Button size="sm" onClick={save} disabled={busy || !name.trim()}>
-                  {isNew ? "Add" : "Save"}
-                </Button>
-              </>
-            )}
-            {!isNew && (
-              <>
-                <Button variant="ghost" size="icon-sm" aria-label="Move up" disabled={first || busy} onClick={() => onMove?.(-1)}>
-                  <ArrowUpIcon />
-                </Button>
-                <Button variant="ghost" size="icon-sm" aria-label="Move down" disabled={last || busy} onClick={() => onMove?.(1)}>
-                  <ArrowDownIcon />
-                </Button>
-                <Button variant="ghost" size="icon-sm" aria-label={`Delete ${status.name}`} className="text-faint hover:text-destructive" onClick={() => setDeleting((d) => !d)} disabled={statuses.length <= 1}>
-                  <Trash2Icon />
-                </Button>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      {deleting && (
-        <div className="mt-2.5 flex flex-wrap items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[13px]">
-          Move its tasks to
-          <Select value={moveTo} onValueChange={setMoveTo}>
-            <SelectTrigger size="sm" className="w-40" aria-label="Move tasks to">
-              <SelectValue placeholder="Pick a status" />
-            </SelectTrigger>
-            <SelectContent>
-              {statuses
-                .filter((s) => s.id !== status.id && s.projectId === status.projectId)
-                .map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" variant="destructive" disabled={!moveTo} onClick={() => run(() => deleteStatus(org.slug, status.projectId, status.id, moveTo), "Status deleted")}>
-            Delete {status.name}
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setDeleting(false)}>
-            Cancel
-          </Button>
-        </div>
-      )}
-    </li>
-  );
-}
-

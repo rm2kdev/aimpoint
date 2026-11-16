@@ -7,7 +7,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { useOrg, useOrgBase } from "@/components/org-provider";
 import { BotAvatar, PriorityIcon, ProjectDot, StatusRing, TypeSquare, UnassignedAvatar, UserAvatar } from "@/components/bits";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
-import { TASK_TYPES, type Priority, type TaskType } from "@/lib/types";
+import { TASK_TYPES, type Priority, type Status, type TaskType } from "@/lib/types";
 
 export interface Option<V extends string> {
   value: V;
@@ -193,10 +193,16 @@ export function LazyPicker<V extends string>({
 }
 
 
-/** Status picker options; with `projectId`, only that project's statuses (a task only takes its own project's, VEC-115). */
-export function useStatusOptions(projectId?: string): Option<string>[] {
-  const { statuses: all } = useOrgBase();
-  const statuses = projectId ? all.filter((s) => s.projectId === projectId) : all;
+const NO_STATUSES: Status[] = [];
+/** One project's statuses in workflow order (empty for an unknown or missing project). */
+export function projectStatuses(byProject: Map<string, Status[]>, projectId: string | null | undefined): Status[] {
+  return (projectId && byProject.get(projectId)) || NO_STATUSES;
+}
+
+/** Status picker options: only the project's own statuses, since a task only takes its own project's (VEC-115/117). */
+export function useStatusOptions(projectId: string | null | undefined): Option<string>[] {
+  const { statusesByProject } = useOrgBase();
+  const statuses = projectStatuses(statusesByProject, projectId);
   return statuses.map((s) => ({ value: s.id, label: s.name, icon: <StatusRing status={s} statuses={statuses} size={15} /> }));
 }
 

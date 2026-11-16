@@ -11,7 +11,7 @@ import { useOrg, useOrgBase, useOrgEvents } from "@/components/org-provider";
 import { MobileNavButton, useShell } from "@/components/app-shell";
 import { Kbd, MemberAvatar, PriorityIcon, ProjectDot, StatusRing, TypeTag, UserAvatar } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
-import { LazyPicker, useStatusOptions } from "@/components/pickers";
+import { LazyPicker, projectStatuses, useStatusOptions } from "@/components/pickers";
 import { TaskPane } from "@/components/task-pane";
 import { useTaskContextMenu } from "@/components/task-context-menu";
 import { DueBadge } from "@/components/due-date";
@@ -25,7 +25,8 @@ import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
 import { TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
-import type { Status, Task, TaskType } from "@/lib/types";
+import { isClosedCategory, matchStatus, STATUS_STAGES, type Status, type StatusCategory, type Task, type TaskType } from "@/lib/types";
+import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
 
 export interface Scope {
   projectId?: string;
@@ -34,6 +35,23 @@ export interface Scope {
 }
 
 type TypeFilter = "all" | TaskType;
+
+/**
+ * A list section (VEC-117). A project view has one per status of that project; a cross-project view (All,
+ * My tasks) has one per stage, since every project names its own statuses, and each row shows its own status.
+ */
+interface Group {
+  /** Status id, or `stage:<stage>`: list id, fold key and drop-target id. */
+  id: string;
+  name: string;
+  stage: StatusCategory;
+  /** The project status (project views only). */
+  status?: Status;
+  /** What the heading's ring draws, and the list it's drawn against. */
+  ring: Status;
+  ringList: Status[];
+  tasks: Task[];
+}
 
 const SORTS: SortKey[] = ["manual", "priority", "due", "created", "created-asc", "updated", "title"];
 const ARCHIVE_SORTS: SortKey[] = ["archived", "due", "created", "updated", "title"];
@@ -51,7 +69,7 @@ export function TaskWorkspace({
   showProject: boolean;
   emptyHint: string;
 }) {
-  const { org, me, statuses, isAdmin, projectById } = useOrg();
+  const { org, me, isAdmin, projectById, statusById, statusesByProject } = useOrg();
   const { newTask, setViewDefaults } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -164,41 +182,69 @@ export function TaskWorkspace({
     [setFresh],
   );
 
+  // Statuses this view groups and filters by: the project's own in a project view, else the fixed stages (VEC-117).
+  const viewStatuses = projectStatuses(statusesByProject, scope.projectId);
+  const stageOf = useCallback((t: Task): StatusCategory => statusById.get(t.statusId)?.category ?? "unstarted", [statusById]);
+  // Status filter values: status ids in a project view, stage names elsewhere.
+  const statusKey = useCallback((t: Task) => (scope.projectId ? t.statusId : stageOf(t)), [scope.projectId, stageOf]);
+  const statusFilterOptions = useMemo(
+    () =>
+      scope.projectId
+        ? viewStatuses.map((s) => ({ value: s.id, label: s.name, icon: <StatusRing status={s} statuses={viewStatuses} size={14} /> }))
+        : STATUS_STAGES.map((st) => ({ value: st as string, label: STAGE_LABELS[st], icon: <StatusRing status={stageStatus(st)} statuses={STAGE_RING_LIST} size={14} /> })),
+    [scope.projectId, viewStatuses],
+  );
+
   const visible = useMemo(
-    () => applyFilters([...tasks.values()].filter((t) => typeFilter === "all" || t.type === typeFilter), view),
-    [tasks, typeFilter, view],
+    () => applyFilters([...tasks.values()].filter((t) => typeFilter === "all" || t.type === typeFilter), view, statusKey),
+    [tasks, typeFilter, view, statusKey],
   );
   const filtering = typeFilter !== "all" || filterCount(view) > 0;
   const clearFilters = () => {
     setTypeFilter("all");
-    setView((v) => ({ ...v, assignees: [], priorities: [], due: [] }));
+    setView((v) => ({ ...v, assignees: [], priorities: [], due: [], statuses: [] }));
   };
 
-  const groups = useMemo(() => {
-    const out: { status: Status; tasks: Task[] }[] = [];
+  const groups = useMemo((): Group[] => {
     const cmp = comparator(view.sort);
-    for (const s of statuses) {
-      // Every status gets a section, empty ones included, so there is always somewhere to drop a task.
-      out.push({ status: s, tasks: visible.filter((t) => t.statusId === s.id).sort(cmp) });
+    if (!scope.projectId) {
+      // Cross-project: one section per stage, every stage shown so there is always somewhere to drop.
+      return STATUS_STAGES.map((stage) => ({
+        id: `stage:${stage}`,
+        name: STAGE_LABELS[stage],
+        stage,
+        ring: stageStatus(stage),
+        ringList: STAGE_RING_LIST,
+        tasks: visible.filter((t) => stageOf(t) === stage).sort(cmp),
+      }));
     }
-    // Tasks whose status was deleted mid-session.
-    const known = new Set(statuses.map((s) => s.id));
+    // Every status of the project gets a section, empty ones included, so there is always somewhere to drop a task.
+    const out: Group[] = viewStatuses.map((s) => ({
+      id: s.id,
+      name: s.name,
+      stage: s.category,
+      status: s,
+      ring: s,
+      ringList: viewStatuses,
+      tasks: visible.filter((t) => t.statusId === s.id).sort(cmp),
+    }));
+    // Tasks whose status was deleted mid-session (or not yet mapped after a move into this project).
+    const known = new Set(viewStatuses.map((s) => s.id));
     const orphans = visible.filter((t) => !known.has(t.statusId));
-    if (orphans.length && statuses[0]) out[0]?.tasks.push(...orphans);
+    if (orphans.length) out[0]?.tasks.push(...orphans);
     return out;
-  }, [visible, statuses, view.sort]);
+  }, [visible, viewStatuses, scope.projectId, stageOf, view.sort]);
   const archivedList = useMemo(() => (scope.archived ? [...visible].sort(comparator(view.sort)) : []), [scope.archived, visible, view.sort]);
 
-  const isClosed = (s: Status) => s.category === "done" || s.category === "cancelled";
-  const openCount = groups.reduce((n, g) => n + (isClosed(g.status) ? 0 : g.tasks.length), 0);
+  const openCount = groups.reduce((n, g) => n + (isClosedCategory(g.stage) ? 0 : g.tasks.length), 0);
   const shown = useMemo(() => (scope.archived ? [] : groups), [scope.archived, groups]);
   // Done and cancelled groups start folded until opened from their heading.
-  const isFolded = (s: Status) => collapsed.get(s.id) ?? isClosed(s);
+  const isFolded = (g: Group) => collapsed.get(g.id) ?? isClosedCategory(g.stage);
 
   /* ----- selection & keyboard ----- */
   // Tasks in folded groups are out of sight, so j/k skips them.
   const flat = useMemo(
-    () => (scope.archived ? archivedList : shown.flatMap((g) => ((collapsed.get(g.status.id) ?? isClosed(g.status)) ? [] : g.tasks))),
+    () => (scope.archived ? archivedList : shown.flatMap((g) => ((collapsed.get(g.id) ?? isClosedCategory(g.stage)) ? [] : g.tasks))),
     [scope.archived, archivedList, shown, collapsed],
   );
 
@@ -349,7 +395,13 @@ export function TaskWorkspace({
     } catch {
       // Ties or stale ranks: keep the old position until the server's answer arrives.
     }
-    upsert({ ...task, rank, statusId: move.statusId ?? task.statusId, projectId: move.projectId ?? task.projectId });
+    // A move into another project without a status keeps the stage there, as the server does (VEC-115).
+    const from = statusById.get(task.statusId);
+    const mapped =
+      !move.statusId && move.projectId && move.projectId !== task.projectId && from
+        ? matchStatus(projectStatuses(statusesByProject, move.projectId), from)?.id
+        : undefined;
+    upsert({ ...task, rank, statusId: move.statusId ?? mapped ?? task.statusId, projectId: move.projectId ?? task.projectId });
     const r = await moveTaskAction(org.slug, task.key, { beforeKey: move.beforeKey, afterKey: move.afterKey, status: move.statusId, project: move.projectId });
     if (!r.ok) {
       upsert(task);
@@ -381,7 +433,7 @@ export function TaskWorkspace({
    */
   const dropIntoGroup = async (
     id: string,
-    status: Status,
+    group: Group,
     neighbours: { afterKey?: string; beforeKey?: string },
     viaHeading = false,
     dragged?: Task,
@@ -389,9 +441,21 @@ export function TaskWorkspace({
     const t = tasks.get(id) ?? dragged;
     if (!t) return;
     const intoProject = scope.projectId && t.projectId !== scope.projectId ? scope.projectId : undefined;
-    const same = t.statusId === status.id;
+    // A stage section (cross-project view): the task's own project's first status of that stage, or stay put
+    // when it's already in that stage (VEC-117).
+    let statusId = group.status?.id;
+    if (!group.status) {
+      if (stageOf(t) !== group.stage) {
+        statusId = projectStatuses(statusesByProject, t.projectId).find((s) => s.category === group.stage)?.id;
+        if (!statusId) {
+          toast.error(`${projectById.get(t.projectId)?.name ?? "This project"} has no ${group.name} status`, { description: `${t.key} stays where it is.` });
+          return;
+        }
+      } else statusId = t.statusId;
+    }
+    const same = t.statusId === statusId;
     if (same && !intoProject && !neighbours.afterKey && !neighbours.beforeKey) return;
-    const moved = await moveTask(t, { ...neighbours, statusId: same ? undefined : status.id, projectId: intoProject });
+    const moved = await moveTask(t, { ...neighbours, statusId: same ? undefined : statusId, projectId: intoProject });
     if (moved && intoProject) {
       if (selectedKey === t.key) open(moved.key);
       toast.success(`Moved ${t.key} to ${projectById.get(intoProject)?.name ?? "this project"} as ${moved.key}`, {
@@ -400,10 +464,10 @@ export function TaskWorkspace({
       });
       return;
     }
-    if (moved && viaHeading && isFolded(status)) {
-      toast.success(`Moved ${t.key} to ${status.name}`, {
+    if (moved && viaHeading && isFolded(group)) {
+      toast.success(`Moved ${t.key} to ${statusById.get(moved.statusId)?.name ?? group.name}`, {
         description: t.title,
-        action: { label: "Show", onClick: () => toggleGroup(status.id, false) },
+        action: { label: "Show", onClick: () => toggleGroup(group.id, false) },
       });
     }
   };
@@ -420,7 +484,7 @@ export function TaskWorkspace({
 
   /** Row menu "Move to top/bottom" of its status group. */
   const moveToEdge = (task: Task, where: "top" | "bottom") => {
-    const g = shown.find((x) => x.status.id === task.statusId);
+    const g = shown.find((x) => x.tasks.some((y) => y.id === task.id));
     if (!g) return;
     const i = g.tasks.findIndex((x) => x.id === task.id);
     const first = g.tasks[0];
@@ -464,6 +528,7 @@ export function TaskWorkspace({
         task={t}
         selected={t.key === selectedKey}
         showProject={showProject}
+        showStatus={!scope.projectId}
         waitingKeys={t.waitingOn.map((id) => keyById.get(id) ?? null)}
         sort={view.sort}
         href={`${pathname}?task=${t.key}`}
@@ -474,7 +539,7 @@ export function TaskWorkspace({
         movable={movable}
       />
     ),
-    [selectedKey, showProject, keyById, view.sort, pathname, rowActions, manual],
+    [selectedKey, showProject, scope.projectId, keyById, view.sort, pathname, rowActions, manual],
   );
   const renderers = useMemo(
     () => ({
@@ -519,7 +584,13 @@ export function TaskWorkspace({
           <div className="ml-auto flex items-center gap-3">
             <Presence />
             <div className="flex items-center gap-0.5">
-              <FilterMenu value={view} onChange={setView} hideAssignee={scope.mine} />
+              <FilterMenu
+                value={view}
+                onChange={setView}
+                hideAssignee={scope.mine}
+                statusOptions={scope.archived ? undefined : statusFilterOptions}
+                statusLabel={scope.projectId ? "Status" : "Stage"}
+              />
               <SortMenu value={view.sort} onChange={(sort) => setView((v) => ({ ...v, sort }))} options={scope.archived ? ARCHIVE_SORTS : SORTS} />
             </div>
             {!scope.archived && (
@@ -531,7 +602,7 @@ export function TaskWorkspace({
             )}
           </div>
         </header>
-        <FilterChips value={view} onChange={setView} />
+        <FilterChips value={view} onChange={setView} statusOptions={statusFilterOptions} />
 
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-2 pt-2 pb-16 sm:px-4">
           {tasks.size === 0 ? (
@@ -567,39 +638,49 @@ export function TaskWorkspace({
                 <EmptyState title="All clear" hint="Every task in this view is done. Nice." onNew={() => newTask()} compact />
               )}
               {shown.map((g) => {
-                const folded = isFolded(g.status);
+                const folded = isFolded(g);
                 return (
-                <div key={g.status.id} className="mt-4 first:mt-2">
+                <div key={g.id} className="mt-4 first:mt-2">
                   <GroupHeading
-                    status={g.status}
+                    group={g}
                     count={g.tasks.length}
                     folded={folded}
                     canDrop={manual}
                     projectId={scope.projectId}
-                    onToggle={() => toggleGroup(g.status.id, !folded)}
+                    stageOf={stageOf}
+                    onToggle={() => toggleGroup(g.id, !folded)}
                     onDrop={(item) => {
                       const top = g.tasks.find((x) => x.id !== item.id);
-                      void dropIntoGroup(item.id, g.status, { beforeKey: top?.key }, true, item.data as Task | undefined);
+                      void dropIntoGroup(item.id, g, { beforeKey: top?.key }, true, item.data as Task | undefined);
                     }}
                   />
                   {!folded && (
                   <SortableList
                     // Drag to reorder within the group (VEC-59): Manual sort only, creator or admin rows only.
-                    listId={g.status.id}
+                    listId={g.id}
                     // Linked with the other groups: dropping a row into another group changes its status (VEC-60).
                     group={TASK_GROUP}
-                    emptyLabel={`Move to ${g.status.name}`}
+                    emptyLabel={`Move to ${g.name}`}
+                    // A stage section only takes tasks whose project has a status in that stage (VEC-117).
+                    accepts={
+                      g.status
+                        ? undefined
+                        : (item) => {
+                            const t = item.data as Task | undefined;
+                            return !t || stageOf(t) === g.stage || projectStatuses(statusesByProject, t.projectId).some((s) => s.category === g.stage);
+                          }
+                    }
                     onMove={(id, { toIndex, ids, item }) => {
                       const keyOf = (i: string | undefined) => (i ? g.tasks.find((x) => x.id === i)?.key : undefined);
                       void dropIntoGroup(
                         id,
-                        g.status,
+                        g,
                         { afterKey: keyOf(ids[toIndex - 1]), beforeKey: keyOf(ids[toIndex + 1]) },
                         false,
                         item.data as Task | undefined,
                       );
                     }}
-                    aria-label={g.status.name}
+                    aria-label={g.name}
                     className="flex flex-col gap-1"
                     items={g.tasks}
                     getId={(t) => t.id}
@@ -637,33 +718,39 @@ const MemoTaskPane = memo(TaskPane);
  * is how a task gets into a folded group.
  */
 function GroupHeading({
-  status,
+  group,
   count,
   folded,
   canDrop,
   projectId,
+  stageOf,
   onToggle,
   onDrop,
 }: {
-  status: Status;
+  group: Group;
   count: number;
   folded: boolean;
   canDrop: boolean;
   /** The view's project: a task from another project may drop on any heading, its own status included. */
   projectId?: string;
+  stageOf: (t: Task) => StatusCategory;
   onToggle: () => void;
   onDrop: (item: DragItem) => void;
 }) {
-  const { statuses } = useOrgBase();
-  const { ref, isOver, canDrop: accepting } = useDropTarget<HTMLHeadingElement>(`status-heading:${status.id}`, {
-    label: status.name,
+  const { statusesByProject } = useOrgBase();
+  const { status } = group;
+  const { ref, isOver, canDrop: accepting } = useDropTarget<HTMLHeadingElement>(`status-heading:${group.id}`, {
+    label: group.name,
     disabled: !canDrop,
     // Its own tasks are refused but must not fall through to the group under the sticky heading (VEC-78).
     opaque: true,
     // Tasks from other groups (or other projects); the group itself takes its own rows through its list.
+    // A stage heading (cross-project view) takes tasks from other stages whose project has a status in it.
     accepts: (item) => {
       const t = item.data as Task | undefined;
-      return item.group === TASK_GROUP && !!t && (t.statusId !== status.id || (!!projectId && t.projectId !== projectId));
+      if (item.group !== TASK_GROUP || !t) return false;
+      if (status) return t.statusId !== status.id || (!!projectId && t.projectId !== projectId);
+      return stageOf(t) !== group.stage && projectStatuses(statusesByProject, t.projectId).some((s) => s.category === group.stage);
     },
     onDrop,
   });
@@ -674,8 +761,8 @@ function GroupHeading({
         type="button"
         onClick={onToggle}
         aria-expanded={!folded}
-        aria-controls={`group-${status.id}`}
-        title={folded ? `Show ${status.name}` : `Hide ${status.name}`}
+        aria-controls={`group-${group.id}`}
+        title={folded ? `Show ${group.name}` : `Hide ${group.name}`}
         className={cn(
           "group/heading flex h-7 items-center gap-2 rounded-md pr-2 pl-0.5 transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
           over && "bg-brand/10 text-brand shadow-[inset_0_0_0_1px_var(--color-brand)] hover:bg-brand/10",
@@ -688,8 +775,8 @@ function GroupHeading({
             folded && "-rotate-90",
           )}
         />
-        <StatusRing status={status} statuses={statuses} size={15} />
-        {status.name}
+        <StatusRing status={group.ring} statuses={group.ringList} size={15} />
+        {group.name}
         <span className="tabular font-mono font-normal text-faint">{count}</span>
       </button>
       {over && <span className="ml-2 text-[12px] font-normal text-brand">Drop to move to the top</span>}
@@ -721,6 +808,8 @@ interface TaskRowProps {
   task: Task;
   selected: boolean;
   showProject: boolean;
+  /** Show the task's own status name (cross-project views group by stage, VEC-117). */
+  showStatus?: boolean;
   /** Keys of the dependencies this task still waits on (null where this view doesn't have the task). */
   waitingKeys?: (string | null)[];
   sort: SortKey;
@@ -759,6 +848,7 @@ const TaskRow = memo(function TaskRow({
   task,
   selected,
   showProject,
+  showStatus,
   waitingKeys,
   sort,
   href,
@@ -884,6 +974,11 @@ const TaskRow = memo(function TaskRow({
         {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className="max-sm:hidden" />}
         {(
           <>
+            {showStatus && status && !fresh && (
+              <span className="text-[12px] text-muted-foreground max-lg:hidden" title={`Status: ${status.name}`}>
+                {status.name}
+              </span>
+            )}
             {showProject && project && !fresh && (
               <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground max-xl:hidden">
                 <ProjectDot color={project.color} />

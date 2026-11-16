@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDownUpIcon, CalendarIcon, ListFilterIcon, XIcon } from "lucide-react";
+import { ArrowDownUpIcon, CalendarIcon, CircleDashedIcon, ListFilterIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { MemberAvatar, PriorityIcon, UnassignedAvatar } from "@/components/bits";
@@ -35,6 +35,15 @@ export interface ViewState {
   assignees: string[];
   priorities: Priority[];
   due: DueFilter[];
+  /** Status ids in a project view, stage names in a cross-project view (VEC-117). */
+  statuses: string[];
+}
+
+/** A status (or stage) a view can filter by. */
+export interface StatusFilterOption {
+  value: string;
+  label: string;
+  icon?: React.ReactNode;
 }
 
 export const SORT_LABELS: Record<SortKey, string> = {
@@ -55,7 +64,7 @@ const DUE_LABELS: Record<DueFilter, string> = {
   none: "No due date",
 };
 
-const EMPTY: Omit<ViewState, "sort"> = { assignees: [], priorities: [], due: [] };
+const EMPTY: Omit<ViewState, "sort"> = { assignees: [], priorities: [], due: [], statuses: [] };
 
 /**
  * Saved-state version. v1 (before VEC-57) saved the sort on every visit, so a saved "priority" there was
@@ -79,6 +88,7 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
         assignees: Array.isArray(saved.assignees) ? saved.assignees : [],
         priorities: Array.isArray(saved.priorities) ? saved.priorities : [],
         due: Array.isArray(saved.due) ? saved.due : [],
+        statuses: Array.isArray(saved.statuses) ? saved.statuses.filter((s): s is string => typeof s === "string") : [],
       });
     } catch {
       setState({ sort: defaultSort, ...EMPTY });
@@ -94,11 +104,13 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
 }
 
 export function filterCount(v: ViewState) {
-  return v.assignees.length + v.priorities.length + v.due.length;
+  return v.assignees.length + v.priorities.length + v.due.length + v.statuses.length;
 }
 
-export function applyFilters(tasks: Task[], v: ViewState) {
+/** `statusKey` gives the value a task's status filters by (its status id, or its stage in cross-project views). */
+export function applyFilters(tasks: Task[], v: ViewState, statusKey?: (t: Task) => string) {
   return tasks.filter((t) => {
+    if (v.statuses.length && statusKey && !v.statuses.includes(statusKey(t))) return false;
     if (v.assignees.length && !v.assignees.includes(t.assigneeId ?? "none")) return false;
     if (v.priorities.length && !v.priorities.includes(t.priority)) return false;
     if (v.due.length) {
@@ -168,7 +180,20 @@ export function SortMenu({ value, onChange, options }: { value: SortKey; onChang
   );
 }
 
-export function FilterMenu({ value, onChange, hideAssignee }: { value: ViewState; onChange: (v: ViewState) => void; hideAssignee?: boolean }) {
+export function FilterMenu({
+  value,
+  onChange,
+  hideAssignee,
+  statusOptions,
+  statusLabel = "Status",
+}: {
+  value: ViewState;
+  onChange: (v: ViewState) => void;
+  hideAssignee?: boolean;
+  /** The view's statuses (a project view) or stages (cross-project views); no Status filter without them. */
+  statusOptions?: StatusFilterOption[];
+  statusLabel?: string;
+}) {
   const { members, me } = useOrg();
   const n = filterCount(value);
   const people = members.filter((m) => m.kind === "user").sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
@@ -183,6 +208,28 @@ export function FilterMenu({ value, onChange, hideAssignee }: { value: ViewState
         {n > 0 && <span className="tabular grid h-4 min-w-4 place-items-center rounded-full bg-foreground px-1 text-[11px] font-medium text-background">{n}</span>}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
+        {statusOptions && statusOptions.length > 0 && (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger className="gap-2.5">
+              <CircleDashedIcon className="size-4 text-muted-foreground" /> {statusLabel}
+              {value.statuses.length > 0 && <Count n={value.statuses.length} />}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-[320px] w-52 overflow-y-auto">
+              {statusOptions.map((o) => (
+                <DropdownMenuCheckboxItem
+                  key={o.value}
+                  checked={value.statuses.includes(o.value)}
+                  onSelect={keep}
+                  onCheckedChange={() => onChange({ ...value, statuses: toggle(value.statuses, o.value) })}
+                  className="gap-2.5"
+                >
+                  {o.icon}
+                  <span className="truncate">{o.label}</span>
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        )}
         {!hideAssignee && (
           <DropdownMenuSub>
             <DropdownMenuSubTrigger className="gap-2.5">
@@ -258,10 +305,31 @@ function Count({ n }: { n: number }) {
 }
 
 /** Removable chips for the active filters, shown under the view header. */
-export function FilterChips({ value, onChange }: { value: ViewState; onChange: (v: ViewState) => void }) {
+export function FilterChips({
+  value,
+  onChange,
+  statusOptions = [],
+}: {
+  value: ViewState;
+  onChange: (v: ViewState) => void;
+  statusOptions?: StatusFilterOption[];
+}) {
   const { memberById, me } = useOrg();
   if (!filterCount(value)) return null;
   const chips: { key: string; label: React.ReactNode; remove: () => void }[] = [
+    ...value.statuses.map((v) => {
+      const o = statusOptions.find((x) => x.value === v);
+      return {
+        key: `s${v}`,
+        label: (
+          <>
+            {o?.icon}
+            {o?.label ?? "A removed status"}
+          </>
+        ),
+        remove: () => onChange({ ...value, statuses: value.statuses.filter((x) => x !== v) }),
+      };
+    }),
     ...value.assignees.map((id) => {
       const m = memberById.get(id);
       return {

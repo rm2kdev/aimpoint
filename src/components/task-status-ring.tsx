@@ -2,6 +2,7 @@
 
 import { StatusRing, STATUS_RING_WORKING_LABEL } from "@/components/bits";
 import { useOrgBase } from "@/components/org-provider";
+import { projectStatuses } from "@/components/pickers";
 import type { Member } from "@/lib/types";
 
 /** "Hermes is working on this", "Hermes and Kev are working on this", "Hermes, Kev and 2 others are working on this". */
@@ -27,13 +28,15 @@ export function TaskStatusRing({
   size?: number;
   className?: string;
 }) {
-  const { statuses, statusById, memberById } = useOrgBase();
+  const { statusesByProject, statusById, memberById } = useOrgBase();
   const botIds = task.workingBotIds ?? [];
   const working = botIds.length > 0;
+  const status = statusById.get(task.statusId);
   return (
     <StatusRing
-      status={statusById.get(task.statusId)}
-      statuses={statuses}
+      status={status}
+      // Ring progress runs through the task's own project's workflow (VEC-117).
+      statuses={projectStatuses(statusesByProject, status?.projectId)}
       size={size}
       className={className}
       working={working}

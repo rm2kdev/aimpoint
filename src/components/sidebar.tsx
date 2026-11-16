@@ -41,7 +41,7 @@ import { logoutAction } from "@/app/actions/auth";
 import { moveTaskAction } from "@/app/actions/tasks";
 import { accountPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
-import type { Project, Task } from "@/lib/types";
+import { matchStatus, type Project, type Task } from "@/lib/types";
 
 /** Memoised: the shell re-rendering (search, new-task dialog, drawer) doesn't re-render the sidebar. */
 export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
@@ -121,7 +121,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
  * so they're never targets.
  */
 function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
-  const { org, projects, counts, reorderProjects } = useOrg();
+  const { org, projects, counts, reorderProjects, statusById, statusesByProject } = useOrg();
   const pathname = usePathname();
   const router = useRouter();
   const store = useDragStore();
@@ -160,7 +160,10 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
       quickDrop: async (p, task) => {
         const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: t }));
         const same = task.projectId === p.id;
-        echo({ ...task, projectId: p.id });
+        // Optimistically keep the stage in the new project, as the server does (VEC-115/117).
+        const from = statusById.get(task.statusId);
+        const mapped = !same && from ? matchStatus(statusesByProject.get(p.id) ?? [], from)?.id : undefined;
+        echo({ ...task, projectId: p.id, statusId: mapped ?? task.statusId });
         const r = await moveTaskAction(org.slug, task.key, { project: same ? undefined : p.id, toTop: true });
         if (!r.ok) {
           echo(task);
@@ -179,7 +182,7 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
         });
       },
     }),
-    [org.slug, router],
+    [org.slug, router, statusById, statusesByProject],
   );
 
   const projectCounts = counts.projects;
