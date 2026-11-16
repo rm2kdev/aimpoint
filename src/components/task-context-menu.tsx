@@ -19,6 +19,7 @@ import {
   ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { isDragActive } from "@/components/ui/drag-provider";
 import { taskAccess } from "@/lib/access";
 import type { TaskPatch } from "@/app/actions/tasks";
 import type { Priority, Task, TaskType } from "@/lib/types";
@@ -33,6 +34,9 @@ interface TaskMenuProps {
 }
 
 const touchOrPen = (e: React.PointerEvent) => e.pointerType !== "mouse";
+const LONG_PRESS_MS = 700;
+/** Same tolerance as the drag provider's touch slop: a smaller move is a finger resting, not a gesture. */
+const LONG_PRESS_SLOP = 8;
 
 /**
  * Right-click menu for a task row: move it through the workflow (status, priority, assignee, type) without
@@ -43,7 +47,9 @@ const touchOrPen = (e: React.PointerEvent) => e.pointerType !== "mouse";
  * status/assignee option lists) mounts on the row's first right-click or long press, not with the row, so a
  * long list opens without a context-menu tree per row. Same gestures as ContextMenuTrigger: right-click (or
  * the context-menu key) opens at the pointer, a 700 ms touch/pen press opens, and the row gets
- * `data-state="open"` while the menu is up.
+ * `data-state="open"` while the menu is up. On a row that touch can drag (Manual sort, creator or admin) the
+ * press has lifted a drag by then, so the menu opens on release instead, and only if the finger didn't move
+ * (VEC-103): press and hold 700 ms, lift without moving. Moving the lifted row is a drag with no menu.
  */
 export function useTaskContextMenu(props: TaskMenuProps) {
   // `n` changes on every request, so a second right-click on the same row reopens the menu at the new point.
@@ -51,9 +57,49 @@ export function useTaskContextMenu(props: TaskMenuProps) {
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLSpanElement>(null);
   const longPress = useRef(0);
-  const clear = () => window.clearTimeout(longPress.current);
-  useEffect(() => () => window.clearTimeout(longPress.current), []);
+  const pressStart = useRef({ x: 0, y: 0 });
+  // Stops waiting for the release of a lifted long-press (see holdForRelease).
+  const stopHold = useRef<(() => void) | null>(null);
+  const clear = () => {
+    window.clearTimeout(longPress.current);
+    stopHold.current?.();
+  };
+  useEffect(
+    () => () => {
+      window.clearTimeout(longPress.current);
+      stopHold.current?.();
+    },
+    [],
+  );
   const request = (x: number, y: number) => setAt((p) => ({ x, y, n: (p?.n ?? 0) + 1 }));
+
+  // VEC-103: on a draggable row a touch press lifts a drag at 250 ms, so by 700 ms the gesture is a drag
+  // and the menu must not open over it. Wait for the release instead: a finger lifted where it went down
+  // (no move past the slop) was a long-press, not a move, so the menu opens then; any move makes it a drag
+  // and no menu follows. Window capture listeners, because the drag shield takes the moves from the row.
+  const holdForRelease = (pointerId: number, x: number, y: number) => {
+    const stop = () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", stop, true);
+      if (stopHold.current === stop) stopHold.current = null;
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId === pointerId && Math.hypot(ev.clientX - x, ev.clientY - y) > LONG_PRESS_SLOP) stop();
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) return;
+      // Still lifted at the release (an Escape cancel already ended it): let the no-op drop finish first.
+      const lifted = isDragActive();
+      stop();
+      if (lifted) window.setTimeout(() => request(x, y), 0);
+    };
+    stopHold.current?.();
+    stopHold.current = stop;
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", stop, true);
+  };
 
   const rowProps = {
     "data-state": open ? "open" : "closed",
@@ -68,10 +114,18 @@ export function useTaskContextMenu(props: TaskMenuProps) {
     onPointerDown: (e: React.PointerEvent) => {
       if (!touchOrPen(e)) return;
       clear();
-      const { clientX, clientY } = e;
-      longPress.current = window.setTimeout(() => request(clientX, clientY), 700);
+      const { clientX, clientY, pointerId } = e;
+      pressStart.current = { x: clientX, y: clientY };
+      longPress.current = window.setTimeout(
+        () => (isDragActive() ? holdForRelease(pointerId, clientX, clientY) : request(clientX, clientY)),
+        LONG_PRESS_MS,
+      );
     },
-    onPointerMove: (e: React.PointerEvent) => touchOrPen(e) && clear(),
+    // A finger never holds perfectly still: only a move past the slop cancels the long-press.
+    onPointerMove: (e: React.PointerEvent) =>
+      touchOrPen(e) &&
+      Math.hypot(e.clientX - pressStart.current.x, e.clientY - pressStart.current.y) > LONG_PRESS_SLOP &&
+      window.clearTimeout(longPress.current),
     onPointerUp: (e: React.PointerEvent) => touchOrPen(e) && clear(),
     onPointerCancel: (e: React.PointerEvent) => touchOrPen(e) && clear(),
   };
