@@ -16,10 +16,16 @@ export function AnalyticsExportButton({ report, filters }: { report: AnalyticsRe
   const q = new URLSearchParams({ from: report.period.from, to: report.period.to, granularity: report.period.granularity, tz: report.period.tz });
   for (const [k, v] of Object.entries(filters)) if (v) q.set(k, v);
   return (
-    <Button asChild variant="outline" size="sm" className="ml-auto">
-      <a href={`${orgPath(slug, "analytics", "export")}?${q}`} download data-analytics-export title="Download this report as CSV files (zip)">
-        <DownloadIcon />
-        Export CSV
+    <Button asChild variant="outline" className="h-[30px] gap-2 rounded-lg px-3 max-sm:w-[30px] max-sm:px-0">
+      <a
+        href={`${orgPath(slug, "analytics", "export")}?${q}`}
+        download
+        data-analytics-export
+        aria-label="Export CSV"
+        title="Download this report as CSV files (zip)"
+      >
+        <DownloadIcon className="size-3.5" />
+        <span className="max-sm:hidden">Export CSV</span>
       </a>
     </Button>
   );
