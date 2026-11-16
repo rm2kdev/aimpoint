@@ -729,6 +729,10 @@ export function createDragStore() {
       const g = row.cloneNode(true) as HTMLElement
       g.removeAttribute("data-sortable-id")
       g.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"))
+      // The card shows the item, not the row's momentary state (VEC-105): drop parts marked data-drag-omit
+      // (a teammate's "moved this · now" note) and the live highlight tint keyed on data-live.
+      g.querySelectorAll("[data-drag-omit]").forEach((n) => n.remove())
+      g.querySelectorAll("[data-live]").forEach((n) => n.removeAttribute("data-live"))
       g.setAttribute("aria-hidden", "true")
       g.setAttribute("inert", "")
       g.setAttribute("data-drag-ghost", "")

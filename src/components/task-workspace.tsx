@@ -800,10 +800,12 @@ const TaskRow = memo(function TaskRow({
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
+      // The teammate highlight is keyed on data-live so the drag card can drop it (VEC-105).
+      data-live={fresh ? "" : undefined}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
         dragging && "cursor-grabbing",
-        selected ? "bg-selected" : fresh ? "bg-live shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
+        selected ? "bg-selected" : fresh ? "data-live:bg-live data-live:shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
       )}
     >
       <LazyPicker
@@ -977,7 +979,7 @@ function FreshNote({ fresh }: { fresh: Fresh }) {
     return () => clearInterval(t);
   }, []);
   return (
-    <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">
+    <span data-drag-omit="" className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">
       {who && <MemberAvatar member={who} id={who.id} size={16} />}
       {who ? (who.kind === "bot" ? who.name : who.name.split(" ")[0]) : "A teammate"} {fresh.verb} · {timeAgo(new Date(fresh.at).toISOString())}
     </span>
