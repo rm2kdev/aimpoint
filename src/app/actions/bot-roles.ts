@@ -49,7 +49,7 @@ export async function createBotRole(slug: string, input: BotRoleInput): Promise<
       updatedAt: now,
     };
     await (await cols()).botRoles.insertOne(doc);
-    revalidatePath(orgPath(slug, "settings", "roles"));
+    revalidatePath(orgPath(slug, "settings", "bots"));
     return toBotRole(doc);
   });
 }

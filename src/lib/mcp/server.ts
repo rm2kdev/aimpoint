@@ -856,7 +856,7 @@ export async function callTool(name: string, args: Args, ctx: McpCtx): Promise<T
   const impl = TOOLS[name];
   if (!impl || !INFO.has(name)) throw new UnknownToolError(`Unknown tool: ${name}`);
   if (!(await toolsForBot(ctx.bot)).has(name)) {
-    return { isError: true, content: [text(`${ctx.bot.name}'s bot role doesn't allow ${name}. Ask an admin to change the role under Settings → Bot roles.`)] };
+    return { isError: true, content: [text(`${ctx.bot.name}'s bot role doesn't allow ${name}. Ask an admin to change the role under Settings → Bots → Roles.`)] };
   }
   try {
     return await impl.run(args ?? {}, ctx);

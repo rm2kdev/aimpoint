@@ -29,7 +29,7 @@ import { createBotRole, deleteBotRole, updateBotRole } from "@/app/actions/bot-r
 import { MCP_TOOLS, TOOL_GROUPS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
 import type { Bot, BotRole } from "@/lib/types";
-import { orgPath } from "@/lib/paths";
+import { orgPath, rolePath, rolesPath } from "@/lib/paths";
 
 const allowedCount = (tools: Record<string, boolean>) => MCP_TOOLS.filter((t) => tools[t.name] === true).length;
 
@@ -53,7 +53,8 @@ export function RolesSettings({ roles, usage }: { roles: BotRole[]; usage: Recor
   return (
     <>
       <SettingsRow
-        title="Bot roles"
+        id="roles"
+        title="Roles"
         desc={
           <>
             A role is a list of MCP tools a bot may use. Apply one to a bot on its page; the bot only sees the tools its role allows, over MCP and
@@ -74,7 +75,7 @@ export function RolesSettings({ roles, usage }: { roles: BotRole[]; usage: Recor
             {roles.map((r) => (
               <EntityRow
                 key={r.id}
-                href={orgPath(org.slug, "settings", "roles", r.id)}
+                href={rolePath(org.slug, r.id)}
                 avatar={<RoleGlyph />}
                 name={r.name}
                 subtitle={r.description || "No description"}
@@ -130,7 +131,7 @@ function NewRoleDialog({ open, onClose }: { open: boolean; onClose: () => void }
               const r = await createBotRole(org.slug, { name, description });
               if (!r.ok) return setError(r.error);
               close();
-              router.push(orgPath(org.slug, "settings", "roles", r.data!.id));
+              router.push(rolePath(org.slug, r.data!.id));
             });
           }}
         >
@@ -200,7 +201,7 @@ export function RoleDetail({ role: initial, bots }: { role: BotRole; bots: Bot[]
   return (
     <>
       <DetailHeader
-        back={{ href: orgPath(org.slug, "settings", "roles"), label: "Bot roles" }}
+        back={{ href: rolesPath(org.slug), label: "Bots" }}
         avatar={<RoleGlyph size={44} />}
         name={role.name}
         tags={<Tag>Role</Tag>}
@@ -337,7 +338,7 @@ export function RoleDetail({ role: initial, bots }: { role: BotRole; bots: Bot[]
                 const r = await deleteBotRole(org.slug, role.id);
                 if (!r.ok) return void toast.error(r.error);
                 toast.success(`Deleted ${role.name}`);
-                router.push(orgPath(org.slug, "settings", "roles"));
+                router.push(rolesPath(org.slug));
               }}
             >
               Delete role

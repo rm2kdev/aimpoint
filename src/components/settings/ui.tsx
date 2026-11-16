@@ -19,7 +19,6 @@ export const SETTINGS_TABS = [
   ["projects", "Projects"],
   ["members", "Members"],
   ["bots", "Bots"],
-  ["roles", "Bot roles"],
 ] as const;
 
 /** Header + tab bar shared by every settings page. Tabs are real routes, so detail pages keep their tab lit. */
@@ -68,9 +67,9 @@ export function SettingsFrame({ children }: { children: React.ReactNode }) {
 /* ---------------- sections ---------------- */
 
 /** Title + explanation on the left, controls on the right. */
-export function SettingsRow({ title, desc, children }: { title: string; desc: React.ReactNode; children: React.ReactNode }) {
+export function SettingsRow({ id, title, desc, children }: { id?: string; title: string; desc: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="grid gap-4 border-b border-border py-7 first:pt-1 last:border-0 md:grid-cols-[280px_minmax(0,1fr)] md:gap-10">
+    <div id={id} className="scroll-mt-4 grid gap-4 border-b border-border py-7 first:pt-1 last:border-0 md:grid-cols-[280px_minmax(0,1fr)] md:gap-10">
       <div>
         <h2 className="text-[14px] font-semibold">{title}</h2>
         <div className="mt-1 text-[13px] text-muted-foreground">{desc}</div>

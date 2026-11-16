@@ -31,7 +31,7 @@ import { MCP_TOOLS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
 import { BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAvatar as BotAvatarData, BotRole, Task } from "@/lib/types";
-import { orgPath } from "@/lib/paths";
+import { orgPath, rolesPath } from "@/lib/paths";
 
 const Row = SettingsRow;
 
@@ -164,7 +164,7 @@ export function BotDetail({
             desc={
               <>
                 Which MCP tools {bot.name} can use. Without a role it can use all of them except triage; give it a role with Check for triage on to make it a triage bot.{" "}
-                <Link href={orgPath(org.slug, "settings", "roles")} className="underline underline-offset-2 hover:text-foreground">
+                <Link href={rolesPath(org.slug)} className="underline underline-offset-2 hover:text-foreground">
                   Manage roles
                 </Link>
               </>

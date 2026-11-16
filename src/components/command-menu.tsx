@@ -18,7 +18,7 @@ import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
-import { accountPath, orgPath, projectPath, taskPath, withTask } from "@/lib/paths";
+import { accountPath, orgPath, projectPath, rolesPath, taskPath, withTask } from "@/lib/paths";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { org, projects } = useOrg();
@@ -106,8 +106,8 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "bots"))} className="gap-2.5">
                   <BotIcon /> Bots
                 </CommandItem>
-                <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "roles"))} className="gap-2.5">
-                  <ShieldCheckIcon /> Bot roles
+                <CommandItem onSelect={() => go(rolesPath(org.slug))} className="gap-2.5">
+                  <ShieldCheckIcon /> Bot roles <span className="ml-auto text-[11px] text-faint">Bots</span>
                 </CommandItem>
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "general"))} className="gap-2.5">
                   <SettingsIcon /> Settings

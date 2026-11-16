@@ -92,7 +92,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
         <NavItem href={orgPath(org.slug, "settings", "members")} active={pathname.startsWith(orgPath(org.slug, "settings", "members"))} icon={<UsersIcon />} onNavigate={onNavigate}>
           Members
         </NavItem>
-        <NavItem href={orgPath(org.slug, "settings", "bots")} active={pathname.startsWith(orgPath(org.slug, "settings", "bots")) || pathname.startsWith(orgPath(org.slug, "settings", "roles"))} icon={<BotIcon />} onNavigate={onNavigate}>
+        <NavItem href={orgPath(org.slug, "settings", "bots")} active={pathname.startsWith(orgPath(org.slug, "settings", "bots"))} icon={<BotIcon />} onNavigate={onNavigate}>
           Bots
         </NavItem>
         <NavItem

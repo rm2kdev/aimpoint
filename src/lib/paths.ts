@@ -24,6 +24,10 @@ export function orgPath(slug: string, ...segments: Segment[]): string {
   return `${ORG_ROUTE_PREFIX}/${parts.map((p) => encodeURIComponent(String(p))).join("/")}`;
 }
 
+/** Bot roles live on the Bots settings page (VEC-125): the list is its Roles section, detail is bots/roles/<id>. */
+export const rolesPath = (slug: string) => `${orgPath(slug, "settings", "bots")}#roles`;
+export const rolePath = (slug: string, roleId: string) => orgPath(slug, "settings", "bots", "roles", roleId);
+
 /** `/o/<slug>/p/<key>` */
 export const projectPath = (slug: string, projectKey: string) => orgPath(slug, "p", projectKey);
 
