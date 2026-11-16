@@ -51,6 +51,103 @@ export function seriesConfig(series: Series[]): ChartConfig {
 
 export const seriesVar = (i: number) => `var(--color-s${i})`
 
+/**
+ * Analytics type scale and chrome, in one place so the KPI tiles, chart cards, legends, tooltips
+ * and tables can't drift apart (DESIGN.md "Analytics charts"). Every size is a ramp step.
+ */
+export const KIT = {
+  /** Card and tile padding: 16px inline, 14px top. */
+  cardPad: "px-4 pt-3.5",
+  /** Card shell: container radius, hairline, paper. */
+  card: "flex min-w-0 flex-col rounded-[10px] border border-border bg-background",
+  /** Settings row title step (14/600). */
+  title: "truncate text-[14px] leading-[1.4] font-semibold tracking-[-0.01em]",
+  /** Body small (13px, Muted Ink). */
+  description: "mt-0.5 text-[13px] leading-[1.45] text-muted-foreground",
+  /** Label step (11.5px/500): legends, table headers, axis ticks, KPI deltas. */
+  label: "text-[11.5px] leading-[1.3] font-medium",
+  /** Metric step (24/600, tabular): KPI values. Sans, so units read as words, not code. */
+  metric: "text-[24px] leading-[1.25] font-semibold tracking-[-0.02em] tabular-nums",
+  /** Headline step (20/600, tabular): the donut total, a metric scaled down for the hole. */
+  metricSmall: "text-[20px] leading-[1.3] font-semibold tracking-[-0.02em] tabular-nums",
+  /** Swatch used by legends and tooltips alike. */
+  swatch: "size-2 shrink-0 rounded-[2px]",
+  /** Static skeleton block (no pulse). */
+  skeleton: "rounded-sm bg-muted",
+} as const
+
+/** Height of one legend line (11.5px label at 1.3 plus breathing room). */
+export const LEGEND_ROW = 18
+
+export interface AnalyticsCardProps {
+  title: string
+  description?: React.ReactNode
+  /** Header slot to the right of the title (e.g. a total or a Chart/Table toggle). */
+  aside?: React.ReactNode
+  loading?: boolean
+  /** Shown while loading in place of the body (default: five table-row bars). */
+  skeleton?: React.ReactNode
+  /** Id for the title, so a parent can point aria-labelledby at it (generated when omitted). */
+  titleId?: string
+  className?: string
+  /** Classes for the body below the header (default 16px side padding, 12px bottom). */
+  bodyClassName?: string
+  /** Data attribute naming the card kind (default "analytics-card"). */
+  slot?: string
+  children?: React.ReactNode
+}
+
+/**
+ * The card every analytics panel sits in: title, description, aside slot and a loading state that
+ * keeps the header (including a placeholder description line) so the card doesn't change height.
+ * ChartFrame builds on it; tables and lists on the analytics screen use it directly.
+ */
+export function AnalyticsCard({
+  title,
+  description,
+  aside,
+  loading,
+  skeleton,
+  titleId,
+  className,
+  bodyClassName,
+  slot = "analytics-card",
+  children,
+}: AnalyticsCardProps) {
+  const autoId = React.useId()
+  const id = titleId ?? autoId
+  return (
+    <section
+      aria-labelledby={id}
+      aria-busy={loading || undefined}
+      data-slot={slot}
+      className={cn(KIT.card, className)}
+    >
+      <header className={cn("flex items-start gap-3 pb-2", KIT.cardPad)}>
+        <div className="min-w-0 flex-1">
+          <h3 id={id} className={KIT.title}>
+            {title}
+          </h3>
+          {description ? (
+            <p className={KIT.description}>{description}</p>
+          ) : loading ? (
+            <div aria-hidden className="mt-0.5 flex h-[19px] items-center">
+              <div className={cn(KIT.skeleton, "h-3 w-3/5")} />
+            </div>
+          ) : null}
+        </div>
+        {aside}
+      </header>
+      <div className={cn("min-w-0 px-4 pb-3", bodyClassName)}>
+        {loading ? (skeleton ?? <RowsSkeleton />) : children}
+      </div>
+      {loading ? <span className="sr-only">Loading {title}</span> : null}
+    </section>
+  )
+}
+
+export type ChartShape = "bars" | "hbars" | "line" | "area" | "donut" | "rows"
+
 export interface ChartFrameProps {
   title: string
   description?: React.ReactNode
@@ -67,13 +164,18 @@ export interface ChartFrameProps {
   aside?: React.ReactNode
   /** Shown under the plot (not in table mode). */
   legend?: React.ReactNode
+  /** Height reserved under the plot for the legend, so neighbouring cards line up (default one row). */
+  legendHeight?: number
+  /** Skeleton drawn while loading, matching the chart type. */
+  shape?: ChartShape
   className?: string
   children: React.ReactNode
 }
 
 /**
- * The shared card every analytics chart sits in: title row, a Chart / Table toggle (the table is the
- * keyboard and screen-reader fallback for the plot), and the loading and empty states.
+ * A chart card: AnalyticsCard plus a Chart / Table toggle (the table is the keyboard and
+ * screen-reader fallback for the plot) and the empty state. Plot, empty box, skeleton and table
+ * share one height, and the legend slot is reserved in every mode, so switching never jumps.
  */
 export function ChartFrame({
   title,
@@ -86,84 +188,139 @@ export function ChartFrame({
   table,
   aside,
   legend,
+  legendHeight = LEGEND_ROW,
+  shape = "bars",
   className,
   children,
 }: ChartFrameProps) {
   const [asTable, setAsTable] = React.useState(false)
-  const titleId = React.useId()
   const showToggle = !loading && !empty
+  // Legend slot: 8px gap plus the reserved rows; kept in table/empty/loading too.
+  const slot = legendHeight + 8
 
   return (
-    <section
-      aria-labelledby={titleId}
-      aria-busy={loading || undefined}
-      data-slot="analytics-chart"
-      className={cn("flex min-w-0 flex-col rounded-[10px] border border-border bg-background", className)}
+    <AnalyticsCard
+      title={title}
+      description={description}
+      loading={loading}
+      slot="analytics-chart"
+      className={className}
+      bodyClassName="px-2"
+      skeleton={
+        <>
+          <ChartSkeleton height={height} shape={shape} />
+          <div aria-hidden style={{ height: slot }} />
+        </>
+      }
+      aside={
+        <>
+          {aside}
+          {showToggle ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-pressed={asTable}
+              aria-label={asTable ? `Show ${title} as a chart` : `Show ${title} as a table`}
+              title={asTable ? "Show chart" : "Show table"}
+              onClick={() => setAsTable((v) => !v)}
+              className="-mt-1 -mr-1.5 text-muted-foreground"
+            >
+              {asTable ? <BarChart3 /> : <Table2 />}
+            </Button>
+          ) : null}
+        </>
+      }
     >
-      <header className="flex items-start gap-3 px-4 pt-3.5 pb-2">
-        <div className="min-w-0 flex-1">
-          <h3 id={titleId} className="truncate text-[13.5px] font-semibold tracking-[-0.01em]">
-            {title}
-          </h3>
-          {description ? <p className="mt-0.5 text-[12.5px] text-muted-foreground">{description}</p> : null}
-        </div>
-        {aside}
-        {showToggle ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-pressed={asTable}
-            aria-label={asTable ? `Show ${title} as a chart` : `Show ${title} as a table`}
-            title={asTable ? "Show chart" : "Show table"}
-            onClick={() => setAsTable((v) => !v)}
-            className="-mt-1 -mr-1.5 text-muted-foreground"
-          >
-            {asTable ? <BarChart3 /> : <Table2 />}
-          </Button>
-        ) : null}
-      </header>
-      <div className="min-w-0 px-2 pb-3">
-        {loading ? (
-          <ChartSkeleton height={height} />
-        ) : empty ? (
+      {empty ? (
+        <>
           <div
             role="status"
             style={{ height }}
-            className="mx-2 flex items-center justify-center rounded-[9px] border border-dashed border-input text-[13px] text-faint"
+            className="mx-2 flex items-center justify-center rounded-lg border border-dashed border-input text-[13px] text-faint"
           >
             {emptyMessage}
           </div>
-        ) : asTable ? (
-          <div className="mx-2 overflow-auto" style={{ maxHeight: Math.max(height, 160) }}>
-            {table()}
+          <div aria-hidden style={{ height: slot }} />
+        </>
+      ) : asTable ? (
+        <div className="mx-2 overflow-auto" style={{ height: height + slot }}>
+          {table()}
+        </div>
+      ) : (
+        <>
+          <div
+            role="figure"
+            aria-label={summary}
+            style={{ height }}
+            className="min-w-0 rounded-md has-[.recharts-surface:focus-visible]:ring-3 has-[.recharts-surface:focus-visible]:ring-ring/50"
+          >
+            {children}
           </div>
-        ) : (
-          <>
-            <div
-              role="figure"
-              aria-label={summary}
-              style={{ height }}
-              className="min-w-0 rounded-[7px] has-[.recharts-surface:focus-visible]:ring-2 has-[.recharts-surface:focus-visible]:ring-ring/50"
-            >
-              {children}
-            </div>
+          <div style={{ minHeight: slot }} className="pt-2">
             {legend}
-          </>
-        )}
-      </div>
-      {loading ? <span className="sr-only">Loading {title}</span> : null}
-    </section>
+          </div>
+        </>
+      )}
+    </AnalyticsCard>
   )
 }
 
-/** Static skeleton (no pulse: nothing moves on its own). */
-export function ChartSkeleton({ height }: { height: number }) {
+/** Static skeletons (no pulse: nothing moves on its own), one per chart type. */
+export function ChartSkeleton({ height, shape = "bars" }: { height: number; shape?: ChartShape }) {
+  if (shape === "donut") {
+    const d = Math.min(height * 0.92, 220)
+    return (
+      <div aria-hidden style={{ height }} className="mx-2 flex items-center justify-center">
+        <div
+          className="rounded-full border-muted"
+          style={{ width: d, height: d, borderWidth: d * 0.15 }}
+        />
+      </div>
+    )
+  }
+  if (shape === "line" || shape === "area") {
+    // A flat polyline over a baseline, in the same stone wash as the bars.
+    const pts = [52, 44, 58, 40, 48, 30, 38, 26]
+    const path = pts.map((y, i) => `${(i / (pts.length - 1)) * 100},${y}`).join(" ")
+    return (
+      <div aria-hidden style={{ height }} className="mx-2 px-2 pt-2 pb-6">
+        <svg viewBox="0 0 100 64" preserveAspectRatio="none" className="size-full text-muted">
+          {shape === "area" ? <polygon points={`0,64 ${path} 100,64`} fill="currentColor" opacity={0.6} /> : null}
+          <polyline points={path} fill="none" stroke="currentColor" strokeWidth={3} vectorEffect="non-scaling-stroke" />
+        </svg>
+      </div>
+    )
+  }
+  if (shape === "hbars") {
+    const bars = [82, 64, 52, 40, 30]
+    return (
+      <div aria-hidden style={{ height }} className="mx-2 flex flex-col justify-around px-2 pb-6">
+        {bars.map((w, i) => (
+          <div key={i} className={cn(KIT.skeleton, "h-3.5")} style={{ width: `${w}%` }} />
+        ))}
+      </div>
+    )
+  }
+  if (shape === "rows") return <RowsSkeleton />
   const bars = [46, 62, 38, 74, 58, 82, 66, 52]
   return (
     <div aria-hidden style={{ height }} className="mx-2 flex items-end gap-[6%] px-2 pb-6">
       {bars.map((h, i) => (
-        <div key={i} className="flex-1 rounded-[4px] bg-muted" style={{ height: `${h}%` }} />
+        <div key={i} className={cn(KIT.skeleton, "flex-1")} style={{ height: `${h}%` }} />
+      ))}
+    </div>
+  )
+}
+
+/** Table-shaped skeleton: rows at the DataTable row height. */
+export function RowsSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div aria-hidden className="flex flex-col">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex h-[31px] items-center border-b border-border last:border-0">
+          <div className={cn(KIT.skeleton, "h-3")} style={{ width: `${72 - i * 9}%` }} />
+        </div>
       ))}
     </div>
   )
@@ -175,6 +332,7 @@ export interface DataTableColumn<Row> {
   numeric?: boolean
 }
 
+/** The Show table view of every chart (and the analytics screen's own tables). */
 export function DataTable<Row>({
   caption,
   columns,
@@ -185,10 +343,10 @@ export function DataTable<Row>({
   rows: Row[]
 }) {
   return (
-    <table className="w-full border-collapse text-[12.5px]">
+    <table className="w-full border-collapse text-[13px]">
       <caption className="sr-only">{caption}</caption>
       <thead>
-        <tr className="sticky top-0 border-b border-border bg-background text-left text-faint">
+        <tr className={cn("sticky top-0 border-b border-border bg-background text-left text-faint", KIT.label)}>
           {columns.map((c) => (
             <th key={c.label} scope="col" className={cn("py-1.5 pr-3 font-medium", c.numeric && "text-right")}>
               {c.label}
@@ -220,7 +378,37 @@ export function DataTable<Row>({
   )
 }
 
-/** Tooltip body shared by every chart: exact label on top, one row per series with its exact value. */
+/** Tooltip surface shared by every chart: heading on top, then label/value rows. */
+export function TooltipShell({ heading, children }: { heading: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="grid min-w-36 gap-1.5 rounded-lg bg-popover px-2.5 py-1.5 text-[12.5px] text-popover-foreground shadow-md ring-1 ring-foreground/10">
+      <div className="font-medium">{heading}</div>
+      <div className="grid gap-1">{children}</div>
+    </div>
+  )
+}
+
+export function TooltipRow({
+  label,
+  value,
+  color,
+  divider,
+}: {
+  label: React.ReactNode
+  value: React.ReactNode
+  color?: string
+  divider?: boolean
+}) {
+  return (
+    <div className={cn("flex items-center gap-2", divider && "mt-0.5 border-t border-border pt-1")}>
+      {color ? <span aria-hidden className={KIT.swatch} style={{ background: color }} /> : null}
+      <span className="flex-1 text-muted-foreground">{label}</span>
+      <span className="font-mono font-medium text-foreground tabular-nums">{value}</span>
+    </div>
+  )
+}
+
+/** Tooltip body for series charts: exact bucket on top, one row per series with its exact value. */
 export function KitTooltip({
   active,
   payload,
@@ -239,38 +427,50 @@ export function KitTooltip({
   const datum = (items[0].payload ?? {}) as Record<string, unknown>
   const sum = items.reduce((n, p) => n + (Number(p.value) || 0), 0)
   return (
-    <div className="grid min-w-36 gap-1.5 rounded-lg bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-md ring-1 ring-foreground/10">
-      <div className="font-medium">{heading(datum)}</div>
-      <div className="grid gap-1">
-        {items.map((p, i) => (
-          <div key={`${p.dataKey ?? p.name}-${i}`} className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="size-2.5 shrink-0 rounded-[2px]"
-              style={{ background: (p.payload as { fill?: string } | undefined)?.fill ?? p.color }}
-            />
-            <span className="flex-1 text-muted-foreground">{p.name}</span>
-            <span className="font-mono font-medium text-foreground tabular-nums">{format(Number(p.value))}</span>
-          </div>
-        ))}
-        {total && items.length > 1 ? (
-          <div className="mt-0.5 flex items-center gap-2 border-t border-border pt-1">
-            <span className="flex-1 text-muted-foreground">Total</span>
-            <span className="font-mono font-medium tabular-nums">{format(sum)}</span>
-          </div>
-        ) : null}
-      </div>
-    </div>
+    <TooltipShell heading={heading(datum)}>
+      {items.map((p, i) => (
+        <TooltipRow
+          key={`${p.dataKey ?? p.name}-${i}`}
+          label={p.name}
+          value={format(Number(p.value))}
+          color={(p.payload as { fill?: string } | undefined)?.fill ?? p.color}
+        />
+      ))}
+      {total && items.length > 1 ? <TooltipRow divider label="Total" value={format(sum)} /> : null}
+    </TooltipShell>
   )
 }
 
-/** Legend under multi-series charts (always visible, so colour isn't the only key). */
-export function SeriesLegend({ items }: { items: { label: string; color: string; value?: string }[] }) {
+export interface LegendItem {
+  label: string
+  color: string
+  value?: string
+}
+
+/**
+ * Legend under every chart (always visible, so colour isn't the only key). "row" wraps items on one
+ * line; "grid" is a fixed two-column grid (label left, value right-aligned) for donuts, whose
+ * height the frame reserves so the three donuts' plots line up.
+ */
+export function SeriesLegend({ items, variant = "row" }: { items: LegendItem[]; variant?: "row" | "grid" }) {
+  if (variant === "grid") {
+    return (
+      <ul className={cn("grid grid-cols-2 gap-x-4 px-2 text-muted-foreground", KIT.label, "font-normal")}>
+        {items.map((it) => (
+          <li key={it.label} className="flex min-w-0 items-center gap-1.5" style={{ height: LEGEND_ROW }}>
+            <span aria-hidden className={KIT.swatch} style={{ background: it.color }} />
+            <span className="min-w-0 flex-1 truncate">{it.label}</span>
+            {it.value ? <span className="font-mono text-foreground tabular-nums">{it.value}</span> : null}
+          </li>
+        ))}
+      </ul>
+    )
+  }
   return (
-    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1 px-2 pt-2 text-[12px] text-muted-foreground">
+    <ul className={cn("flex flex-wrap items-center gap-x-4 px-2 text-muted-foreground", KIT.label, "font-normal")}>
       {items.map((it) => (
-        <li key={it.label} className="flex items-center gap-1.5">
-          <span aria-hidden className="size-2 shrink-0 rounded-[2px]" style={{ background: it.color }} />
+        <li key={it.label} className="flex items-center gap-1.5" style={{ height: LEGEND_ROW }}>
+          <span aria-hidden className={KIT.swatch} style={{ background: it.color }} />
           {it.label}
           {it.value ? <span className="font-mono text-foreground tabular-nums">{it.value}</span> : null}
         </li>
@@ -279,4 +479,40 @@ export function SeriesLegend({ items }: { items: { label: string; color: string;
   )
 }
 
-export const AXIS_TICK = { fontSize: 11, fill: "var(--faint)" }
+/** Axis tick text: the 11.5px label step in Faint Ink, tabular so numbers line up. */
+export const AXIS_TICK = { fontSize: 11.5, fill: "var(--faint)", style: { fontVariantNumeric: "tabular-nums" } }
+
+/**
+ * Width of a numeric y-axis, from the widest label recharts will draw (the rounded-up maximum),
+ * instead of a fixed 40px that clips 4+ digit counts and wastes room on single digits.
+ */
+export function valueAxisWidth(max: number, format: (v: number) => string): number {
+  const m = Math.max(0, max)
+  const mag = m > 0 ? 10 ** Math.floor(Math.log10(m)) : 1
+  const nice = Math.ceil(m / mag) * mag
+  // Tabular digits at 11.5px Geist are ~7px wide; 10px covers the tick margin.
+  return Math.max(24, Math.ceil(format(nice).length * 7) + 10)
+}
+
+/** Text width measurement for axis labels (canvas, so it matches the rendered font). */
+let measureCtx: CanvasRenderingContext2D | null | undefined
+export function measureText(text: string, fontSize = 11.5): number {
+  if (typeof document === "undefined") return text.length * fontSize * 0.6
+  if (measureCtx === undefined) measureCtx = document.createElement("canvas").getContext("2d")
+  if (!measureCtx) return text.length * fontSize * 0.6
+  measureCtx.font = `${fontSize}px ${getComputedStyle(document.body).fontFamily}`
+  return measureCtx.measureText(text).width
+}
+
+/** Truncates `text` with an ellipsis so it fits `width` px at the tick size. */
+export function fitText(text: string, width: number, fontSize = 11.5): string {
+  if (measureText(text, fontSize) <= width) return text
+  let lo = 0
+  let hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (measureText(`${text.slice(0, mid)}…`, fontSize) <= width) lo = mid
+    else hi = mid - 1
+  }
+  return `${text.slice(0, Math.max(1, lo))}…`
+}

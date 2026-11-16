@@ -40,6 +40,13 @@ colors:
   dark-live-border: "#5c4a14"
   dark-destructive: "#ff6166"
 typography:
+  metric:
+    fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "24px"
+    fontWeight: 600
+    lineHeight: 1.25
+    letterSpacing: "-0.02em"
+    fontFeature: "\"tnum\" 1"
   headline:
     fontFamily: "Geist, ui-sans-serif, system-ui, sans-serif"
     fontSize: "20px"
@@ -252,6 +259,7 @@ A neutral, slightly warm stone palette with a single cobalt accent and one signa
 **Character:** a precise grotesk at small sizes, with negative tracking only on the few headings. Mono marks anything machine-shaped: task keys, counts, slugs, keyboard shortcuts.
 
 ### Hierarchy
+- **Metric** (600, 24px, 1.25, −0.02em, tabular): analytics KPI values only.
 - **Headline** (600, 20px, 1.3, −0.02em): the editable task title in the detail pane. The New Task dialog's title field is a sibling at 18px / −0.015em.
 - **Title** (600, 15px, −0.01em): view headers ("My Tasks", "Settings") and empty-state titles. Settings row titles use 600 at 14px.
 - **Body** (400, 14px, 1.6): the base size, task row titles, rich-text descriptions (capped at 72ch). Sidebar nav items run at 13.5px.
@@ -387,9 +395,12 @@ Every user-ordered list (sidebar projects, later statuses, list rows and board c
 Recharts under the shadcn `chart` wrapper (`src/components/ui/chart.tsx`), wrapped in a small kit: `KpiTile`, `TimeSeriesChart` (line, area, stacked area), `BarChart` (grouped, stacked, horizontal) and `DonutChart`. Charts are data, so they carry chroma; the chrome around them stays neutral.
 - **Series colours:** `--chart-1` to `--chart-6` (indigo, teal, violet, pink, orange, slate; lighter variants in dark), handed out in order or picked per series with `color`. Never the live yellow, never the selection blue, never status colours.
 - **Delta semantics:** `KpiTile` colours a change by whether it is good (`goodDirection` up, down or neutral): `--positive` green at a 10% tint for good, destructive red at a 10% tint for bad, Chip grey for no change or neutral. Arrows and the spoken text carry the direction, so colour is never the only signal.
-- **Card:** 10px radius, hairline border, paper fill, no shadow; title 13.5px/600, description 12.5px Muted Ink. Axis ticks 11px Faint Ink, horizontal grid lines in Hairline only, no axis lines. Legends sit under the plot as small 2px-radius squares.
-- **Tooltip:** a popover-surface float (float ring + popover lift) with the exact date (and time for hourly buckets), one row per series with its exact value in mono, and a total for stacked charts.
-- **States:** loading is a static stone-wash bar skeleton (no pulse), empty is a dashed Input Stroke box reading "No data for this period", a single point draws dots.
+- **Card:** one `AnalyticsCard` for every chart and table panel: 10px radius, hairline border, paper fill, no shadow, 16px inline / 14px top padding. Title 14px/600 (the settings row title step), description 13px Muted Ink. While loading the header stays and the description becomes a placeholder line, so cards keep their height.
+- **Type scale:** KPI values and the donut total use the Metric step (24px/600 Geist Sans, tabular numerals, -0.02em; the donut uses the 20px Headline step as its scaled-down metric). Sans rather than mono so units such as "4 min" read as words. Everything else is a ramp step: legends, axis ticks, table headers, KPI deltas and the donut caption at the 11.5px Label step, table cells 13px, tooltips 12.5px, KPI labels 13px Muted Ink. Counts inside tables, tooltips and legends are mono tabular.
+- **Axes and legends:** ticks 11.5px Faint Ink, horizontal grid lines in Hairline only, no axis lines; the value axis is as wide as its widest label, and horizontal-bar category labels are measured and ellipsised with the full name as an SVG title. Every chart shows a legend under the plot (single-series too), with 8px squares at a 2px radius, the same swatch as the tooltip. The legend slot is reserved (one 18px row; donuts reserve three rows of a two-column label / share grid) so neighbouring cards line up.
+- **Series:** straight (linear) segments, since the data are integer counts per bucket; every area, plain or stacked, fills at 20%. Donut slice colours come from the slice's place in the full dimension (zeros included), so a slice keeps its colour when another one is zero.
+- **Tooltip:** a popover-surface float (float ring + popover lift, 12.5px) headed by what is hovered: the exact date (and time for hourly buckets) with one row per series and a total for stacked charts, or for a donut the slice name with Value and Share rows.
+- **States:** loading is a static stone-wash skeleton in the chart's own shape (bars, horizontal bars, line, area, ring, table rows; no pulse); empty is a dashed Input Stroke box at the 9px control radius reading "No data for this period". The KPI delta row always holds one line: the delta chip, "No earlier data" when there is nothing to compare, or nothing when comparison is off. A single point draws dots.
 - **Motion:** none. Chart animations are off in every mode (tooltips and series appear in place), which also satisfies reduced motion.
 - **Access:** each plot is a `role="figure"` with a generated summary (range, totals, peaks) as its label; the surface is keyboard-focusable (arrow keys move the tooltip) with a focus ring; every chart has a Chart/Table toggle that swaps in a real data table.
 

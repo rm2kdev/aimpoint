@@ -1,13 +1,17 @@
 import * as React from "react"
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { KIT } from "./chart-frame"
 import { formatNumber, formatPercent } from "./format"
 
 export interface KpiTileProps {
   label: string
   /** Current-period value; null shows a dash placeholder and "No data". */
   value: number | null
-  /** Same measure over the previous period of equal length; omit to hide the delta. */
+  /**
+   * Same measure over the previous period of equal length. Omit (undefined) to hide the delta row's
+   * content; null means there is nothing earlier to compare with ("No earlier data").
+   */
   previous?: number | null
   /** Which way is good: "up" (default) for counts like closed tickets, "down" for e.g. open bugs, "neutral" to never colour. */
   goodDirection?: "up" | "down" | "neutral"
@@ -69,42 +73,52 @@ export function KpiTile({
         className,
       )}
     >
-      <div className="truncate text-[12.5px] text-muted-foreground">{label}</div>
+      <div className="truncate text-[13px] leading-[1.45] text-muted-foreground">{label}</div>
       {loading ? (
         <>
-          <div aria-hidden className="mt-1 h-7 w-20 rounded-[5px] bg-muted" />
-          <div aria-hidden className="mt-1 h-4 w-32 rounded-[4px] bg-muted" />
+          {/* Same line boxes as the loaded tile (30px value, 20px delta row), so nothing jumps. */}
+          <div aria-hidden className="flex h-7.5 items-center">
+            <div className={cn(KIT.skeleton, "h-6 w-20")} />
+          </div>
+          <div aria-hidden className="flex h-5 items-center">
+            <div className={cn(KIT.skeleton, "h-3.5 w-32")} />
+          </div>
           <span className="sr-only">Loading {label}</span>
         </>
       ) : (
         <>
-          <div className="font-mono text-[26px] leading-[1.2] font-semibold tracking-[-0.02em] tabular-nums">
+          <div className={cn("h-7.5 truncate", KIT.metric)}>
             {value == null ? <span className="text-faint">–</span> : format(value)}
             {value == null ? <span className="sr-only">No data</span> : null}
           </div>
-          {deltaText ? (
-            <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[12px]">
-              <span
-                aria-hidden
-                className={cn(
-                  "inline-flex h-5 shrink-0 items-center gap-0.5 rounded-[5px] px-1.5 font-medium",
-                  delta?.direction !== "flat" && "font-mono tabular-nums",
-                  tone === "good" && "bg-positive/10 text-positive",
-                  tone === "bad" && "bg-destructive/10 text-destructive",
-                  tone === "neutral" && "bg-chip text-muted-foreground",
-                )}
-              >
-                <Icon className="size-3.5" />
-                {deltaText}
+          <div className={cn("flex h-5 min-w-0 items-center gap-1.5 whitespace-nowrap", KIT.label)}>
+            {deltaText ? (
+              <>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "inline-flex h-5 shrink-0 items-center gap-0.5 rounded-[5px] px-1.5 tabular-nums",
+                    tone === "good" && "bg-positive/10 text-positive",
+                    tone === "bad" && "bg-destructive/10 text-destructive",
+                    tone === "neutral" && "bg-chip text-muted-foreground",
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {deltaText}
+                </span>
+                <span aria-hidden className="min-w-0 truncate font-normal text-faint">
+                  {comparisonLabel}
+                </span>
+                <span className="sr-only">{spoken}</span>
+              </>
+            ) : value == null ? (
+              <span className="truncate font-normal text-faint">No data for this period</span>
+            ) : previous === null ? (
+              <span className="inline-flex h-5 shrink-0 items-center rounded-[5px] bg-chip px-1.5 text-muted-foreground">
+                No earlier data
               </span>
-              <span aria-hidden className="text-faint">
-                {comparisonLabel}
-              </span>
-              <span className="sr-only">{spoken}</span>
-            </div>
-          ) : (
-            <div className="h-5 text-[12px] text-faint">{value == null ? "No data for this period" : ""}</div>
-          )}
+            ) : null}
+          </div>
         </>
       )}
     </div>

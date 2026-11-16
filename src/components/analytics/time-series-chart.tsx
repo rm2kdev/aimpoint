@@ -12,6 +12,7 @@ import {
   chartColor,
   seriesConfig,
   seriesVar,
+  valueAxisWidth,
   type Series,
   type ValueFormatter,
 } from "./chart-frame"
@@ -39,6 +40,13 @@ export interface TimeSeriesChartProps {
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0)
 
+/**
+ * One fill for every area (plain or stacked), and straight segments: these are integer counts per
+ * bucket, and a smoothed curve invents humps and dips between buckets that the bars don't show.
+ */
+const AREA_FILL_OPACITY = 0.2
+const CURVE = "linear" as const
+
 export function TimeSeriesChart({
   title,
   description,
@@ -63,6 +71,14 @@ export function TimeSeriesChart({
   const dots = data.length <= 2 ? { r: 3, strokeWidth: 0, fill: undefined } : false
 
   const text = summary ?? describe(title, data, series, granularity, valueFormatter, stacked)
+  const yWidth = React.useMemo(() => {
+    let max = 0
+    for (const d of data) {
+      const vals = series.map((s) => num(d[s.key]))
+      max = Math.max(max, stacked ? vals.reduce((a, b) => a + b, 0) : Math.max(0, ...vals))
+    }
+    return valueAxisWidth(max, formatCompact)
+  }, [data, series, stacked])
 
   const table = () => (
     <DataTable
@@ -95,7 +111,7 @@ export function TimeSeriesChart({
       <YAxis
         tickLine={false}
         axisLine={false}
-        width={40}
+        width={yWidth}
         tickMargin={4}
         allowDecimals={false}
         tick={AXIS_TICK}
@@ -127,11 +143,8 @@ export function TimeSeriesChart({
       height={height}
       table={table}
       className={className}
-      legend={
-        series.length > 1 ? (
-          <SeriesLegend items={series.map((s, i) => ({ label: s.label, color: chartColor(i, s.color) }))} />
-        ) : null
-      }
+      shape={area ? "area" : "line"}
+      legend={<SeriesLegend items={series.map((s, i) => ({ label: s.label, color: chartColor(i, s.color) }))} />}
     >
       <ChartContainer config={config} className="aspect-auto h-full w-full">
         {area ? (
@@ -142,12 +155,12 @@ export function TimeSeriesChart({
                 key={s.key}
                 dataKey={s.key}
                 name={s.label}
-                type="monotone"
+                type={CURVE}
                 stackId={stacked ? "stack" : undefined}
                 stroke={seriesVar(i)}
                 strokeWidth={1.75}
                 fill={seriesVar(i)}
-                fillOpacity={stacked ? 0.35 : 0.14}
+                fillOpacity={AREA_FILL_OPACITY}
                 dot={dots ? { ...dots, fill: seriesVar(i) } : false}
                 activeDot={{ r: 3.5, strokeWidth: 0 }}
                 isAnimationActive={false}
@@ -162,7 +175,7 @@ export function TimeSeriesChart({
                 key={s.key}
                 dataKey={s.key}
                 name={s.label}
-                type="monotone"
+                type={CURVE}
                 stroke={seriesVar(i)}
                 strokeWidth={1.75}
                 dot={dots ? { ...dots, fill: seriesVar(i) } : false}

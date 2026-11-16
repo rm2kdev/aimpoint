@@ -3,11 +3,15 @@
 import * as React from "react"
 import { Cell, Pie, PieChart } from "recharts"
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { cn } from "@/lib/utils"
 import {
   ChartFrame,
   DataTable,
-  KitTooltip,
+  KIT,
+  LEGEND_ROW,
   SeriesLegend,
+  TooltipRow,
+  TooltipShell,
   chartColor,
   type ChartColor,
   type ValueFormatter,
@@ -32,6 +36,8 @@ export interface DonutChartProps {
   emptyMessage?: string
   summary?: string
   height?: number
+  /** Legend rows to reserve (two items per row, default 3), so donuts side by side line up. */
+  legendRows?: number
   className?: string
 }
 
@@ -45,13 +51,16 @@ export function DonutChart({
   emptyMessage,
   summary,
   height = 200,
+  legendRows = 3,
   className,
 }: DonutChartProps) {
   const slices = React.useMemo(
     () =>
+      // Colour comes from the slice's place in `data` (the full dimension, zeros included), so a
+      // stage or priority keeps its colour when another one drops to zero.
       data
-        .filter((d) => Number.isFinite(d.value) && d.value > 0)
-        .map((d, i) => ({ ...d, fill: chartColor(i, d.color) })),
+        .map((d, i) => ({ ...d, fill: chartColor(i, d.color) }))
+        .filter((d) => Number.isFinite(d.value) && d.value > 0),
     [data],
   )
   const config = React.useMemo(
@@ -93,24 +102,38 @@ export function DonutChart({
       height={height}
       table={table}
       className={className}
+      shape="donut"
+      legendHeight={Math.max(1, legendRows) * LEGEND_ROW}
       legend={
         <SeriesLegend
+          variant="grid"
           items={slices.map((s) => ({ label: s.label, color: s.fill, value: share(s.value) }))}
         />
       }
     >
       <div className="relative h-full">
-      <ChartContainer config={config} className="aspect-auto h-full w-full">
+      {/* The total sits in the hole; HTML rather than an SVG label so it uses the type scale. It comes
+          before the chart so the tooltip paints above it. */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+        <span className={KIT.metricSmall}>{valueFormatter(total)}</span>
+        <span className={cn(KIT.label, "font-normal text-faint")}>{centerLabel}</span>
+      </div>
+      <ChartContainer config={config} className="relative aspect-auto h-full w-full">
         <PieChart>
           <ChartTooltip
             isAnimationActive={false}
-            content={(p) => (
-              <KitTooltip
-                {...p}
-                format={(v) => `${valueFormatter(v)} · ${share(v)}`}
-                heading={() => title}
-              />
-            )}
+            content={({ active, payload }) => {
+              const p = payload?.[0]
+              if (!active || !p) return null
+              const slice = p.payload as (typeof slices)[number] | undefined
+              const v = Number(p.value)
+              return (
+                <TooltipShell heading={slice?.label ?? p.name}>
+                  <TooltipRow label="Value" value={valueFormatter(v)} color={slice?.fill} />
+                  <TooltipRow label="Share" value={share(v)} />
+                </TooltipShell>
+              )
+            }}
           />
           <Pie
             data={slices}
@@ -129,11 +152,6 @@ export function DonutChart({
           </Pie>
         </PieChart>
       </ChartContainer>
-      {/* The total sits in the hole; HTML rather than an SVG label so it uses the type scale. */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-mono text-[18px] leading-tight font-semibold tabular-nums">{valueFormatter(total)}</span>
-        <span className="text-[11px] text-faint">{centerLabel}</span>
-      </div>
       </div>
     </ChartFrame>
   )

@@ -10,8 +10,10 @@ import {
   KitTooltip,
   SeriesLegend,
   chartColor,
+  fitText,
   seriesConfig,
   seriesVar,
+  valueAxisWidth,
   type Series,
   type ValueFormatter,
 } from "./chart-frame"
@@ -45,6 +47,49 @@ export interface BarChartProps {
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0)
 
+/** True only after hydration, so measured (canvas) tick text never differs from the server render. */
+const subscribeNoop = () => () => {}
+function useHydrated() {
+  return React.useSyncExternalStore(subscribeNoop, () => true, () => false)
+}
+
+/**
+ * Category tick for horizontal bars: the label is measured and ellipsised to the axis width, and
+ * the full name is kept as an SVG <title> so a clipped project name can still be read on hover.
+ */
+function CategoryTick({
+  x,
+  y,
+  payload,
+  width,
+  format,
+  measured,
+}: {
+  x?: number | string
+  y?: number | string
+  payload?: { value: unknown }
+  width: number
+  format: (v: unknown) => string
+  measured: boolean
+}) {
+  const full = format(payload?.value)
+  const shown = measured ? fitText(full, width) : full.length > width / 7 ? `${full.slice(0, Math.max(1, Math.floor(width / 7) - 1))}…` : full
+  return (
+    <text
+      x={Number(x)}
+      y={Number(y)}
+      dy="0.355em"
+      textAnchor="end"
+      fontSize={AXIS_TICK.fontSize}
+      fill={AXIS_TICK.fill}
+      style={AXIS_TICK.style}
+    >
+      {shown !== full ? <title>{full}</title> : null}
+      {shown}
+    </text>
+  )
+}
+
 export function BarChart({
   title,
   description,
@@ -72,6 +117,15 @@ export function BarChart({
   const span = granularity === "hour" ? spanOf(data, (d) => d[categoryKey]) : undefined
   const tick = (v: unknown) => (granularity ? formatTick(v as TimeValue, granularity, span) : String(v ?? ""))
   const text = summary ?? describe(title, data, categoryKey, series, exact, valueFormatter)
+  const measured = useHydrated()
+  const valueWidth = React.useMemo(() => {
+    let max = 0
+    for (const d of data) {
+      const vals = series.map((s) => num(d[s.key]))
+      max = Math.max(max, stacked ? vals.reduce((a, b) => a + b, 0) : Math.max(0, ...vals))
+    }
+    return valueAxisWidth(max, formatCompact)
+  }, [data, series, stacked])
 
   const table = () => (
     <DataTable
@@ -93,7 +147,7 @@ export function BarChart({
     tickLine: false,
     axisLine: false,
     tick: AXIS_TICK,
-    tickFormatter: (v: unknown) => clip(tick(v), horizontal ? Math.max(8, Math.floor(categoryWidth / 7)) : 12),
+    tickFormatter: (v: unknown) => clip(tick(v), 12),
   }
   const valueAxis = {
     type: "number" as const,
@@ -120,11 +174,8 @@ export function BarChart({
       height={h}
       table={table}
       className={className}
-      legend={
-        series.length > 1 ? (
-          <SeriesLegend items={series.map((s, i) => ({ label: s.label, color: chartColor(i, s.color) }))} />
-        ) : null
-      }
+      shape={horizontal ? "hbars" : "bars"}
+      legend={<SeriesLegend items={series.map((s, i) => ({ label: s.label, color: chartColor(i, s.color) }))} />}
     >
       <ChartContainer config={config} className="aspect-auto h-full w-full">
         <RBarChart
@@ -138,12 +189,20 @@ export function BarChart({
           {horizontal ? (
             <>
               <XAxis {...valueAxis} tickMargin={6} />
-              <YAxis {...categoryAxis} width={categoryWidth} tickMargin={6} interval={0} />
+              <YAxis
+                {...categoryAxis}
+                width={categoryWidth}
+                tickMargin={6}
+                interval={0}
+                tick={(p: { x?: number | string; y?: number | string; payload?: { value: unknown } }) => (
+                  <CategoryTick {...p} width={categoryWidth - 8} format={tick} measured={measured} />
+                )}
+              />
             </>
           ) : (
             <>
               <XAxis {...categoryAxis} tickMargin={8} minTickGap={16} interval="preserveStartEnd" />
-              <YAxis {...valueAxis} width={40} tickMargin={4} />
+              <YAxis {...valueAxis} width={valueWidth} tickMargin={4} />
             </>
           )}
           <ChartTooltip
