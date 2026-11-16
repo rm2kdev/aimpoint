@@ -38,6 +38,8 @@ export interface BarChartProps {
   summary?: string
   /** Defaults to 220, or 32 px per row (min 120) when horizontal. */
   height?: number
+  /** Width of the category labels when horizontal (default 96 px). */
+  categoryWidth?: number
   className?: string
 }
 
@@ -58,6 +60,7 @@ export function BarChart({
   emptyMessage,
   summary,
   height,
+  categoryWidth = 96,
   className,
 }: BarChartProps) {
   const config = React.useMemo(() => seriesConfig(series), [series])
@@ -89,7 +92,7 @@ export function BarChart({
     tickLine: false,
     axisLine: false,
     tick: AXIS_TICK,
-    tickFormatter: (v: unknown) => clip(tick(v), horizontal ? 13 : 12),
+    tickFormatter: (v: unknown) => clip(tick(v), horizontal ? Math.max(8, Math.floor(categoryWidth / 7)) : 12),
   }
   const valueAxis = {
     type: "number" as const,
@@ -134,7 +137,7 @@ export function BarChart({
           {horizontal ? (
             <>
               <XAxis {...valueAxis} tickMargin={6} />
-              <YAxis {...categoryAxis} width={96} tickMargin={6} interval={0} />
+              <YAxis {...categoryAxis} width={categoryWidth} tickMargin={6} interval={0} />
             </>
           ) : (
             <>

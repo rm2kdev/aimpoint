@@ -12,6 +12,8 @@ export interface KpiTileProps {
   /** Which way is good: "up" (default) for counts like closed tickets, "down" for e.g. open bugs, "neutral" to never colour. */
   goodDirection?: "up" | "down" | "neutral"
   format?: (value: number) => string
+  /** Formats the absolute change when it can't be a percentage (default `format`); use when `format` adds a sign. */
+  deltaFormat?: (value: number) => string
   /** Shown after the delta, e.g. "vs previous 30 days". */
   comparisonLabel?: string
   loading?: boolean
@@ -25,6 +27,7 @@ export function KpiTile({
   previous,
   goodDirection = "up",
   format = formatNumber,
+  deltaFormat = format,
   comparisonLabel = "vs previous period",
   loading,
   className,
@@ -42,14 +45,14 @@ export function KpiTile({
     ? delta.direction === "flat"
       ? "No change"
       : delta.ratio == null
-        ? `${delta.direction === "up" ? "+" : "−"}${format(Math.abs(delta.diff))}`
+        ? `${delta.direction === "up" ? "+" : "−"}${deltaFormat(Math.abs(delta.diff))}`
         : `${delta.direction === "up" ? "+" : "−"}${formatPercent(Math.abs(delta.ratio))}`
     : null
   const spoken = delta
     ? delta.direction === "flat"
       ? `No change ${comparisonLabel}`
       : `${delta.direction === "up" ? "Up" : "Down"} ${
-          delta.ratio == null ? format(Math.abs(delta.diff)) : formatPercent(Math.abs(delta.ratio))
+          delta.ratio == null ? deltaFormat(Math.abs(delta.diff)) : formatPercent(Math.abs(delta.ratio))
         } ${comparisonLabel} (was ${format(previous as number)})${
           tone === "good" ? ", an improvement" : tone === "bad" ? ", a decline" : ""
         }`

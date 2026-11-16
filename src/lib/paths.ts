@@ -28,6 +28,9 @@ export function orgPath(slug: string, ...segments: Segment[]): string {
 export const rolesPath = (slug: string) => `${orgPath(slug, "settings", "bots")}#roles`;
 export const rolePath = (slug: string, roleId: string) => orgPath(slug, "settings", "bots", "roles", roleId);
 
+/** `/o/<slug>/analytics` plus an optional `?range=...` query (see lib/analytics-range.ts `analyticsSearch`). Admins only. */
+export const analyticsPath = (slug: string, search = "") => `${orgPath(slug, "analytics")}${search}`;
+
 /** `/o/<slug>/p/<key>` */
 export const projectPath = (slug: string, projectKey: string) => orgPath(slug, "p", projectKey);
 
