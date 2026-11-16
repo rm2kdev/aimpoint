@@ -593,3 +593,142 @@ export interface Counts {
   archived: number;
   projects: Record<string, number>;
 }
+
+/* ---- analytics (VEC-132): shared by the analytics screen and the export, built by lib/analytics.ts ---- */
+export type AnalyticsGranularity = "hour" | "day" | "week" | "month";
+export const ANALYTICS_GRANULARITIES: readonly AnalyticsGranularity[] = ["hour", "day", "week", "month"];
+export const isAnalyticsGranularity = (v: unknown): v is AnalyticsGranularity =>
+  typeof v === "string" && (ANALYTICS_GRANULARITIES as readonly string[]).includes(v);
+/** Buckets are cut in the viewer's timezone; AWST when none is given. */
+export const DEFAULT_ANALYTICS_TZ = "Australia/Perth";
+export interface AnalyticsQuery {
+  /** ISO date-time (or Date), inclusive. */
+  from: string | Date;
+  /** ISO date-time (or Date), exclusive. */
+  to: string | Date;
+  granularity: AnalyticsGranularity;
+  /** Limit everything to one project. */
+  projectId?: string | null;
+  /** IANA timezone for bucket boundaries, default DEFAULT_ANALYTICS_TZ. */
+  tz?: string | null;
+}
+/** A count over the period, the previous equal-length period, and per bucket (aligned with AnalyticsReport.buckets). */
+export interface AnalyticsCount {
+  total: number;
+  previous: number;
+  series: number[];
+}
+/** A count split by who did it: people (incl. former and deleted accounts) vs bots. */
+export interface AnalyticsSplitCount extends AnalyticsCount {
+  people: AnalyticsCount;
+  bots: AnalyticsCount;
+}
+/** Distribution of durations in ms (null when there is nothing to measure). */
+export interface AnalyticsDuration {
+  count: number;
+  medianMs: number | null;
+  p90Ms: number | null;
+}
+export interface AnalyticsDurationSeries extends AnalyticsDuration {
+  previous: AnalyticsDuration;
+  /** Median per bucket (null = nothing in that bucket). */
+  series: (number | null)[];
+  p90Series: (number | null)[];
+}
+/** Open (not done/cancelled) tasks over time. */
+export interface AnalyticsBacklog {
+  /** Open at the period's start / end, and at the previous period's start. */
+  start: number;
+  end: number;
+  previousStart: number;
+  /** Open at the end of each bucket. */
+  series: number[];
+}
+export interface AnalyticsTickets {
+  /** Tasks created. */
+  opened: AnalyticsSplitCount;
+  /** Moves from an open stage into done or cancelled (split by who moved it). */
+  closed: AnalyticsSplitCount;
+  done: AnalyticsSplitCount;
+  cancelled: AnalyticsSplitCount;
+  /** Moves from done/cancelled back to an open stage. */
+  reopened: AnalyticsCount;
+  backlog: AnalyticsBacklog;
+  /** Created -> closed, for each close in the period (bucketed by close time). */
+  cycleTime: AnalyticsDurationSeries;
+  /** Age of the tasks open at the end of the period (previous = at its start; series = at each bucket end). */
+  openAge: AnalyticsDurationSeries;
+}
+export interface AnalyticsMessages {
+  comments: AnalyticsSplitCount;
+}
+export interface AnalyticsInteractions {
+  /** Sum of every kind below. */
+  total: AnalyticsSplitCount;
+  statusChanges: AnalyticsSplitCount;
+  assignments: AnalyticsSplitCount;
+  /** @mentions written in comments, by who wrote them. */
+  mentions: AnalyticsSplitCount;
+  /** Dependencies added or removed. */
+  dependencyEdits: AnalyticsSplitCount;
+  /** A bot picked up assigned work or a triage (agentClaims.claimedAt). */
+  botPickups: AnalyticsCount;
+  /** A bot finished a claim (complete_task). */
+  botCompletions: AnalyticsCount;
+  /** Bots @mentioned (botMentions); informational, already part of `mentions`. */
+  botsMentioned: AnalyticsCount;
+}
+export interface AnalyticsBreakdownRow<K> {
+  key: K;
+  /** Open now. */
+  open: number;
+  /** Created / closed in the period. */
+  opened: number;
+  closed: number;
+}
+export interface AnalyticsBreakdown {
+  /** Tasks by stage right now. */
+  byStage: Record<StatusCategory, number>;
+  byPriority: AnalyticsBreakdownRow<Priority>[];
+  byType: AnalyticsBreakdownRow<TaskType>[];
+}
+export interface AnalyticsProject {
+  project: Project;
+  opened: AnalyticsCount;
+  closed: AnalyticsCount;
+  done: AnalyticsCount;
+  cancelled: AnalyticsCount;
+  comments: AnalyticsCount;
+  interactions: AnalyticsCount;
+  backlog: AnalyticsBacklog;
+  cycleTime: AnalyticsDuration;
+  openAge: AnalyticsDuration;
+  breakdown: AnalyticsBreakdown;
+}
+export interface AnalyticsContributor {
+  id: string;
+  name: string;
+  kind: "user" | "bot";
+  /** Tasks this actor moved into done / cancelled in the period. */
+  tasksClosed: number;
+  done: number;
+  cancelled: number;
+  comments: number;
+  /** Status changes, assignments, mentions, dependency edits, bot pickups and completions. */
+  interactions: number;
+}
+export interface AnalyticsReport {
+  generatedAt: string;
+  period: { from: string; to: string; granularity: AnalyticsGranularity; tz: string; projectId: string | null };
+  /** The equal-length period right before, used for every `previous`. */
+  previous: { from: string; to: string };
+  /** Bucket starts (ISO, UTC instant of the local start); every series has one entry per bucket. */
+  buckets: string[];
+  tickets: AnalyticsTickets;
+  messages: AnalyticsMessages;
+  interactions: AnalyticsInteractions;
+  breakdown: AnalyticsBreakdown;
+  projects: AnalyticsProject[];
+  /** Ranked by tasks closed + comments + interactions in the period. */
+  contributors: { people: AnalyticsContributor[]; bots: AnalyticsContributor[] };
+}

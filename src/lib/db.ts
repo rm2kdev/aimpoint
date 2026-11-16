@@ -117,6 +117,13 @@ async function ensureIndexes(db: Db) {
     db.collection("notifications").createIndex({ orgId: 1, userId: 1, readAt: 1 }),
     db.collection("notifications").createIndex({ taskId: 1 }),
     db.collection("deletedUsers").createIndex({ orgIds: 1 }),
+    // Analytics (VEC-132, lib/analytics.ts): org-wide time-range scans.
+    db.collection("tasks").createIndex({ orgId: 1, createdAt: 1 }),
+    db.collection("activity").createIndex({ orgId: 1, kind: 1, createdAt: 1 }),
+    db.collection("comments").createIndex({ orgId: 1, createdAt: 1 }),
+    db.collection("agentClaims").createIndex({ orgId: 1, claimedAt: 1 }),
+    db.collection("agentClaims").createIndex({ orgId: 1, finishedAt: 1 }),
+    db.collection("botMentions").createIndex({ orgId: 1, createdAt: 1 }),
   ]);
   await migrate(db);
 }
