@@ -24,11 +24,16 @@
 //   --drop              also drop (not Escape) in the current org. Off by default: it reorders real tasks
 //   --headless          run Chrome headless. Default is a visible window: headless Chrome on a Mac caps
 //                       rAF at ~20 fps (no display link), so its frame numbers are meaningless
+//   --browser <b>       chrome (default) | webkit: Playwright WebKit as a Safari stand-in (VEC-97); needs
+//                       PLAYWRIGHT_DIR=<dir with playwright installed>; no long-task / layout metrics there
 //   --json <file>       write every raw sample as JSON
 //   --keep-org          don't delete the throwaway org (prints its slug)
 //   PERF_DEBUG=1        log CDP calls and navigation to stderr
 //   PERF_PROFILE=<dir>  also save a CPU profile (.cpuprofile) of every timed run there; with a build that has
 //                       productionBrowserSourceMaps on, its frames map back to source (VEC-81)
+//   PERF_TRACE=<dir>    also save a DevTools timeline trace of every timed run there and print per run: style
+//                       recalcs, layouts, paint ops, layerize time and main-thread ms per frame (VEC-97). A 60 Hz
+//                       frame interval hides headroom; paints/layouts per drag and main ms/frame show it
 //
 // Dev vs production: build in a copy or worktree (never in the live :3200 checkout), `pnpm start --port 3290`
 // there with the same .env.local, then pass both targets. The prod server has its own in-process realtime bus,
@@ -65,7 +70,7 @@ const DESCRIPTIONS = {
 // ---- args / env --------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const o = { targets: [], org: "northwind", user: "ryan@demo.vector.dev", sizes: ["current", "large"], panes: ["closed", "open"], only: SCENARIOS, runs: 2, drop: false, headless: false, json: null, keepOrg: false, tasks: 300, projects: 20 };
+  const o = { targets: [], org: "northwind", user: "ryan@demo.vector.dev", sizes: ["current", "large"], panes: ["closed", "open"], only: SCENARIOS, runs: 2, drop: false, headless: false, json: null, keepOrg: false, browser: "chrome", tasks: 300, projects: 20 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i];
@@ -84,6 +89,7 @@ function parseArgs(argv) {
     else if (a === "--headless") o.headless = true;
     else if (a === "--json") o.json = v();
     else if (a === "--keep-org") o.keepOrg = true;
+    else if (a === "--browser") o.browser = v();
     else if (a === "--help" || a === "-h") {
       console.log(fs.readFileSync(fileURLToPath(import.meta.url), "utf8").split("\n").slice(1, 30).join("\n"));
       process.exit(0);
@@ -340,6 +346,73 @@ class Page {
   }
 }
 
+/**
+ * The same page driver on Playwright WebKit (`--browser webkit`), the nearest scriptable stand-in for Safari
+ * (VEC-97). WebKit has no CDP here: no Performance.getMetrics (layout/style columns read 0), no long-task or
+ * LoAF entries (LT columns read 0, which means "not measured", not "none"), no CPU profile and no SSE
+ * frames (RT reads 0). Frames, the card columns, renders per move and handler time are measured the same way.
+ */
+class WebKitPage extends Page {
+  constructor(pw) {
+    super({ on() {} });
+    this.pw = pw;
+    pw.on("request", (r) => {
+      if (!this.net) return;
+      const h = r.headers();
+      if (h["next-action"]) this.net.actions.push(r.url());
+      else if (h.rsc === "1" || /[?&]_rsc=/.test(r.url())) this.net.rsc.push(r.url());
+    });
+  }
+  async init(probe) {
+    await this.pw.addInitScript(probe);
+  }
+  async eval(expr) {
+    return this.pw.evaluate(`(async () => (${expr}))()`);
+  }
+  async goto(url) {
+    debug("goto", url);
+    await this.pw.goto(url);
+    await this.waitFor("document.readyState === 'complete' && window.__perf?.everCommitted && !!document.querySelector('ul[data-sortable-list]')", 30000);
+    if ((await this.eval("location.pathname")).startsWith("/login")) throw new Error(`signed out at ${url}`);
+    await sleep(1500);
+  }
+  async metrics() {
+    return {};
+  }
+  async mouse(type, x, y) {
+    this.x = x;
+    this.y = y;
+    const m = this.pw.mouse;
+    if (type === "mouseMoved") return m.move(x, y);
+    await m.move(x, y);
+    return type === "mousePressed" ? m.down() : m.up();
+  }
+  async escape() {
+    await this.pw.keyboard.press("Escape");
+    await this.pw.mouse.up();
+  }
+}
+
+async function importPlaywright() {
+  // Not a dependency of the app: resolve it from PLAYWRIGHT_DIR (a scratch npm dir with `playwright` installed
+  // and `npx playwright install webkit` run), else from the repo.
+  const base = process.env.PLAYWRIGHT_DIR ? path.join(process.env.PLAYWRIGHT_DIR, "x.js") : path.join(ROOT, "x.js");
+  return import(pathToFileURL(createRequire(base).resolve("playwright")).href);
+}
+
+async function launchWebKit(headless) {
+  const pwMod = await importPlaywright();
+  const { webkit } = pwMod.webkit ? pwMod : pwMod.default;
+  const browser = await webkit.launch({ headless });
+  const context = await browser.newContext({ viewport: VIEW, deviceScaleFactor: 1 });
+  const pw = await context.newPage();
+  return {
+    page: new WebKitPage(pw),
+    setCookie: (url, value) => context.addCookies([{ name: "authjs.session-token", value, url: `${url}/`, httpOnly: true }]),
+    close: () => browser.close(),
+  };
+}
+
 // ---- Scenarios ---------------------------------------------------------------------------------------
 // Each one: set up (scroll), press, then `record` wraps the measured move phase, then end (drop or Escape).
 
@@ -487,18 +560,77 @@ scenarios.realtime = async (page, record, ctx) => {
 /** One drag: returns the raw sample. `count` = render-counting run (wrapped layout reads, fiber walk). */
 async function runOnce(page, name, { count, drop, ctx = {} }) {
   let sample = null;
+  let traceSummary = null;
   const record = async (moves) => {
     page.net = { realtime: [], rsc: [], actions: [] };
     const m0 = await page.metrics();
     await page.eval(`window.__perf.start(${count})`);
     // PERF_PROFILE=<dir>: also record a CPU profile of each timed run (open it in DevTools > Performance).
-    const profile = process.env.PERF_PROFILE && !count;
+    const profile = process.env.PERF_PROFILE && !count && page instanceof Page && !(page instanceof WebKitPage);
     if (profile) {
       await page.cdp.send("Profiler.enable");
       await page.cdp.send("Profiler.setSamplingInterval", { interval: 100 });
       await page.cdp.send("Profiler.start");
     }
+    // PERF_TRACE=<dir>: also record a DevTools timeline trace of each timed run and count what the main thread
+    // did per frame (style recalcs and the elements they touched, layouts, paints) (VEC-97).
+    const trace = process.env.PERF_TRACE && !count && !(page instanceof WebKitPage);
+    let events = null;
+    if (trace) {
+      events = [];
+      page.cdp.on("Tracing.dataCollected", (e) => events?.push(...e.value));
+      await page.cdp.send("Tracing.start", {
+        categories: "devtools.timeline,disabled-by-default-devtools.timeline,disabled-by-default-devtools.timeline.frame",
+        options: "record-as-much-as-possible",
+      });
+    }
     await moves();
+    if (trace) {
+      const done = new Promise((r) => page.cdp.on("Tracing.tracingComplete", r));
+      await page.cdp.send("Tracing.end");
+      await done;
+      const all = events;
+      events = null;
+      fs.mkdirSync(process.env.PERF_TRACE, { recursive: true });
+      const file = path.join(process.env.PERF_TRACE, `${name}-${Date.now()}.json`);
+      fs.writeFileSync(file, JSON.stringify({ traceEvents: all }));
+      const n = (nm) => all.filter((e) => e.name === nm && e.ph === "X");
+      const dur = (xs) => xs.reduce((a, e) => a + (e.dur || 0), 0) / 1000;
+      const ult = n("UpdateLayoutTree");
+      // Main-thread time per frame (renderer main thread tasks bucketed by frame): the headroom that decides
+      // whether a 120 Hz display (8.3 ms) can be held, which a 60 Hz frame interval can't show.
+      const main = (() => {
+        const c = new Map();
+        for (const e of all) if (e.name === "UpdateLayoutTree" || e.name === "Paint") c.set(`${e.pid}:${e.tid}`, (c.get(`${e.pid}:${e.tid}`) ?? 0) + 1);
+        const tid = [...c.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+        const tasks = all.filter((e) => e.name === "RunTask" && e.ph === "X" && `${e.pid}:${e.tid}` === tid);
+        if (!tasks.length) return [];
+        const t0 = Math.min(...tasks.map((e) => e.ts));
+        const b = new Map();
+        for (const e of tasks) {
+          const k = Math.floor((e.ts - t0) / (FRAME_MS * 1000));
+          b.set(k, (b.get(k) ?? 0) + e.dur / 1000);
+        }
+        return [...b.values()];
+      })();
+      traceSummary = {
+        file,
+        frames: all.filter((e) => e.name === "BeginFrame").length,
+        style: ult.length,
+        styleEls: ult.reduce((a, e) => a + (e.args?.elementCount || 0), 0),
+        styleMs: dur(ult),
+        layout: n("Layout").length,
+        layoutMs: dur(n("Layout")),
+        paint: n("Paint").length,
+        paintMs: dur(n("Paint")),
+        prePaintMs: dur(n("PrePaint")),
+        layerizeMs: dur(n("Layerize")),
+        mainP50: +pct(main, 50).toFixed(2),
+        mainP95: +pct(main, 95).toFixed(2),
+        mainMax: +Math.max(0, ...main).toFixed(2),
+      };
+      console.log(`    trace ${name}: ${JSON.stringify(traceSummary)}`);
+    }
     if (profile) {
       const { profile: p } = await page.cdp.send("Profiler.stop");
       fs.mkdirSync(process.env.PERF_PROFILE, { recursive: true });
@@ -583,6 +715,19 @@ function summarise(countRun, timed, interval) {
     actions: sum(timed.map((s) => s.net.actions.length)) / timed.length,
     endLtMs: sum(timed.map((s) => sum(s.end.longtasks.map((e) => e.d)))) / timed.length,
     endLtMax: Math.max(0, ...timed.flatMap((s) => s.end.longtasks.map((e) => e.d))),
+    // The floating card (VEC-97): frames with a pointermove in which the card wasn't yet where the latest
+    // pointer puts it, its lag in px, and how many times per second it actually moved.
+    cardStalePct: (() => {
+      const c = timed.flatMap((x) => x.card ?? []);
+      return c.length ? (100 * c.filter((e) => e.lag > 0.5).length) / c.length : NaN;
+    })(),
+    cardLagP95: pct(timed.flatMap((x) => (x.card ?? []).map((e) => e.lag)), 95),
+    cardFps: median(
+      timed
+        .map((x) => x.card ?? [])
+        .filter((c) => c.length > 1)
+        .map((c) => (1000 * c.filter((e) => e.moved).length) / (c.at(-1).t - c[0].t)),
+    ),
     topRenders: top,
     notes: [...new Set(timed.concat(countRun).map((s) => s.note).filter(Boolean))],
   };
@@ -605,6 +750,8 @@ function printTable(rows) {
     ["LT n", (r) => f1(r.s.ltCount)],
     ["LT ms", (r) => f0(r.s.ltMs)],
     ["LT max", (r) => f0(r.s.ltMax)],
+    ["card fps", (r) => f0(r.s.cardFps)],
+    ["stale %", (r) => f1(r.s.cardStalePct)],
     ["rend/mv", (r) => f1(r.s.rendersPerMove)],
     ["hndl p95", (r) => f1(r.s.handlerP95)],
     ["lay/mv", (r) => f1(r.s.layoutsPerMove)],
@@ -658,11 +805,20 @@ async function main() {
       console.log(`Created throwaway org ${large.slug}: ${large.taskCount} tasks, ${large.projectKeys.length} projects`);
     }
     const token = await mintSession(env, uid);
-    chrome = await launchChrome(opt.headless);
-    const page = new Page(chrome.cdp);
-    await page.init(probe);
-    for (const t of opt.targets) {
-      await chrome.cdp.send("Network.setCookie", { name: "authjs.session-token", value: token, url: `${t.url}/`, path: "/", httpOnly: true });
+    let page;
+    if (opt.browser === "webkit") {
+      const wk = await launchWebKit(opt.headless);
+      chrome = wk;
+      page = wk.page;
+      await page.init(probe);
+      for (const t of opt.targets) await wk.setCookie(t.url, token);
+    } else {
+      chrome = await launchChrome(opt.headless);
+      page = new Page(chrome.cdp);
+      await page.init(probe);
+      for (const t of opt.targets) {
+        await chrome.cdp.send("Network.setCookie", { name: "authjs.session-token", value: token, url: `${t.url}/`, path: "/", httpOnly: true });
+      }
     }
 
     const results = [];
@@ -715,6 +871,7 @@ async function main() {
     console.log(
       "\nColumns: p50/p95/max = rAF frame time during the move; drop % = missed frame slots; LT = long tasks (>50 ms) per run, count / total / longest;\n" +
         "rend/mv = React component renders per pointermove; hndl p95 = pointermove handler incl. the synchronous React commit (ms);\n" +
+        "card fps = times per second the floating card moved; stale % = frames with a pointermove that painted the card short of the pointer;\n" +
         "lay/mv = layouts per move (Performance.getMetrics); gBCR/mv = getBoundingClientRect calls per move; RT = realtime events received\n" +
         "mid-drag; RSC = RSC fetches mid-drag; end LT = long-task ms in the 1.5 s after the drop / Escape. Real orgs end with Escape.\n",
     );

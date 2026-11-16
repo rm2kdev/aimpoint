@@ -27,6 +27,7 @@
     everCommitted: false,
     gbcr: 0,
     gcs: 0,
+    card: [],
   };
   window.__perf = P;
 
@@ -155,6 +156,42 @@
       }
     });
   };
+  // ---- The floating card (VEC-97) -------------------------------------------------------------------
+  // After every frame that had a pointermove, read the card's transform once the drag engine's own work for
+  // that frame has run (this rAF is requested after the engine's), and compare it with the pointer: the
+  // card is "stale" in that frame when it isn't where the latest pointer position puts it. The pointer to
+  // card offset is fixed for a drag, so it's taken from the first sample.
+  let cardPending = false;
+  let cardEl = null;
+  let ptr = { x: 0, y: 0 };
+  const cardXY = () => {
+    if (!cardEl?.isConnected) cardEl = document.querySelector("[data-drag-ghost]");
+    const m = cardEl && /translate3d\(([-\d.]+)px,\s*([-\d.]+)px/.exec(cardEl.style.transform);
+    return m ? { x: +m[1], y: +m[2] } : null;
+  };
+  const cardSample = () => {
+    cardPending = false;
+    if (!P.recording) return;
+    const c = cardXY();
+    if (!c) return;
+    if (!P.cardOffset) P.cardOffset = { x: ptr.x - c.x, y: ptr.y - c.y };
+    const lag = Math.hypot(ptr.x - P.cardOffset.x - c.x, ptr.y - P.cardOffset.y - c.y);
+    P.card.push({ t: performance.now(), lag, moved: !P.cardLast || P.cardLast.x !== c.x || P.cardLast.y !== c.y });
+    P.cardLast = c;
+  };
+  const cardMove = (e) => {
+    if (!P.recording || !e.buttons) return;
+    ptr = { x: e.clientX, y: e.clientY };
+    if (!cardPending) {
+      cardPending = true;
+      raf(cardSample);
+    }
+  };
+  // Added on pointerdown, like moveEnd, so it runs after the engine's window listener (and its rAF after
+  // the engine's frame-coalesced update).
+  addEventListener("pointerdown", () => addEventListener("pointermove", cardMove));
+  addEventListener("pointerup", () => removeEventListener("pointermove", cardMove));
+
   addEventListener("pointerup", () => removeEventListener("pointermove", moveEnd));
   addEventListener("keydown", (e) => e.key === "Escape" && removeEventListener("pointermove", moveEnd), true);
 
@@ -190,6 +227,9 @@
     P.commits = 0;
     P.gbcr = 0;
     P.gcs = 0;
+    P.card = [];
+    P.cardOffset = null;
+    P.cardLast = null;
     if (count) wrapReads(true);
     requestAnimationFrame(tick);
     return P.t0;
@@ -210,6 +250,7 @@
       commits: P.commits,
       gbcr: P.gbcr,
       gcs: P.gcs,
+      card: P.card,
     };
   };
   /** Long tasks / LoAFs from `since` (performance.now() time) to now: the release / drop phase. */

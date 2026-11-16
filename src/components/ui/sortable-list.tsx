@@ -315,8 +315,11 @@ function SortableListInner<T>(props: SortableListProps<T>) {
             aria-hidden
             role="presentation"
             data-sortable-empty=""
+            // The pointer drag's taller drop zone (VEC-96) snaps to the row's height (a few px) rather than
+            // animating it: a height transition relays out and repaints everything below the group on each of
+            // its frames, a hundred rows a frame in a long list (VEC-97).
             className={cn(
-              "flex h-9 items-center justify-center rounded-lg border border-dashed text-[12px] text-faint transition-[color,background-color,border-color,height] duration-150 motion-reduce:transition-none",
+              "flex h-9 items-center justify-center rounded-lg border border-dashed text-[12px] text-faint transition-[color,background-color,border-color] duration-150 motion-reduce:transition-none",
               isOver ? "border-brand bg-brand/5 text-brand" : "border-input",
             )}
           >
@@ -388,10 +391,12 @@ const SortableRow = React.memo(function SortableRow<T>({
       // no-op drop. A keyboard lift keeps it in place, dimmed, with the focus ring on it.
       data-drag-lifted={lifted ? "" : undefined}
       // A static transition (nothing toggled per drag, VEC-80): the provider shifts rows with a transform to
-      // open the landing gap, and they slide (VEC-96).
+      // open the landing gap, and they slide (VEC-96). `isolate` makes every row its own stacking context up
+      // front, so a row's z-indexed buttons never sit in the list's shared stacking order: a transform starting
+      // or ending on one row then repaints that row, not every row on the page (VEC-97).
       className={cn(
         GAP_TRANSITION,
-        "transition-[opacity,transform]",
+        "isolate transition-[opacity,transform]",
         lifted && "invisible",
         isKeyboardDragging && "opacity-45",
         className,

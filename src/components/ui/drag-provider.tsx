@@ -164,15 +164,24 @@ const GAP_EASE = "cubic-bezier(.2,.8,.2,1)"
 
 /**
  * What a pointer drag has done to one list's DOM to open the landing gap: rows shifted with a transform,
- * extra bottom padding (a list the item isn't from, so the rows pushed down have room) or a taller empty
- * drop zone. Everything here is undone when the drag ends.
+ * room for the rows pushed down in a list the item isn't from, or a taller empty drop zone. Everything here
+ * is undone when the drag ends.
  */
 type ListGap = {
   el: HTMLUListElement
   /** Distance between one row's bottom and the next row's top, measured before anything moved. */
   spacing: number
   offsets: Map<HTMLElement, number>
+  /** Room made below the list's rows (px), by `below` or by bottom padding. */
   pad: number
+  /**
+   * What follows the list inside its scroller (later groups), slid down by `pad` with a transform instead of
+   * growing the list's padding (VEC-97): padding animated a relayout and repaint of everything below the list
+   * on each of its frames. Null = no scroll box around the list, so padding it is.
+   */
+  below: HTMLElement[] | null
+  /** Every element `below` has held this drag, for the reset at the end. */
+  pushed: Set<HTMLElement>
   zone: HTMLElement | null
 }
 
@@ -256,8 +265,72 @@ export function createDragStore() {
   /** After a drop: the card glides into the row once a list renders it (`claimSettle`), else fades. */
   let settling: { id: string; ghost: HTMLElement; timer: number } | null = null
 
+  // A 2D translate: the slide is composited while it runs either way, but a 3D transform keeps every shifted
+  // row on its own compositor layer for the rest of the drag, and the compositor reassigns all of them on each
+  // frame the card moves (VEC-97).
   const translate = (row: HTMLElement, dy: number) => {
-    row.style.transform = dy ? `translate3d(0,${dy}px,0)` : ""
+    row.style.transform = dy ? `translateY(${dy}px)` : ""
+  }
+  /** Rows shifted out of sight this frame, with their slide switched off until the next one (applyGaps). */
+  let jumped: HTMLElement[] = []
+  let jumpRaf = 0
+
+  /**
+   * The elements after `el` up to its scroll box (the later status groups), which make room for a gap by
+   * sliding down instead of the list growing. Fixed, absolute and sticky ones stay put. Null when the list has
+   * no scroll box of its own: anything after it up the tree (a side pane) isn't below it.
+   */
+  const followers = (el: HTMLElement): HTMLElement[] | null => {
+    let box: HTMLElement | null = null
+    for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
+      const oy = getComputedStyle(node).overflowY
+      if (oy === "auto" || oy === "scroll") {
+        box = node
+        break
+      }
+    }
+    if (!box) return null
+    const out: HTMLElement[] = []
+    for (let node: HTMLElement | null = el; node && node !== box; node = node.parentElement) {
+      for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        if (!(sib instanceof HTMLElement)) continue
+        const pos = getComputedStyle(sib).position
+        if (pos !== "fixed" && pos !== "absolute" && pos !== "sticky") out.push(sib)
+      }
+    }
+    return out
+  }
+
+  /** Make (or take back) `pad` px of room below a list's rows. */
+  const makeRoom = (st: ListGap, pad: number) => {
+    st.pad = pad
+    if (st.below === null) {
+      st.el.style.paddingBottom = pad ? `${pad}px` : ""
+      return
+    }
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches
+    for (const n of st.below) {
+      st.pushed.add(n)
+      n.style.transition = reduced ? "none" : `transform ${GAP_MS}ms ${GAP_EASE}`
+      n.style.transform = pad ? `translate3d(0,${pad}px,0)` : ""
+    }
+  }
+
+  /** A list's box for hit testing, including the room made below its rows (the rows pushed into it). */
+  const listBox = (id: string, el: HTMLElement) => {
+    const r = rectOf(el)
+    const st = gapped.get(id)
+    if (!st?.pad || st.below === null) return r
+    return { left: r.left, right: r.right, top: r.top, bottom: r.bottom + st.pad }
+  }
+
+  /** Undo a list's room at once (its list left the page). */
+  const dropRoom = (st: ListGap) => {
+    for (const n of st.pushed) {
+      n.style.transform = ""
+      n.style.transition = ""
+    }
+    st.pushed.clear()
   }
 
   /** Bring every list's gap in line with the current snapshot. Touches only what changed. */
@@ -271,6 +344,8 @@ export function createDragStore() {
     for (const id of ids) {
       const el = list(id)?.el
       if (!el?.isConnected) {
+        const gone = gapped.get(id)
+        if (gone) dropRoom(gone)
         gapped.delete(id)
         continue
       }
@@ -279,7 +354,7 @@ export function createDragStore() {
       if (!st || st.el !== el) {
         const spacing =
           m.spans.length > 1 ? Math.max(0, m.spans[1].start - m.spans[0].end) : parseFloat(getComputedStyle(el).rowGap) || 0
-        st = { el, spacing, offsets: new Map(), pad: 0, zone: null }
+        st = { el, spacing, offsets: new Map(), pad: 0, below: null, pushed: new Set(), zone: null }
         gapped.set(id, st)
       }
       const H = gapItem.height + st.spacing
@@ -294,10 +369,25 @@ export function createDragStore() {
         return 0
       }
       const live = new Set<HTMLElement>()
+      // Rows out of sight move without a slide (VEC-97): nobody sees them, and each slide is a compositor
+      // animation that paints its row onto a layer of its own, so a gap opening near the top of a long list
+      // started a hundred of them at once.
+      const scroller = scrollerOf(el)
+      const view = scroller ? rectOf(scroller) : null
       m.rows.forEach((row, i) => {
         live.add(row)
         const dy = want(i)
-        if ((st.offsets.get(row) ?? 0) === dy) return
+        const was = st.offsets.get(row) ?? 0
+        if (was === dy) return
+        if (view) {
+          const top = m.originY + m.spans[i].start
+          const bottom = m.originY + m.spans[i].end
+          const seen = (off: number) => bottom + off > view.top - 80 && top + off < view.bottom + 80
+          if (!seen(was) && !seen(dy)) {
+            row.style.transition = "none"
+            jumped.push(row)
+          }
+        }
         translate(row, dy)
         if (dy) st.offsets.set(row, dy)
         else st.offsets.delete(row)
@@ -310,8 +400,9 @@ export function createDragStore() {
       if (from < 0) {
         const pad = gap !== null && m.rows.length ? H : 0
         if (pad !== st.pad) {
-          st.pad = pad
-          el.style.paddingBottom = pad ? `${pad}px` : ""
+          // Who follows the list is looked up as the room opens, so groups added since are included.
+          if (pad && !st.pad) st.below = followers(el)
+          makeRoom(st, pad)
           structural = true
         }
         const zone = m.rows.length ? null : el.querySelector<HTMLElement>(":scope > [data-sortable-empty]")
@@ -325,7 +416,15 @@ export function createDragStore() {
         }
       }
     }
-    // The padding and drop zone change layout as they animate: measure again once they've settled.
+    // Give the rows that jumped their slide back once this frame's style has taken the jump.
+    if (jumped.length && !jumpRaf) {
+      jumpRaf = requestAnimationFrame(() => {
+        jumpRaf = 0
+        for (const row of jumped) row.style.transition = ""
+        jumped = []
+      })
+    }
+    // The room and drop zone change layout as they animate: measure again once they've settled.
     if (structural) {
       clearTimeout(gapTimer)
       gapTimer = setTimeout(() => pending?.rehit(), GAP_MS + 30)
@@ -347,15 +446,19 @@ export function createDragStore() {
    */
   const endGaps = (instant: boolean) => {
     clearTimeout(gapTimer)
+    cancelAnimationFrame(jumpRaf)
+    jumpRaf = 0
+    jumped = [] // every shifted row is reset below
     const touched: HTMLElement[] = []
     for (const st of gapped.values()) {
-      touched.push(st.el, ...st.offsets.keys())
+      touched.push(st.el, ...st.offsets.keys(), ...st.pushed)
       if (st.zone) touched.push(st.zone)
     }
     if (instant) touched.forEach((n) => (n.style.transition = "none"))
     for (const st of gapped.values()) {
       st.offsets.forEach((_, row) => translate(row, 0))
       st.el.style.paddingBottom = ""
+      st.pushed.forEach((n) => (n.style.transform = ""))
       if (st.zone) st.zone.style.height = ""
     }
     gapped.clear()
@@ -532,7 +635,7 @@ export function createDragStore() {
     }
     if (blocked) return null
     const candidates = [...lists.values()].map((r) => r.current).filter((r) => accepts(r, item))
-    const i = pickBox(candidates.map((r) => rectOf(r.el!)), x, y, OUTSIDE_MARGIN)
+    const i = pickBox(candidates.map((r) => listBox(r.listId, r.el!)), x, y, OUTSIDE_MARGIN)
     return i < 0 ? null : overList(candidates[i], item, y)
   }
 
@@ -632,6 +735,8 @@ export function createDragStore() {
       g.className =
         "pointer-events-none fixed top-0 left-0 z-[100] list-none rounded-lg bg-popover opacity-95 shadow-lg ring-1 ring-border"
       g.style.width = `${Math.min(r.width, GHOST_MAX_WIDTH)}px`
+      // Its own compositor layer from the start, so following the pointer is a composite, never a repaint.
+      g.style.willChange = "transform"
       g.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
       document.body.appendChild(g)
       // Promote it to the top layer where supported, so nothing on the page can paint over it (VEC-76):
@@ -665,8 +770,8 @@ export function createDragStore() {
         moveRaf = 0
       }
       if (!active) return
-      set({ item, mode: "pointer", over: hitTest(item, lastX, lastY) })
       placeGhost()
+      set({ item, mode: "pointer", over: hitTest(item, lastX, lastY) })
     }
 
     // Pointermoves can outpace frames (high-rate mice, coalesced events): hit-test once per frame, with
@@ -715,7 +820,7 @@ export function createDragStore() {
         let dy = 0
         if (inX && top < AUTOSCROLL_EDGE && lastY > r.top - OUTSIDE_MARGIN) dy = -Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(top, 0) / AUTOSCROLL_EDGE))
         else if (inX && bottom < AUTOSCROLL_EDGE && lastY < r.bottom + OUTSIDE_MARGIN) dy = Math.ceil(AUTOSCROLL_MAX * (1 - Math.max(bottom, 0) / AUTOSCROLL_EDGE))
-        const lb = rectOf(listEl)
+        const lb = listBox(reg!.listId, listEl)
         if (dy > 0) dy = Math.min(dy, Math.max(0, Math.ceil(lb.bottom - r.bottom)))
         if (dy < 0) dy = Math.max(dy, Math.min(0, Math.floor(lb.top - r.top)))
         if (dy) scroller.scrollTop += dy // fires onScroll, which moves the line
@@ -727,7 +832,12 @@ export function createDragStore() {
       if (ev.pointerId !== pointerId) return
       lastX = ev.clientX
       lastY = ev.clientY
-      if (active) return scheduleUpdate()
+      if (active) {
+        // The card follows every pointer event straight away (one style write); only the hit test and the gap
+        // wait for the frame, so the card is never held up behind them (VEC-97).
+        placeGhost()
+        return scheduleUpdate()
+      }
       const dist = Math.hypot(lastX - startX, lastY - startY)
       if (touch) {
         if (dist > TOUCH_SLOP) cleanup() // a scroll or swipe, not a long-press
