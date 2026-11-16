@@ -253,13 +253,15 @@ export const CLOSEOUT_STEPS = (key: string) =>
 export const PROGRESS_HINT =
   "Keep the ticket posted while you work, with add_comment: right after you pick it up, a short plan of what you're going to do; then an update at each meaningful milestone (finished investigating, change made, checks running, blocker hit) and at least every 10 minutes or so of work, saying what's done and what's next. If the task has more than one step, post a short update as you finish each step, before starting the next, however quickly it went: there must be at least one update between the plan and your final comment, even when the task says to put the results in the final comment. Keep each update to a few lines of plain text (no Markdown) and don't post one for every tool call. If you're blocked or waiting on someone, say so straight away and @mention them (<@id>).";
 
+/** A bot that parks its own task behind blockers it filed must give them owners (VEC-107 enforces it, VEC-109 says so). */
+export const BLOCKER_NOTE =
+  "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
+
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
-const STARTED_NOTE =
-  "Vector moves it to In Progress for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and Done, or In Review only when a named person must check something.";
+const STARTED_NOTE = `Vector moves it to In Progress for you as it's handed over (the task below may still show its earlier status), so don't set that yourself; finish with complete_task and Done, or In Review only when a named person must check something. ${BLOCKER_NOTE}`;
 
 /** Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. */
-const RESUMED_NOTE =
-  "You're its assignee, so this hands the work back to you: Vector moves it back to In Progress as this is delivered (the task below may still show In Review and Stalled). Reply to the comment and do what it asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment.";
+const RESUMED_NOTE = `You're its assignee, so this hands the work back to you: Vector moves it back to In Progress as this is delivered (the task below may still show In Review and Stalled). Reply to the comment and do what it asks, then finish with complete_task again: Done when the work meets its acceptance criteria (that releases the tasks waiting on it), or In Review only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
 
 const TOOLS_HINT =
   "Act on the ticket with the `vector` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Moving a task to a done status releases the tasks that depend on it; In Review does not, so finish with Done when the work meets its acceptance criteria, and use In Review only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects, statuses and people.";
