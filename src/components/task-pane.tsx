@@ -640,6 +640,7 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
           (e.target as HTMLTextAreaElement).blur();
         }
       }}
+      data-zoom-safe
       className="min-w-0 flex-1 resize-none bg-transparent text-[20px] leading-[1.3] font-semibold tracking-[-0.02em] outline-none"
     />
   );

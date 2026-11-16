@@ -154,6 +154,8 @@
   html {
     @apply font-sans;
     -webkit-font-smoothing: antialiased;
+    /* no double-tap zoom (VEC-154); pinch is blocked by ZoomLock */
+    touch-action: manipulation;
   }
   body {
     @apply bg-background text-foreground;
@@ -204,6 +206,20 @@
   float: left;
   height: 0;
   pointer-events: none;
+}
+
+/* ---------- no input-focus zoom on touch devices (VEC-154) ----------
+   iOS zooms into any focused field under 16px. Unlayered so it beats the text-[13px] utilities; touch
+   devices only, so desktop sizes are unchanged. Fields already at 16px+ (task titles) opt out with
+   data-zoom-safe; the comment box's highlight mirror gets the same size via pointer-coarse: in MIRROR. */
+@media (pointer: coarse) {
+  input:not([data-zoom-safe]),
+  textarea:not([data-zoom-safe]),
+  select,
+  [contenteditable]:not([contenteditable="false"]),
+  [cmdk-input] {
+    font-size: 16px;
+  }
 }
 
 /* ---------- status ring: "a bot is working" = the ring's own progress bit travels round ---------- */

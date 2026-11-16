@@ -307,6 +307,8 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           className={cn(
             MIRROR,
             "relative block min-h-[40px] w-full resize-none bg-transparent text-transparent caret-foreground outline-none placeholder:text-faint",
+            // at the 16px touch size (VEC-154) the placeholder would wrap into a clipped second line
+            "pointer-coarse:placeholder:overflow-hidden pointer-coarse:placeholder:text-ellipsis pointer-coarse:placeholder:whitespace-nowrap",
             // a translucent selection so the mirrored text stays readable while selected
             "selection:bg-[color-mix(in_srgb,var(--brand)_28%,transparent)] selection:text-transparent",
           )}
@@ -324,7 +326,7 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
 }
 
 /** Typography shared by the textarea and its highlight mirror; any drift misaligns the highlight. */
-const MIRROR = "px-3 pt-2.5 pb-2.5 font-sans text-[13.5px] leading-[20px] tracking-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
+const MIRROR = "px-3 pt-2.5 pb-2.5 font-sans text-[13.5px] pointer-coarse:text-[16px] leading-[20px] tracking-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
 
 function highlightSegments(text: string, picked: Member[]) {
   const names = [...picked].sort((a, b) => b.name.length - a.name.length);

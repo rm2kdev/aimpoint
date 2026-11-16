@@ -150,6 +150,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
             placeholder="Task title"
             aria-label="Task title"
             maxLength={300}
+            data-zoom-safe
             className="w-full bg-transparent text-[18px] font-semibold tracking-[-0.015em] outline-none placeholder:text-faint"
           />
           <RichEditor
