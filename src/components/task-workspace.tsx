@@ -240,10 +240,6 @@ export function TaskWorkspace({
   const shown = useMemo(() => (scope.archived ? [] : groups), [scope.archived, groups]);
   // Done and cancelled groups start folded until opened from their heading.
   const isFolded = (g: Group) => collapsed.get(g.id) ?? isClosedCategory(g.stage);
-  // No open tasks: the group new tasks land in (first not-started one, else the first open group showing)
-  // carries the empty message inline (VEC-122).
-  const openShown = openCount === 0 ? shown.filter((g) => !isClosedCategory(g.stage) && !isFolded(g)) : [];
-  const promptGroupId = (openShown.find((g) => g.stage === "unstarted") ?? openShown[0])?.id;
 
   /* ----- selection & keyboard ----- */
   // Tasks in folded groups are out of sight, so j/k skips them.
@@ -694,18 +690,7 @@ export function TaskWorkspace({
                     renderItem={manual && g.tasks.length > 1 ? renderers.movable : renderers.fixed}
                   />
                   )}
-                  {!folded && g.tasks.length === 0 && (
-                    <EmptyGroup
-                      prompt={
-                        g.id === promptGroupId
-                          ? {
-                              text: tasks.size === 0 ? (scope.mine ? "Nothing assigned to you." : "No tasks yet.") : "All clear, every task here is closed.",
-                              onNew: () => newTask(g.status ? { statusId: g.status.id } : { stage: g.stage }),
-                            }
-                          : undefined
-                      }
-                    />
-                  )}
+                  {!folded && g.tasks.length === 0 && <EmptyGroup />}
                 </div>
                 );
               })}
@@ -793,28 +778,13 @@ function GroupHeading({
 }
 
 /**
- * An empty, unfolded group: a slim "No tasks" line, which the list's drop zone replaces during a drag. When the
- * view has no open tasks, the group new tasks land in carries the view's empty message and a New task link
- * instead (VEC-122), so the status groups stay the page's structure rather than a block sitting above them.
+ * An empty, unfolded group: a slim "No tasks" line, which the list's drop zone replaces during a drag. An empty
+ * view shows only these lines under its status headings; new tasks come from the header's New task button (VEC-121).
  */
-function EmptyGroup({ prompt }: { prompt?: { text: string; onNew: () => void } }) {
+function EmptyGroup() {
   const dragging = useDragSelector((d) => d?.item.group === TASK_GROUP);
   if (dragging) return null;
-  if (!prompt) return <p className="flex h-9 items-center px-3 text-[12.5px] text-faint">No tasks</p>;
-  return (
-    <p className="flex h-9 items-center gap-1 px-3 text-[12.5px] text-faint">
-      {prompt.text}
-      <button
-        type="button"
-        onClick={prompt.onNew}
-        className="ml-1 inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
-      >
-        <PlusIcon className="size-3.5" />
-        New task
-        <Kbd>N</Kbd>
-      </button>
-    </p>
-  );
+  return <p className="flex h-9 items-center px-3 text-[12.5px] text-faint">No tasks</p>;
 }
 
 /** What a row can do. One object for the whole view (stable identity), so memoised rows skip re-rendering. */
