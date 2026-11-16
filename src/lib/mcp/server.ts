@@ -4,7 +4,7 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { toolsForBot } from "@/lib/bots";
-import { addCommentAs, createTaskAs, markStartedByBot, moveTask, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
+import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
@@ -510,7 +510,7 @@ const TOOLS: Record<string, ToolImpl> = {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
       const status = str(args, "status");
       const comment = str(args, "comment");
-      if (status) await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status))._id.toHexString() });
+      const moved = status ? await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status))._id.toHexString() }) : null;
       if (comment) await addCommentAs(ctx.actor, task._id, comment);
       const c = await cols();
       const now = new Date();
@@ -547,7 +547,9 @@ const TOOLS: Record<string, ToolImpl> = {
       if (claim?.state !== "done" || resolved) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
       const key = `${project.key}-${task.number}`;
       const handoff = await reviewHandoff(ctx, task._id, key, comment);
-      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${comment ? " Comment posted." : ""}${handoff}`)] };
+      // Parked behind open dependencies nobody owns (the status didn't change, or no status was given): take them (VEC-107).
+      const owned = [...assignedBlockersOf(moved), ...(await ownUnownedBlockers(ctx.actor, task._id))];
+      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
     },
   },
 
@@ -671,7 +673,7 @@ const TOOLS: Record<string, ToolImpl> = {
       const { task } = await findTask(ctx, str(args, "task", true)!);
       const st = await resolveStatus(ctx, str(args, "status", true)!);
       const t = await updateTaskAs(ctx.actor, task._id, { statusId: st._id.toHexString() });
-      return { content: [text(`${t.key} is now ${st.name}.`)] };
+      return { content: [text(`${t.key} is now ${st.name}.${blockersNote(assignedBlockersOf(t))}`)] };
     },
   },
 
@@ -748,7 +750,8 @@ const TOOLS: Record<string, ToolImpl> = {
       };
       if (Object.values(patch).every((v) => v === undefined)) throw new ToolInputError("Pass at least one field to change.");
       const t = await updateTaskAs(ctx.actor, task._id, patch);
-      return { content: [text(`Updated ${t.key}.`), json({ key: t.key, url: taskUrl(ctx.origin, ctx.org, t.key) })] };
+      const owned = assignedBlockersOf(t);
+      return { content: [text(`Updated ${t.key}.${blockersNote(owned)}`), json({ key: t.key, url: taskUrl(ctx.origin, ctx.org, t.key), ...(owned.length ? { assignedToYou: owned } : {}) })] };
     },
   },
 
@@ -763,7 +766,11 @@ const TOOLS: Record<string, ToolImpl> = {
         description: { type: "string", description: "Markdown." },
         type: { type: "string", enum: ["issue", "feature", "task"], default: "issue", description: TYPE_DESC },
         status: { type: "string", description: "Status name. Defaults to the first not-started status." },
-        assignee: { type: "string", description: 'Name, email, id or "me". Leave out for unassigned.' },
+        assignee: {
+          type: "string",
+          description:
+            'Name, email, id or "me". Leave out for unassigned. A task you file as a blocker for your own work needs an owner: if a task assigned to you waits on it while it has no assignee, Vector assigns it to you and wakes you for it.',
+        },
         priority: { type: "string", enum: ["none", "low", "medium", "high"] },
         due_date: { type: "string", description: "YYYY-MM-DD" },
         depends_on: DEPENDS_ARG,
@@ -788,12 +795,23 @@ const TOOLS: Record<string, ToolImpl> = {
       });
       const waiting = t.waitingOn.length ? await taskKeys(ctx.org._id, t.waitingOn.map((id) => new ObjectId(id))) : null;
       const note = waiting ? ` It waits on ${[...waiting.values()].join(", ")} and is handed to its assignee once ${waiting.size === 1 ? "that is" : "those are"} done.` : "";
+      const owned = assignedBlockersOf(t);
       return {
-        content: [text(`Created ${t.key} "${t.title}".${note}`), json({ key: t.key, id: t.id, url: taskUrl(ctx.origin, ctx.org, t.key), ready: !waiting, waitingOn: waiting ? [...waiting.values()] : [] })],
+        content: [
+          text(`Created ${t.key} "${t.title}".${note}${blockersNote(owned)}`),
+          json({ key: t.key, id: t.id, url: taskUrl(ctx.origin, ctx.org, t.key), ready: !waiting, waitingOn: waiting ? [...waiting.values()] : [], ...(owned.length ? { assignedToYou: owned } : {}) }),
+        ],
       };
     },
   },
 };
+
+/** Reply note for blockers Vector assigned to the calling bot because its own task now waits on them (VEC-107). */
+function blockersNote(keys: string[]) {
+  if (!keys.length) return "";
+  const one = keys.length === 1;
+  return ` Nobody owned ${keys.join(", ")}, which your task is waiting on, so ${one ? "it is" : "they are"} now assigned to you. You'll be woken for ${one ? "it" : "each one"} separately as soon as ${one ? "it is" : "each is"} ready to work on (straight away if nothing it depends on is open). Reassign with assign_task if someone else should do ${one ? "it" : "them"}.`;
+}
 
 /* ---------------- MCP surface ---------------- */
 

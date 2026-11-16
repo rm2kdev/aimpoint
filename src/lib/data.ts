@@ -321,6 +321,7 @@ export function toFeed(doc: CommentDoc | ActivityDoc): FeedItem {
     from: doc.from ?? null,
     to: doc.to ?? null,
     ...(doc.note ? { note: doc.note } : {}),
+    ...(doc.waiter ? { waiter: doc.waiter } : {}),
     createdAt: doc.createdAt.toISOString(),
   };
 }

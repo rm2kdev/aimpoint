@@ -669,6 +669,11 @@ function Feed({ feed }: { feed: FeedItem[] }) {
         );
       case "assignee":
         if (!f.to) return <>unassigned {name(f.from)}</>;
+        if (f.note === "auto_owner") {
+          // VEC-107: a bot parked its own task behind this unowned one, so Vector made it the owner.
+          const why = ` (nobody owned it and ${f.waiter ?? "a task assigned to it"} was waiting on it)`;
+          return f.to === f.actorId ? `took this task${why}` : <>assigned this to <b className="font-medium text-foreground">{name(f.to)}</b>{why}</>;
+        }
         if (f.to === f.actorId) return "took this task";
         return (
           <>

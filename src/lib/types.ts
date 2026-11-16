@@ -146,7 +146,7 @@ export interface CommentDoc {
   mentions?: ObjectId[];
   createdAt: Date;
 }
-export type ActivityNote = "started_work" | "resumed_work";
+export type ActivityNote = "started_work" | "resumed_work" | "auto_owner";
 
 export interface ActivityDoc {
   _id: ObjectId;
@@ -174,8 +174,12 @@ export interface ActivityDoc {
   /**
    * Why Vector made the change itself. "started_work": a bot picked the task up, so it moved to In Progress.
    * "resumed_work": its assigned bot was @mentioned after finishing, so it's back at work and In Progress.
+   * "auto_owner" (on an assignee change): nobody owned it and the actor bot parked its own task behind it, so
+   * Vector assigned it to that bot (VEC-107). `waiter` holds the waiting task's key.
    */
   note?: ActivityNote;
+  /** With note "auto_owner": key of the task that was waiting on this one. */
+  waiter?: string | null;
   createdAt: Date;
 }
 export interface InviteDoc {
@@ -513,6 +517,7 @@ export interface FeedItem {
   from?: string | null;
   to?: string | null;
   note?: ActivityNote;
+  waiter?: string | null;
   createdAt: string;
 }
 export interface Counts {

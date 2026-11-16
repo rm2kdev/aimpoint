@@ -12,7 +12,7 @@ import {
 } from "@/lib/bot-api";
 import { cols } from "@/lib/db";
 import { toTask, withWorkingBots } from "@/lib/data";
-import { createTaskAs } from "@/lib/task-service";
+import { assignedBlockersOf, createTaskAs } from "@/lib/task-service";
 import type { TaskDoc } from "@/lib/types";
 
 /** GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&archived=true&limit=50  (archived tasks are excluded unless archived=true) */
@@ -49,5 +49,7 @@ export const POST = botRoute(async (req, ctx) => {
     dueDate: b.dueDate == null ? null : String(b.dueDate),
     dependsOn: await resolveTaskRefs(ctx.org._id, b.dependsOn),
   });
-  return Response.json({ task }, { status: 201 });
+  const assigned = assignedBlockersOf(task);
+  // VEC-107: open dependencies nobody owned, now assigned to the calling bot because its own task waits on them.
+  return Response.json({ task, ...(assigned.length ? { assignedBlockers: assigned } : {}) }, { status: 201 });
 }, "create_task");

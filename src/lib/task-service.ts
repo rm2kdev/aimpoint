@@ -339,6 +339,8 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
   await announceAssignment(actor, doc, task.key);
   if (status.category === "triage") await enterTriage(actor, doc, task.key);
+  // A bot creating a task for itself that waits on unowned work takes that work too (VEC-107).
+  if (waitingOn.length) ownedBlockers.set(task, await ownUnownedBlockers(actor, doc._id));
   return task;
 }
 
@@ -523,7 +525,75 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   const upstream = doneChanged || set.archivedAt !== undefined ? [...(after.dependsOn ?? []), ...removedDeps] : [...addedDeps, ...removedDeps];
   if (upstream.length) await publishWorking(actor.orgId, actor.id, upstream);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
+  // A bot leaving its own task parked behind open dependencies (moved to an open status, or deps added) takes
+  // the ones nobody owns, so someone is woken for them (VEC-107).
+  if (actor.isBot && after.waitingOn?.length && ((set.statusId && !closed) || addedDeps.length)) {
+    ownedBlockers.set(task, await ownUnownedBlockers(actor, taskId));
+  }
   return task;
+}
+
+/* ---------------- owners for blockers a bot parks its own task behind (VEC-107) ---------------- */
+
+/** Keys of the blockers a write assigned to the acting bot, for the tool / API reply. Keyed by the returned Task. */
+const ownedBlockers = new WeakMap<Task, string[]>();
+
+/** Keys of the open, unowned dependencies the write that returned `task` assigned to the acting bot (VEC-107). */
+export function assignedBlockersOf(task: Task | null | undefined): string[] {
+  return (task && ownedBlockers.get(task)) ?? [];
+}
+
+/**
+ * A bot left a task it's assigned to waiting on open dependencies (complete_task / set_status to an open status,
+ * or depends_on added by update_task / create_task). A blocker nobody owns would sit there with nobody woken, so
+ * every open, unarchived dependency with no assignee is assigned to that bot here, through the normal assign
+ * steps: activity (note auto_owner, naming the waiting task), task.upsert, then announceAssignment, which wakes
+ * the bot now for a blocker that is ready and leaves blocked ones to the ready hand-off. Dependencies that have an
+ * assignee are untouched, and so are dependencies still in Triage (a triager breaks those down). Triage umbrellas are
+ * exempt: the caller triaging it right now, or the bot that triaged it (it waits on its sub-tasks by design).
+ * Returns the keys it assigned.
+ */
+export async function ownUnownedBlockers(actor: Actor, taskId: ObjectId): Promise<string[]> {
+  if (!actor.isBot) return [];
+  const c = await cols();
+  const task = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
+  const waiting = task?.waitingOn ?? [];
+  if (!task || task.archivedAt || !waiting.length || !task.assigneeId?.equals(actor.id)) return [];
+  if (task.triagedBy?.equals(actor.id) || (await isTriaging(actor.id, taskId))) return [];
+  const own = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
+  if (!own || isClosedCategory(own.category) || own.category === "triage") return [];
+  const deps = await c.tasks.find({ _id: { $in: waiting }, orgId: actor.orgId, assigneeId: null, archivedAt: null }).toArray();
+  if (!deps.length) return [];
+  const statuses = await c.statuses.find({ _id: { $in: deps.map((d) => d.statusId) } }, { projection: { category: 1 } }).toArray();
+  const category = new Map(statuses.map((st) => [st._id.toHexString(), st.category]));
+  const projects = await c.projects.find({ _id: { $in: [task.projectId, ...deps.map((d) => d.projectId)] } }, { projection: { key: 1 } }).toArray();
+  const projectKey = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
+  const waiterKey = `${projectKey.get(task.projectId.toHexString()) ?? "?"}-${task.number}`;
+  const orgHex = actor.orgId.toHexString();
+  const actorHex = actor.id.toHexString();
+  const assigned: string[] = [];
+  for (const dep of deps) {
+    const cat = category.get(dep.statusId.toHexString());
+    if (!cat || isClosedCategory(cat) || cat === "triage") continue;
+    const now = new Date();
+    // Conditional on still having no owner, so a person assigning it at the same moment wins.
+    const after = await c.tasks.findOneAndUpdate(
+      { _id: dep._id, orgId: actor.orgId, assigneeId: null, archivedAt: null },
+      { $set: { assigneeId: actor.id, updatedAt: now } },
+      { returnDocument: "after" },
+    );
+    if (!after) continue;
+    await resetClaimOnAssign(dep._id, actor.id);
+    const pk = projectKey.get(after.projectId.toHexString()) ?? "?";
+    const depTask = toTask(after, pk);
+    const act: ActivityDoc = { _id: new ObjectId(), orgId: actor.orgId, taskId: dep._id, actorId: actor.id, kind: "assignee", from: null, to: actorHex, note: "auto_owner", waiter: waiterKey, createdAt: now };
+    await c.activity.insertOne(act);
+    await publish(orgHex, { type: "task.upsert", actorId: actorHex, task: depTask });
+    await publish(orgHex, { type: "feed.add", actorId: actorHex, taskId: dep._id.toHexString(), item: toFeed(act) });
+    await announceAssignment(actor, after, depTask.key);
+    assigned.push(depTask.key);
+  }
+  return assigned;
 }
 
 /* ---------------- manual order (VEC-57) ---------------- */

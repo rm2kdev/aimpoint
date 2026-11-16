@@ -2,7 +2,7 @@ import { botRoute, parsePriority, parseType, readJson, resolveAssignee, resolveP
 import { findTaskByKey, loadFeed, toTaskDetail, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
 import { UserError } from "@/lib/result";
-import { moveTask, updateTaskAs } from "@/lib/task-service";
+import { assignedBlockersOf, moveTask, updateTaskAs } from "@/lib/task-service";
 
 /** GET /api/v1/tasks/WEB-12: the task with its description and activity. */
 export const GET = botRoute<{ key: string }>(async (_req, ctx, { key }) => {
@@ -48,5 +48,7 @@ export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
     archived: b.archived === undefined ? undefined : Boolean(b.archived),
     dependsOn: await resolveTaskRefs(ctx.org._id, b.dependsOn),
   });
-  return { task };
+  const assigned = assignedBlockersOf(task);
+  // VEC-107: open dependencies nobody owned, now assigned to the calling bot because its own task waits on them.
+  return { task, ...(assigned.length ? { assignedBlockers: assigned } : {}) };
 }, "update_task");
