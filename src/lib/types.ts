@@ -100,6 +100,21 @@ export interface OrgDoc {
   name: string;
   slug: string;
   createdAt: Date;
+  /** Org-wide defaults (VEC-128). Absent fields read as their preset (see loadOrgDefaults). */
+  defaults?: Partial<OrgDefaults>;
+}
+/**
+ * Stages a person's new task may start in by default (VEC-128): open stages only, never done/cancelled.
+ * The org stores a stage, not a status id, because statuses are per project (VEC-114).
+ */
+export const DEFAULT_STAGES = ["backlog", "triage", "unstarted", "started"] as const satisfies readonly StatusCategory[];
+export type DefaultStage = (typeof DEFAULT_STAGES)[number];
+export const isDefaultStage = (v: unknown): v is DefaultStage => typeof v === "string" && (DEFAULT_STAGES as readonly string[]).includes(v);
+/** Preset when the org never saved one: people's new tasks start in Triage. */
+export const DEFAULT_NEW_TASK_STAGE: DefaultStage = "triage";
+export interface OrgDefaults {
+  /** Stage a task created by a person without a status starts in (the project's first status of that stage). */
+  newTaskStage: DefaultStage;
 }
 export interface MembershipDoc {
   _id: ObjectId;
