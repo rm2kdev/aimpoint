@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { BotWorkload, Counts, Member, Project, Status, WorkloadSnapshot } from "@/lib/types";
+import type { BotWorkload, Counts, Member, OrgDefaults, Project, Status, WorkloadSnapshot } from "@/lib/types";
 import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
@@ -45,6 +45,8 @@ interface Ctx {
   statusById: Map<string, Status>;
   /** Each project's statuses in workflow order (VEC-117). A task only ever takes its own project's. */
   statusesByProject: Map<string, Status[]>;
+  /** Org-wide defaults with presets filled in (VEC-128), refreshed with the layout on org.changed. */
+  defaults: OrgDefaults;
   counts: Counts;
   /** Unread notifications for the signed-in person. */
   unread: number;
@@ -107,6 +109,7 @@ export function OrgProvider({
   projects: serverProjects,
   projectOrder: serverOrder,
   statuses: serverStatuses,
+  defaults: serverDefaults,
   counts: initialCounts,
   unread: initialUnread,
   workload: initialWorkload,
@@ -122,6 +125,7 @@ export function OrgProvider({
   projects: Project[];
   projectOrder: ProjectOrder;
   statuses: Status[];
+  defaults: OrgDefaults;
   counts: Counts;
   unread: number;
   workload: WorkloadSnapshot;
@@ -280,6 +284,9 @@ export function OrgProvider({
 
   // From the server's list, not the ordered one: a reorder keeps the same map (and the same OrgBase).
   const projectById = useMemo(() => new Map(serverProjects.map((p) => [p.id, p])), [serverProjects]);
+  // Keyed on the value, so an org.changed refresh that didn't touch the defaults keeps OrgBase's identity.
+  const newTaskStage = serverDefaults.newTaskStage;
+  const defaults = useMemo<OrgDefaults>(() => ({ newTaskStage }), [newTaskStage]);
   const base = useMemo<OrgBase>(
     () => ({
       org,
@@ -292,9 +299,10 @@ export function OrgProvider({
       statuses,
       statusById: statusMaps.byId,
       statusesByProject: statusMaps.byProject,
+      defaults,
       subscribe,
     }),
-    [org, orgs, me, members, deletedMembers, projectById, statuses, statusMaps, subscribe],
+    [org, orgs, me, members, deletedMembers, projectById, statuses, statusMaps, defaults, subscribe],
   );
   const value = useMemo<Ctx>(
     () => ({

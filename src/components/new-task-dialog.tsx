@@ -20,12 +20,15 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { CalendarIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
-import { matchStatus, type Priority, type Task, type TaskRef, type TaskType } from "@/lib/types";
+import { matchStatus, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
 
 export interface NewTaskDefaults {
   projectId?: string;
+  /** An explicit status (e.g. a project view's status group). Wins over `stage` and the org default. */
   statusId?: string;
+  /** Start in the chosen project's status of this stage (a cross-project view's stage group). */
+  stage?: StatusCategory;
   assigneeId?: string | null;
   type?: TaskType;
   /** Start with these dependencies (e.g. "Next task" from a task's pane). */
@@ -41,15 +44,16 @@ const chip =
   "inline-flex h-7 items-center gap-1.5 rounded-md border border-border bg-background px-2 text-[12.5px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent";
 
 export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults | null; onClose: () => void }) {
-  const { org, projects, statuses, statusById, statusesByProject, memberById, projectById } = useOrg();
+  const { org, projects, statusById, statusesByProject, memberById, projectById, defaults: orgDefaults } = useOrg();
   const router = useRouter();
   const open = defaults !== null;
-  const firstOpen = statuses.find((s) => s.category === "unstarted") ?? statuses[0];
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [projectId, setProjectId] = useState("");
+  // "" = nothing explicit: the status follows the project and the stage (the caller's, else the org default).
   const [statusId, setStatusId] = useState("");
+  const [stage, setStage] = useState<StatusCategory | null>(null);
   const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [priority, setPriority] = useState<Priority>(0);
   const [type, setType] = useState<TaskType>("issue");
@@ -65,7 +69,8 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
     setDescription("");
     const active = projects.filter((p) => !p.archived);
     setProjectId(active.find((p) => p.id === defaults.projectId)?.id ?? active[0]?.id ?? "");
-    setStatusId(defaults.statusId ?? firstOpen?.id ?? "");
+    setStatusId(defaults.statusId ?? "");
+    setStage(defaults.stage ?? null);
     setAssigneeId(defaults.assigneeId ?? null);
     setPriority(0);
     setType(defaults.type ?? "issue");
@@ -84,8 +89,16 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   // The picker lists only the chosen project's statuses and follows a project change (VEC-117).
   const projectStatuses = statusesByProject.get(projectId) ?? [];
   const picked = statusById.get(statusId);
+  // With no explicit status, preselect the project's first status of the stage (VEC-129): live, so a project
+  // change or a teammate's change to the org default (org.changed) re-picks it until the person picks one.
+  const byStage = (c: StatusCategory): Status | undefined => projectStatuses.find((s) => s.category === c);
   const status =
-    picked?.projectId === projectId ? picked : ((picked && matchStatus(projectStatuses, picked)) ?? projectStatuses.find((s) => s.category === "unstarted") ?? projectStatuses[0]);
+    picked?.projectId === projectId
+      ? picked
+      : ((picked && matchStatus(projectStatuses, picked)) ??
+        byStage(stage ?? orgDefaults.newTaskStage) ??
+        byStage("unstarted") ??
+        projectStatuses[0]);
   const assignee = assigneeId ? memberById.get(assigneeId) : undefined;
 
   const submit = () => {

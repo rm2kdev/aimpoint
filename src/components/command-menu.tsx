@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArchiveIcon, BotIcon, CircleUserIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, UserIcon } from "lucide-react";
+import { ArchiveIcon, BotIcon, CircleUserIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, UserIcon } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -111,6 +111,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 </CommandItem>
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "general"))} className="gap-2.5">
                   <SettingsIcon /> Settings
+                </CommandItem>
+                <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "defaults"))} className="gap-2.5">
+                  <SlidersHorizontalIcon /> Defaults <span className="ml-auto text-[11px] text-faint">Settings</span>
                 </CommandItem>
                 <CommandItem onSelect={() => go(accountPath(org.slug))} className="gap-2.5">
                   <CircleUserIcon /> Account settings

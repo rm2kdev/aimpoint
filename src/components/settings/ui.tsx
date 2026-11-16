@@ -16,6 +16,7 @@ import { orgPath, taskPath } from "@/lib/paths";
 
 export const SETTINGS_TABS = [
   ["general", "General"],
+  ["defaults", "Defaults"],
   ["projects", "Projects"],
   ["members", "Members"],
   ["bots", "Bots"],

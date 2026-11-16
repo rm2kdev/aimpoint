@@ -700,7 +700,7 @@ export function TaskWorkspace({
                         g.id === promptGroupId
                           ? {
                               text: tasks.size === 0 ? (scope.mine ? "Nothing assigned to you." : "No tasks yet.") : "All clear, every task here is closed.",
-                              onNew: () => newTask(g.status ? { statusId: g.status.id } : undefined),
+                              onNew: () => newTask(g.status ? { statusId: g.status.id } : { stage: g.stage }),
                             }
                           : undefined
                       }
