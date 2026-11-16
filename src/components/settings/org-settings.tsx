@@ -250,7 +250,7 @@ export function StatusesSettings() {
         (adding ? (
           <ul className="mt-3 rounded-[10px] border border-border">
             <StatusEditor
-              status={{ id: "", name: "", color: "#737373", category: "started", order: 999 }}
+              status={{ id: "", projectId: "", name: "", color: "#737373", category: "started", order: 999 }}
               canEdit
               isNew
               onDone={() => setAdding(false)}

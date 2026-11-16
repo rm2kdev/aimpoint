@@ -33,8 +33,6 @@ export async function createLargeOrg(db, userId, { tasks = 300, projects = 20 } 
   const uid = new ObjectId(userId);
   await db.collection("orgs").insertOne({ _id: orgId, name: "Perf drag (throwaway)", slug, createdAt: new Date(now) });
   await db.collection("memberships").insertOne({ _id: new ObjectId(), orgId, userId: uid, role: "admin", createdAt: new Date(now) });
-  const st = STATUSES.map(([name, color, category], order) => ({ _id: new ObjectId(), orgId, name, color, category, order }));
-  await db.collection("statuses").insertMany(st);
   const ps = Array.from({ length: projects }, (_, i) => ({
     _id: new ObjectId(),
     orgId,
@@ -45,6 +43,10 @@ export async function createLargeOrg(db, userId, { tasks = 300, projects = 20 } 
     createdAt: new Date(now - (projects - i) * 1000),
   }));
   await db.collection("projects").insertMany(ps);
+  // Statuses belong to a project (VEC-114): every project gets the set; `st` stays the per-stage template.
+  const st = STATUSES.map(([name, color, category], order) => ({ name, color, category, order }));
+  const own = ps.map((p) => st.map((s) => ({ _id: new ObjectId(), orgId, projectId: p._id, ...s })));
+  await db.collection("statuses").insertMany(own.flat());
   const botKey = `vec_${randomBytes(32).toString("base64url")}`;
   const botId = new ObjectId();
   await db.collection("bots").insertOne({
@@ -61,7 +63,8 @@ export async function createLargeOrg(db, userId, { tasks = 300, projects = 20 } 
   let n = 0;
   st.forEach((s, si) => {
     for (let j = 0; j < perStatus[si]; j++, n++) {
-      const p = ps[n % ps.length];
+      const pi = n % ps.length;
+      const p = ps[pi];
       const t = new Date(now - (tasks - n) * 6e4);
       docs.push({
         _id: new ObjectId(),
@@ -71,7 +74,7 @@ export async function createLargeOrg(db, userId, { tasks = 300, projects = 20 } 
         title: `${WORDS[n % WORDS.length]} ${WORDS[(n * 7) % WORDS.length]} ${WORDS[(n * 13) % WORDS.length]} #${n + 1}`,
         description: "",
         type: ["issue", "feature", "task"][n % 3],
-        statusId: s._id,
+        statusId: own[pi][si]._id,
         assigneeId: n % 3 === 0 ? null : uid,
         priority: n % 4,
         dueDate: n % 9 === 0 ? new Date(now + (n % 20) * 864e5) : null,
@@ -87,7 +90,7 @@ export async function createLargeOrg(db, userId, { tasks = 300, projects = 20 } 
   ranksAfter(null, docs.length).forEach((rank, i) => (docs[i].rank = rank));
   await db.collection("tasks").insertMany(docs);
   for (const p of ps) await db.collection("projects").updateOne({ _id: p._id }, { $set: { nextNumber: p.nextNumber } });
-  const open = new Set(st.filter((s) => s.category !== "done" && s.category !== "cancelled").map((s) => s._id.toHexString()));
+  const open = new Set(own.flat().filter((s) => s.category !== "done" && s.category !== "cancelled").map((s) => s._id.toHexString()));
   const keyOf = (d) => `${ps.find((p) => p._id.equals(d.projectId)).key}-${d.number}`;
   const botTaskKeys = docs.filter((d) => d.createdBy.equals(botId) && open.has(d.statusId.toHexString())).map(keyOf);
   return { orgId: orgId.toHexString(), slug, projectKeys: ps.map((p) => p.key), taskCount: docs.length, botKey, botTaskKeys };

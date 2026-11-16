@@ -5,6 +5,7 @@ import { UserError } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { findTaskByKey, sanitizeDescription, toFeed, toTask, withWorkingBots } from "@/lib/data";
 import { rankBetween } from "@/lib/rank";
+import { statusFor, statusInProject } from "@/lib/statuses";
 import { publishWorking } from "@/lib/claims";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
@@ -87,9 +88,10 @@ const STARTABLE = new Set<StatusCategory>(["backlog", "unstarted", "started"]);
 export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId: ObjectId, note: ActivityNote = "started_work"): Promise<boolean> {
   try {
     const c = await cols();
-    const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1 } });
+    const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1, projectId: 1 } });
     if (!task) return false;
-    const statuses = await c.statuses.find({ orgId }, { projection: { category: 1, order: 1 } }).sort({ order: 1 }).toArray();
+    // The task's own project's workflow (VEC-114).
+    const statuses = await c.statuses.find({ orgId, projectId: task.projectId }, { projection: { category: 1, order: 1 } }).sort({ order: 1 }).toArray();
     const target = statuses.find((s) => s.category === "started");
     const current = statuses.find((s) => s._id.equals(task.statusId));
     if (!target || !current || current._id.equals(target._id) || !STARTABLE.has(current.category)) return false;
@@ -295,10 +297,10 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     { returnDocument: "before" },
   );
   if (!project) throw new UserError(await missingProjectReason(projectId, actor.orgId, "Pick a project."));
+  // A status of the new task's own project (VEC-114): the given one (or its counterpart there), else the first not-started one.
   const status = input.statusId
-    ? await c.statuses.findOne({ _id: oid(input.statusId, "status"), orgId: actor.orgId })
-    : (await c.statuses.find({ orgId: actor.orgId, category: "unstarted" }).sort({ order: 1 }).limit(1).next()) ??
-      (await c.statuses.find({ orgId: actor.orgId }).sort({ order: 1 }).limit(1).next());
+    ? await statusFor(actor.orgId, projectId, oid(input.statusId, "status").toHexString())
+    : ((await statusFor(actor.orgId, projectId, "unstarted")) ?? (await c.statuses.find({ orgId: actor.orgId, projectId }).sort({ order: 1 }).limit(1).next()));
   if (!status) throw new UserError("Pick a status.");
   let assigneeId: ObjectId | null = null;
   if (input.assigneeId) {
@@ -417,9 +419,12 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   let doneChanged = false;
   let closed = false;
   let enteredTriage = false;
-  if (patch.statusId && patch.statusId !== before.statusId.toHexString()) {
-    const s = await c.statuses.findOne({ _id: oid(patch.statusId, "status"), orgId: actor.orgId });
-    if (!s) throw new UserError("Unknown status.");
+  // Statuses belong to the task's project (VEC-114): resolve within the destination project when it moves too.
+  const destProjectId = patch.projectId && ObjectId.isValid(patch.projectId) ? new ObjectId(patch.projectId) : before.projectId;
+  const s = patch.statusId && patch.statusId !== before.statusId.toHexString() ? await statusFor(actor.orgId, destProjectId, oid(patch.statusId, "status").toHexString()) : null;
+  if (patch.statusId && patch.statusId !== before.statusId.toHexString() && !s) throw new UserError("Unknown status.");
+  // Another project's id can resolve to the status the task already has: nothing to change then.
+  if (s && !s._id.equals(before.statusId)) {
     set.statusId = s._id;
     acts.push({ kind: "status", from: before.statusId.toHexString(), to: s._id.toHexString() });
     const prev = await c.statuses.findOne({ _id: before.statusId }, { projection: { category: 1 } });
@@ -478,6 +483,12 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
     set.projectId = p._id;
     set.number = p.nextNumber;
     projectKey = p.key;
+    // Keep the status in the destination project's workflow: same name and stage, else same stage (VEC-114).
+    if (!set.statusId) {
+      const mapped = await statusInProject(actor.orgId, p._id, before.statusId);
+      if (!mapped) throw new UserError(`${p.key} has no statuses to move this task into.`);
+      if (!mapped._id.equals(before.statusId)) set.statusId = mapped._id;
+    }
     acts.push({ kind: "project", from: before.projectId.toHexString(), to: p._id.toHexString() });
   }
   // A reorder alone writes no activity, only the new rank.

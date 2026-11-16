@@ -45,7 +45,14 @@ await db.collection("memberships").insertMany(
   users.map((u, i) => ({ _id: new ObjectId(), orgId, userId: u._id, role: people[i].role, createdAt: new Date(now - 30 * 864e5 + i * 1000) })),
 );
 
-const st = [
+const projects = [
+  { name: "Web App", key: "WEB", color: "#2f6fed" },
+  { name: "API", key: "API", color: "#30a46c" },
+  { name: "Mobile", key: "MOB", color: "#8b5cf6" },
+].map((p, i) => ({ _id: new ObjectId(), orgId, ...p, nextNumber: 1, createdAt: new Date(now - 29 * 864e5 + i) }));
+
+// Statuses belong to a project (VEC-114): each project gets the default set (DEFAULT_STATUSES in src/lib/data.ts).
+const DEFAULT_STATUSES = [
   ["Backlog", "#a3a3a3", "backlog"],
   ["Triage", "#d6409f", "triage"],
   ["Todo", "#737373", "unstarted"],
@@ -53,15 +60,13 @@ const st = [
   ["In Review", "#8b5cf6", "started"],
   ["Done", "#2f6fed", "done"],
   ["Cancelled", "#a3a3a3", "cancelled"],
-].map(([name, color, category], order) => ({ _id: new ObjectId(), orgId, name, color, category, order }));
+];
+const st = projects.flatMap((p) =>
+  DEFAULT_STATUSES.map(([name, color, category], order) => ({ _id: new ObjectId(), orgId, projectId: p._id, name, color, category, order })),
+);
 await db.collection("statuses").insertMany(st);
-const S = Object.fromEntries(st.map((s) => [s.name, s._id]));
-
-const projects = [
-  { name: "Web App", key: "WEB", color: "#2f6fed" },
-  { name: "API", key: "API", color: "#30a46c" },
-  { name: "Mobile", key: "MOB", color: "#8b5cf6" },
-].map((p, i) => ({ _id: new ObjectId(), orgId, ...p, nextNumber: 1, createdAt: new Date(now - 29 * 864e5 + i) }));
+// Project key -> status name -> id.
+const S = Object.fromEntries(projects.map((p) => [p.key, Object.fromEntries(st.filter((s) => s.projectId.equals(p._id)).map((s) => [s.name, s._id]))]));
 
 const tasks = [
   ["WEB", "Image paste in editor uploads twice on Safari", "issue", "In Progress", ryan, 3, "<p>Pasting a screenshot into the description on Safari 18 fires both <code>paste</code> and <code>drop</code>, so the image is uploaded twice and two copies appear.</p><p>Expected: one upload, one image node. Chrome and Firefox behave correctly.</p>"],
@@ -106,7 +111,7 @@ const docs = tasks.map(([pk, title, type, status, who, priority, description, cr
     title,
     description,
     type,
-    statusId: S[status],
+    statusId: S[pk][status],
     assigneeId: who?._id ?? null,
     priority,
     createdBy: (creator ?? [ryan, mia, sofia, jonah][i % 4])._id,
@@ -128,7 +133,7 @@ await db.collection("activity").insertMany(
 const first = docs[0];
 await db.collection("activity").insertOne({
   _id: new ObjectId(), orgId, taskId: first._id, actorId: mia._id, kind: "status",
-  from: S["Todo"].toHexString(), to: S["In Progress"].toHexString(), createdAt: new Date(now - 2 * 3.6e6),
+  from: S.WEB["Todo"].toHexString(), to: S.WEB["In Progress"].toHexString(), createdAt: new Date(now - 2 * 3.6e6),
 });
 await db.collection("comments").insertOne({
   _id: new ObjectId(), orgId, taskId: first._id, authorId: jonah._id,

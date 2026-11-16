@@ -6,7 +6,8 @@ import { ObjectId } from "mongodb";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { cols } from "@/lib/db";
-import { DEFAULT_STATUSES, PROJECT_COLORS } from "@/lib/data";
+import { PROJECT_COLORS } from "@/lib/data";
+import { deleteProjectStatuses, seedProjectStatuses } from "@/lib/statuses";
 import { requireOrg, requireUser } from "@/lib/session";
 import { guard, UserError, deriveKey, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
@@ -50,9 +51,9 @@ export async function createOrgAction(_: OnboardState, form: FormData): Promise<
   const now = new Date();
   await c.orgs.insertOne({ _id: orgId, name, slug, createdAt: now });
   await c.memberships.insertOne({ _id: new ObjectId(), orgId, userId: user._id, role: "admin", createdAt: now });
-  await c.statuses.insertMany(DEFAULT_STATUSES.map((s) => ({ ...s, _id: new ObjectId(), orgId })));
+  const projectId = new ObjectId();
   await c.projects.insertOne({
-    _id: new ObjectId(),
+    _id: projectId,
     orgId,
     name: projectName,
     key: deriveKey(projectName),
@@ -60,6 +61,8 @@ export async function createOrgAction(_: OnboardState, form: FormData): Promise<
     nextNumber: 1,
     createdAt: now,
   });
+  // Statuses belong to projects (VEC-114): the first project starts with the default set.
+  await seedProjectStatuses(orgId, projectId);
   redirect(orgPath(slug, "my"));
 }
 
@@ -99,6 +102,7 @@ export async function createProject(slug: string, input: { name: string; key?: s
       nextNumber: 1,
       createdAt: new Date(),
     });
+    await seedProjectStatuses(org._id, id);
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
     return { key: keyParsed.data, id: id.toHexString() };
@@ -194,6 +198,7 @@ export async function deleteProject(slug: string, projectId: string, confirmKey:
       await c.tasks.deleteMany({ orgId: org._id, projectId: pid });
     }
     await c.projects.deleteOne({ _id: pid, orgId: org._id });
+    await deleteProjectStatuses(org._id, pid);
     const orgHex = org._id.toHexString();
     const actorId = user._id.toHexString();
     // Open task lists drop the tasks live; anything else catches up on the org refresh.
@@ -214,7 +219,7 @@ const CATEGORIES: StatusCategory[] = ["backlog", "triage", "unstarted", "started
 
 export async function saveStatus(
   slug: string,
-  input: { id?: string; name: string; color: string; category: StatusCategory },
+  input: { id?: string; projectId?: string; name: string; color: string; category: StatusCategory },
 ): Promise<Result> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
@@ -228,8 +233,13 @@ export async function saveStatus(
       // A status that starts or stops counting as closed (done or cancelled) releases or re-blocks the tasks that depend on its tasks.
       if (prev && isClosedCategory(prev.category) !== isClosedCategory(input.category)) await recomputeOrg(org._id, { id: user._id, name: async () => user.name });
     } else {
-      const last = await c.statuses.find({ orgId: org._id }).sort({ order: -1 }).limit(1).next();
-      await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
+      // Statuses belong to a project (VEC-114); the project-scoped editor arrives with VEC-115/117.
+      const projectId = input.projectId && ObjectId.isValid(input.projectId) ? new ObjectId(input.projectId) : null;
+      if (!projectId || !(await c.projects.findOne({ _id: projectId, orgId: org._id }, { projection: { _id: 1 } }))) {
+        throw new UserError("Statuses belong to a project now. Pick the project to add it to.");
+      }
+      const last = await c.statuses.find({ orgId: org._id, projectId }).sort({ order: -1 }).limit(1).next();
+      await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
     }
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
@@ -257,6 +267,8 @@ export async function deleteStatus(slug: string, id: string, moveTo: string): Pr
     if (!target) throw new UserError("Pick a status to move tasks to.");
     const sid = new ObjectId(id);
     const removed = await c.statuses.findOne({ _id: sid, orgId: org._id });
+    // Tasks keep pointing at a status of their own project (VEC-114).
+    if (removed && !removed.projectId?.equals(target.projectId)) throw new UserError("Pick a status of the same project to move tasks to.");
     await c.tasks.updateMany({ orgId: org._id, statusId: sid }, { $set: { statusId: target._id, updatedAt: new Date() } });
     await c.statuses.deleteOne({ _id: sid, orgId: org._id });
     if (removed && isClosedCategory(removed.category) !== isClosedCategory(target.category)) await recomputeOrg(org._id, { id: user._id, name: async () => user.name });

@@ -1,6 +1,7 @@
 import "server-only";
 import { MongoClient, ObjectId, type Db, type Collection } from "mongodb";
 import { ranksAfter } from "./rank";
+import { migrateProjectStatuses, PROJECT_STATUSES_MIGRATION } from "./project-statuses-migration";
 import type {
   UserDoc,
   OrgDoc,
@@ -87,7 +88,8 @@ async function ensureIndexes(db: Db) {
     db.collection("memberships").createIndex({ orgId: 1, userId: 1 }, { unique: true }),
     db.collection("memberships").createIndex({ userId: 1 }),
     db.collection("projects").createIndex({ orgId: 1, key: 1 }, { unique: true }),
-    db.collection("statuses").createIndex({ orgId: 1, order: 1 }),
+    // Statuses belong to a project (VEC-114): one ordered list per project.
+    db.collection("statuses").createIndex({ orgId: 1, projectId: 1, order: 1 }),
     db.collection("tasks").createIndex({ projectId: 1, number: 1 }, { unique: true }),
     db.collection("tasks").createIndex({ orgId: 1, updatedAt: -1 }),
     db.collection("tasks").createIndex({ orgId: 1, assigneeId: 1 }),
@@ -133,7 +135,8 @@ async function migrate(db: Db) {
 
   // Organisations created before the Triage stage existed get a Triage status right after their backlog.
   await once("2026-11-triage-status", async () => {
-    const statuses = db.collection<StatusDoc>("statuses");
+    // Ran while statuses were org-level (before VEC-114), so its docs have no projectId.
+    const statuses = db.collection<Omit<StatusDoc, "projectId">>("statuses");
     for (const orgId of await statuses.distinct("orgId")) {
       if (await statuses.findOne({ orgId, category: "triage" })) continue;
       const list = await statuses.find({ orgId }).sort({ order: 1 }).toArray();
@@ -165,5 +168,12 @@ async function migrate(db: Db) {
       const ops = list.map((t, i) => ({ updateOne: { filter: { _id: t._id }, update: { $set: { rank: ranks[i] } } } }));
       if (ops.length) await tasks.bulkWrite(ops);
     }
+  });
+
+  // Per-project statuses (VEC-114): every project gets its own copy of the org's statuses, tasks (and their
+  // status activity) point at their project's copy, and the org-level statuses go away.
+  await once(PROJECT_STATUSES_MIGRATION, async () => {
+    const report = await migrateProjectStatuses(db);
+    console.log("[migrate] project statuses", report);
   });
 }

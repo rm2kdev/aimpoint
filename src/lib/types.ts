@@ -8,6 +8,49 @@ export type Role = "admin" | "member";
 export type StatusCategory = "backlog" | "triage" | "unstarted" | "started" | "done" | "cancelled";
 /** Done and cancelled tasks are closed: they no longer hold up the tasks that depend on them. */
 export const isClosedCategory = (c: StatusCategory | null | undefined) => c === "done" || c === "cancelled";
+/** Every stage, in workflow order. Stages are fixed; each project names its own statuses on top of them. */
+export const STATUS_STAGES: readonly StatusCategory[] = ["backlog", "triage", "unstarted", "started", "done", "cancelled"];
+/**
+ * Stages every project must keep at least one status in (VEC-114), so triage, bot hand-offs and close-outs
+ * always resolve to a status of the task's own project. "started" may be left out.
+ */
+export const REQUIRED_STAGES: readonly StatusCategory[] = ["backlog", "triage", "unstarted", "done", "cancelled"];
+/** Required stages a project's status list has no status in (empty = the list is valid). */
+export function missingStages(list: readonly { category: StatusCategory }[]): StatusCategory[] {
+  return REQUIRED_STAGES.filter((stage) => !list.some((s) => s.category === stage));
+}
+type StatusLike = { name: string; category: StatusCategory; order: number };
+const byOrder = <S extends StatusLike>(list: readonly S[]) => [...list].sort((a, b) => a.order - b.order);
+/**
+ * Resolves a status reference within ONE project's status list: an exact id (via `idOf`), else a name
+ * (case-insensitive), else a stage (first status of that stage in workflow order). Null when nothing matches.
+ */
+export function pickStatus<S extends StatusLike>(list: readonly S[], ref: string, idOf?: (s: S) => string): S | null {
+  const r = ref.trim();
+  if (!r) return null;
+  const sorted = byOrder(list);
+  if (idOf) {
+    const hit = sorted.find((s) => idOf(s) === r);
+    if (hit) return hit;
+  }
+  const lower = r.toLowerCase();
+  return sorted.find((s) => s.name.toLowerCase() === lower) ?? sorted.find((s) => s.category === lower) ?? null;
+}
+/**
+ * The status in `list` (another project's statuses) that corresponds to `from`: same name and stage, else the
+ * first status of the same stage, else the first not-started one. Keeps the task's stage whenever the project has it.
+ */
+export function matchStatus<S extends StatusLike>(list: readonly S[], from: StatusLike): S | null {
+  const sorted = byOrder(list);
+  const name = from.name.toLowerCase();
+  return (
+    sorted.find((s) => s.category === from.category && s.name.toLowerCase() === name) ??
+    sorted.find((s) => s.category === from.category) ??
+    sorted.find((s) => s.category === "unstarted") ??
+    sorted[0] ??
+    null
+  );
+}
 export type TaskType = "issue" | "feature" | "task";
 export const TASK_TYPES: readonly TaskType[] = ["issue", "feature", "task"];
 export function isTaskType(v: unknown): v is TaskType {
@@ -89,6 +132,8 @@ export interface ProjectMetaEntry {
 export interface StatusDoc {
   _id: ObjectId;
   orgId: ObjectId;
+  /** The project that owns this status (VEC-114). Every task's statusId points at a status of its own project. */
+  projectId: ObjectId;
   name: string;
   color: string;
   category: StatusCategory;
@@ -430,6 +475,7 @@ export interface ProjectDetail extends Project {
 }
 export interface Status {
   id: string;
+  projectId: string;
   name: string;
   color: string;
   category: StatusCategory;

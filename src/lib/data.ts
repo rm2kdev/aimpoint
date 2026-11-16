@@ -28,7 +28,8 @@ import type {
 import { botMaxTasks } from "@/lib/types";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
 
-export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId">[] = [
+/** The status set every new project starts with (VEC-114: statuses belong to a project). */
+export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId" | "projectId">[] = [
   { name: "Backlog", color: "#a3a3a3", category: "backlog", order: 0 },
   { name: "Triage", color: "#d6409f", category: "triage", order: 1 },
   { name: "Todo", color: "#737373", category: "unstarted", order: 2 },
@@ -94,6 +95,7 @@ export const toProjectDetail = (p: ProjectDoc): ProjectDetail => ({
 export const projectContext = (p: ProjectDoc): Record<string, string> => Object.fromEntries((p.metadata ?? []).map((m) => [m.key, m.value]));
 export const toStatus = (s: StatusDoc): Status => ({
   id: s._id.toHexString(),
+  projectId: s.projectId?.toHexString() ?? "",
   name: s.name,
   color: s.color,
   category: s.category,
