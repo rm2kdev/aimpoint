@@ -15,7 +15,7 @@ import {
   type Series,
   type ValueFormatter,
 } from "./chart-frame"
-import { formatCompact, formatExact, formatNumber, formatTick, type Granularity, type TimeValue } from "./format"
+import { formatCompact, formatExact, formatNumber, formatTick, spanOf, type Granularity, type TimeValue } from "./format"
 
 export type BarDatum = Record<string, string | number | Date | null | undefined>
 
@@ -69,7 +69,8 @@ export function BarChart({
 
   const exact = (v: unknown) =>
     granularity ? formatExact(v as TimeValue, granularity) : String(v ?? "")
-  const tick = (v: unknown) => (granularity ? formatTick(v as TimeValue, granularity) : String(v ?? ""))
+  const span = granularity === "hour" ? spanOf(data, (d) => d[categoryKey]) : undefined
+  const tick = (v: unknown) => (granularity ? formatTick(v as TimeValue, granularity, span) : String(v ?? ""))
   const text = summary ?? describe(title, data, categoryKey, series, exact, valueFormatter)
 
   const table = () => (
