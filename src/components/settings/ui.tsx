@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useTransition } from "react";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { ChartNoAxesColumnIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
@@ -140,12 +140,15 @@ export function DetailHeader({
   name,
   tags,
   subtitle,
+  action,
 }: {
   back: { href: string; label: string };
   avatar: React.ReactNode;
   name: string;
   tags?: React.ReactNode;
   subtitle: React.ReactNode;
+  /** Shown at the right of the identity row (e.g. AnalyticsLink). */
+  action?: React.ReactNode;
 }) {
   return (
     <div className="mb-6">
@@ -161,6 +164,7 @@ export function DetailHeader({
           </div>
           <div className="mt-1 truncate text-[13px] text-muted-foreground">{subtitle}</div>
         </div>
+        {action ? <div className="ml-auto shrink-0">{action}</div> : null}
       </div>
     </div>
   );
@@ -205,4 +209,19 @@ export function useAction() {
       }
     });
   return { pending, run };
+}
+
+/** "Analytics" link from a detail page to the analytics screen with that entity's filter (VEC-135). Render it for admins only. */
+export function AnalyticsLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      aria-label={label}
+      title={label}
+      data-analytics-link
+      className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-2.5 text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+    >
+      <ChartNoAxesColumnIcon className="size-3.5" /> Analytics
+    </Link>
+  );
 }

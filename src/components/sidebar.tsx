@@ -7,6 +7,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArchiveIcon,
   BotIcon,
+  ChartNoAxesColumnIcon,
   CheckIcon,
   CircleUserIcon,
   ChevronsUpDownIcon,
@@ -39,7 +40,7 @@ import { useDragStore } from "@/components/ui/drag-provider";
 import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
 import { moveTaskAction } from "@/app/actions/tasks";
-import { accountPath, orgPath, projectPath, withTask } from "@/lib/paths";
+import { accountPath, analyticsPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import { matchStatus, type Project, type Task } from "@/lib/types";
 
@@ -89,6 +90,11 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
         </div>
 
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
+        {isAdmin && (
+          <NavItem href={analyticsPath(org.slug)} active={pathname === analyticsPath(org.slug)} icon={<ChartNoAxesColumnIcon />} onNavigate={onNavigate}>
+            Analytics
+          </NavItem>
+        )}
         <NavItem href={orgPath(org.slug, "settings", "members")} active={pathname.startsWith(orgPath(org.slug, "settings", "members"))} icon={<UsersIcon />} onNavigate={onNavigate}>
           Members
         </NavItem>

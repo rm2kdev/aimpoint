@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArchiveIcon, ArchiveRestoreIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
-import { DetailHeader, SettingsRow, Tag } from "@/components/settings/ui";
+import { AnalyticsLink, DetailHeader, SettingsRow, Tag } from "@/components/settings/ui";
 import { ColorDots, ProjectTile } from "@/components/settings/org-settings";
 import { ProjectStatuses } from "@/components/settings/project-statuses";
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { deleteProject, setProjectArchived, updateProject } from "@/app/actions/org";
 import type { ProjectDetail as ProjectDetailData, ProjectMetaEntry } from "@/lib/types";
-import { orgPath } from "@/lib/paths";
+import { analyticsPath, orgPath } from "@/lib/paths";
+import { analyticsSearchFor } from "@/lib/analytics-range";
 
 const Row = SettingsRow;
 
@@ -105,6 +106,7 @@ export function ProjectDetail({ project: initial, taskCount, archivedTaskCount }
             </Link>
           </>
         }
+        action={isAdmin ? <AnalyticsLink href={analyticsPath(org.slug, analyticsSearchFor({ project: project.key }))} label={`Analytics for ${project.name}`} /> : undefined}
       />
 
       {project.archived && (

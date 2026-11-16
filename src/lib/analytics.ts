@@ -42,6 +42,10 @@ import {
  *   comments, activity, claims and mentions (current state, not as of the period), so totals always agree with
  *   each other and with the task lists people see. Deleted tasks are gone with their history.
  * - A task counts in its *current* project for the project filter and per-project breakdowns.
+ * - Contributor filter (VEC-135): every actor-attributed count keeps only that person's or bot's own rows (tasks they
+ *   created, closes and reopens they made, their comments, activity and bot work; for a person, the bots they
+ *   mentioned; for a bot, mentions of it). State that has no actor (backlog, open-task age, tasks right now) counts
+ *   the tasks assigned to them now.
  * - A task created straight into a done/cancelled status (its first status activity starts there, or it has none)
  *   counts as opened and closed at creation, so backlog change = opened - closed + reopened. Those closes have no
  *   cycle time and are left out of the cycle-time figures.
@@ -65,6 +69,7 @@ interface Period {
   unit: AnalyticsGranularity;
   tz: string;
   projectId: ObjectId | null;
+  contributorId: ObjectId | null;
   buckets: Date[];
   /** End of each bucket (the next bucket's start; `to` for the last one). */
   ends: Date[];
@@ -88,6 +93,11 @@ export function parseAnalyticsQuery(q: AnalyticsQuery): Period {
     if (!ObjectId.isValid(q.projectId)) throw new UserError("Unknown project.");
     projectId = new ObjectId(q.projectId);
   }
+  let contributorId: ObjectId | null = null;
+  if (q.contributorId) {
+    if (!ObjectId.isValid(q.contributorId)) throw new UserError("Unknown person or bot.");
+    contributorId = new ObjectId(q.contributorId);
+  }
   let buckets: Date[];
   try {
     buckets = bucketStarts(from, to, q.granularity, tz);
@@ -96,7 +106,7 @@ export function parseAnalyticsQuery(q: AnalyticsQuery): Period {
     throw e;
   }
   const ends = buckets.map((b, i) => (i + 1 < buckets.length ? buckets[i + 1] : new Date(Math.min(nextBucketStart(b, q.granularity, tz).getTime(), to.getTime()))));
-  return { from, to, prevFrom: new Date(from.getTime() - (to.getTime() - from.getTime())), unit: q.granularity, tz, projectId, buckets, ends };
+  return { from, to, prevFrom: new Date(from.getTime() - (to.getTime() - from.getTime())), unit: q.granularity, tz, projectId, contributorId, buckets, ends };
 }
 
 /**
@@ -220,6 +230,13 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
     c.projects.find({ orgId }).sort({ createdAt: 1 }).toArray(),
   ]);
   if (p.projectId && !projectDocs.some((d) => d._id.equals(p.projectId!))) throw new UserError("Unknown project.");
+  // Contributor filter (VEC-135): a member, a bot of this org, or a former member who left a tombstone.
+  const who = p.contributorId?.toHexString() ?? null;
+  const contributorKind = who ? (dir.get(who)?.kind ?? (dir.deleted.has(who) ? "user" : null)) : null;
+  if (who && !contributorKind) throw new UserError("Unknown person or bot.");
+  const actor = p.contributorId;
+  /** `{field: actor}` when the report is limited to one contributor. */
+  const by = (field: string): Document => (actor ? { [field]: actor } : {});
 
   const stageOf = new Map(statuses.map((s) => [s._id.toHexString(), s.category]));
   const closed = statuses.filter((s) => isClosedCategory(s.category));
@@ -247,14 +264,14 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
   const [opened, createdClosed, [act], [com], [claims], mentionsOfBots, snapshot, openState] = await Promise.all([
     c.tasks
       .aggregate<{ _id: Key & { a: ObjectId; pr: Priority; ty: TaskType }; n: number }>([
-        { $match: { orgId, archivedAt: null, ...projectMatch, ...range("createdAt") } },
+        { $match: { orgId, archivedAt: null, ...projectMatch, ...by("createdBy"), ...range("createdAt") } },
         { $group: { _id: { cur: cur("createdAt"), b: bucket("createdAt"), p: "$projectId", a: "$createdBy", pr: "$priority", ty: "$type" }, n: { $sum: 1 } } },
       ])
       .toArray(),
     // Tasks created straight into a closed stage: their first status activity leaves one, or they have none and are closed.
     c.tasks
       .aggregate<Close>([
-        { $match: { orgId, archivedAt: null, ...projectMatch, ...range("createdAt") } },
+        { $match: { orgId, archivedAt: null, ...projectMatch, ...by("createdBy"), ...range("createdAt") } },
         { $lookup: { from: "activity", localField: "_id", foreignField: "taskId", as: "first", pipeline: [{ $match: { kind: "status" } }, { $sort: { createdAt: 1 } }, { $limit: 1 }, { $project: { _id: 0, from: 1 } }] } },
         { $addFields: { initial: { $ifNull: [{ $first: "$first.from" }, { $toString: "$statusId" }] } } },
         { $match: { $expr: { $in: ["$initial", closedHex] } } },
@@ -268,7 +285,7 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
         reopens: { _id: Key; n: number }[];
         actors: { _id: ObjectId; n: number }[];
       }>([
-        { $match: { orgId, kind: { $in: [...ACTIVITY_KINDS] }, ...range("createdAt") } },
+        { $match: { orgId, kind: { $in: [...ACTIVITY_KINDS] }, ...by("actorId"), ...range("createdAt") } },
         ...taskScope(),
         { $addFields: { cur: cur("createdAt"), b: bucket("createdAt"), fc: { $in: ["$from", closedHex] }, tc: { $in: ["$to", closedHex] } } },
         {
@@ -286,7 +303,7 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
       .toArray(),
     c.comments
       .aggregate<{ series: { _id: Key & { a: ObjectId }; n: number; m: number }[]; actors: { _id: ObjectId; n: number; m: number }[] }>([
-        { $match: { orgId, ...range("createdAt") } },
+        { $match: { orgId, ...by("authorId"), ...range("createdAt") } },
         ...taskScope(),
         { $addFields: { cur: cur("createdAt"), b: bucket("createdAt"), m: { $size: { $ifNull: ["$mentions", []] } } } },
         {
@@ -299,7 +316,7 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
       .toArray(),
     c.agentClaims
       .aggregate<{ pickups: { _id: Key & { bot: ObjectId }; n: number }[]; completions: { _id: Key & { bot: ObjectId }; n: number }[] }>([
-        { $match: { orgId, $or: [range("claimedAt"), range("finishedAt")] } },
+        { $match: { orgId, ...(actor ? { botId: actor } : {}), $or: [range("claimedAt"), range("finishedAt")] } },
         ...taskScope(),
         {
           $facet: {
@@ -311,21 +328,28 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
       .toArray(),
     c.botMentions
       .aggregate<{ _id: Key; n: number }>([
-        { $match: { orgId, ...range("createdAt") } },
+        // A bot: mentions of it. A person: bots they mentioned (the mention's comment is theirs).
+        { $match: { orgId, ...(actor && contributorKind === "bot" ? { botId: actor } : {}), ...range("createdAt") } },
+        ...(actor && contributorKind !== "bot"
+          ? [
+              { $lookup: { from: "comments", localField: "commentId", foreignField: "_id", as: "cm", pipeline: [{ $project: { authorId: 1 } }] } },
+              { $match: { "cm.authorId": actor } },
+            ]
+          : []),
         ...taskScope(),
         { $group: { _id: { cur: cur("createdAt"), b: bucket("createdAt"), p: "$t.projectId" }, n: { $sum: 1 } } },
       ])
       .toArray(),
     c.tasks
       .aggregate<{ _id: { p: ObjectId; s: ObjectId; pr: Priority; ty: TaskType }; n: number }>([
-        { $match: { orgId, archivedAt: null, ...projectMatch } },
+        { $match: { orgId, archivedAt: null, ...projectMatch, ...by("assigneeId") } },
         { $group: { _id: { p: "$projectId", s: "$statusId", pr: "$priority", ty: "$type" }, n: { $sum: 1 } } },
       ])
       .toArray(),
     // Tasks open at some moment of [prevFrom, to): open now, or crossed open/closed since prevFrom.
     c.tasks
       .aggregate<OpenStateRow>([
-        { $match: { orgId, archivedAt: null, ...projectMatch, createdAt: { $lt: p.to } } },
+        { $match: { orgId, archivedAt: null, ...projectMatch, ...by("assigneeId"), createdAt: { $lt: p.to } } },
         { $addFields: { openNow: { $not: [{ $in: ["$statusId", closedIds] }] } } },
         {
           $lookup: {
@@ -551,7 +575,14 @@ export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): 
 
   return {
     generatedAt: new Date().toISOString(),
-    period: { from: p.from.toISOString(), to: p.to.toISOString(), granularity: p.unit, tz: p.tz, projectId: p.projectId?.toHexString() ?? null },
+    period: {
+      from: p.from.toISOString(),
+      to: p.to.toISOString(),
+      granularity: p.unit,
+      tz: p.tz,
+      projectId: p.projectId?.toHexString() ?? null,
+      contributor: who && contributorKind ? { id: who, name: dir.has(who) ? dir.get(who)!.name : personName(dir, who), kind: contributorKind } : null,
+    },
     previous: { from: p.prevFrom.toISOString(), to: p.from.toISOString() },
     buckets: p.buckets.map((b) => b.toISOString()),
     tickets: {

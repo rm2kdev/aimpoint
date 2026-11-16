@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArchiveIcon, BotIcon, CircleUserIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, UserIcon } from "lucide-react";
+import { ArchiveIcon, BotIcon, ChartNoAxesColumnIcon, CircleUserIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, UserIcon } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -18,10 +18,10 @@ import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
-import { accountPath, orgPath, projectPath, rolesPath, taskPath, withTask } from "@/lib/paths";
+import { accountPath, analyticsPath, orgPath, projectPath, rolesPath, taskPath, withTask } from "@/lib/paths";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { org, projects } = useOrg();
+  const { org, projects, isAdmin } = useOrg();
   const { newTask } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -100,6 +100,11 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 <CommandItem onSelect={() => go(orgPath(org.slug, "archived"))} className="gap-2.5">
                   <ArchiveIcon /> Archive
                 </CommandItem>
+                {isAdmin && (
+                  <CommandItem onSelect={() => go(analyticsPath(org.slug))} className="gap-2.5" data-nav="analytics">
+                    <ChartNoAxesColumnIcon /> Analytics
+                  </CommandItem>
+                )}
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "members"))} className="gap-2.5">
                   <UsersIcon /> Members
                 </CommandItem>

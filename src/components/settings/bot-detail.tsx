@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Trash2Icon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
-import { DetailHeader, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
+import { AnalyticsLink, DetailHeader, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
 import { BotAvatar } from "@/components/bits";
 import { AvatarPicker } from "@/components/bots/avatar-picker";
 import { BotConnection } from "@/components/bots/connect-wizard";
@@ -31,7 +31,8 @@ import { MCP_TOOLS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
 import { BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAvatar as BotAvatarData, BotRole, Task } from "@/lib/types";
-import { orgPath, rolesPath } from "@/lib/paths";
+import { analyticsPath, orgPath, rolesPath } from "@/lib/paths";
+import { analyticsSearchFor } from "@/lib/analytics-range";
 
 const Row = SettingsRow;
 
@@ -104,6 +105,7 @@ export function BotDetail({
         name={bot.name}
         tags={<Tag>Bot</Tag>}
         subtitle={bot.description || "No description"}
+        action={isAdmin ? <AnalyticsLink href={analyticsPath(org.slug, analyticsSearchFor({ bot: bot.id }))} label={`Analytics for ${bot.name}`} /> : undefined}
       />
 
           <Row

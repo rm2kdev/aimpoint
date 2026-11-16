@@ -611,6 +611,11 @@ export interface AnalyticsQuery {
   projectId?: string | null;
   /** IANA timezone for bucket boundaries, default DEFAULT_ANALYTICS_TZ. */
   tz?: string | null;
+  /**
+   * Limit to one person or bot (VEC-135): tasks they opened and closed, their comments and interactions;
+   * backlog, open-task age and the tasks-right-now breakdowns count tasks assigned to them.
+   */
+  contributorId?: string | null;
 }
 /** A count over the period, the previous equal-length period, and per bucket (aligned with AnalyticsReport.buckets). */
 export interface AnalyticsCount {
@@ -719,7 +724,15 @@ export interface AnalyticsContributor {
 }
 export interface AnalyticsReport {
   generatedAt: string;
-  period: { from: string; to: string; granularity: AnalyticsGranularity; tz: string; projectId: string | null };
+  period: {
+    from: string;
+    to: string;
+    granularity: AnalyticsGranularity;
+    tz: string;
+    projectId: string | null;
+    /** The person or bot the report is limited to (AnalyticsQuery.contributorId). */
+    contributor: { id: string; name: string; kind: "user" | "bot" } | null;
+  };
   /** The equal-length period right before, used for every `previous`. */
   previous: { from: string; to: string };
   /** Bucket starts (ISO, UTC instant of the local start); every series has one entry per bucket. */

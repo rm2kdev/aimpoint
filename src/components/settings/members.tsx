@@ -19,12 +19,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { DetailHeader, EntityList, EntityRow, SettingsRow, Tag, useAction, WorkList } from "@/components/settings/ui";
+import { AnalyticsLink, DetailHeader, EntityList, EntityRow, SettingsRow, Tag, useAction, WorkList } from "@/components/settings/ui";
 import { createInvite, removeMember, revokeInvite, setMemberRole } from "@/app/actions/org";
 import { formatDay } from "@/lib/dates";
 import type { Role, Task } from "@/lib/types";
 import type { InviteRow } from "@/components/settings/org-settings";
-import { orgPath } from "@/lib/paths";
+import { analyticsPath, orgPath } from "@/lib/paths";
+import { analyticsSearchFor } from "@/lib/analytics-range";
 
 export interface MemberStats {
   assigned: number;
@@ -178,6 +179,7 @@ export function MemberDetail({
           </>
         }
         subtitle={member.email}
+        action={isAdmin ? <AnalyticsLink href={analyticsPath(org.slug, analyticsSearchFor({ person: member.id }))} label={`Analytics for ${member.name}`} /> : undefined}
       />
 
       <SettingsRow title="Profile" desc={<>How {self ? "you appear" : `${member.name.split(" ")[0]} appears`} on tasks, in the assignee picker and in activity.</>}>

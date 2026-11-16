@@ -38,23 +38,30 @@ export interface AnalyticsParams {
   g: AnalyticsGranularity | null;
   /** Project key, null = all projects. */
   project: string | null;
+  /** Limit to one person / one bot (VEC-135), by id; `person` wins when both are set. */
+  person: string | null;
+  bot: string | null;
   compare: boolean;
 }
 
 type SearchParams = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? null;
+const objectId = (v: string | null) => (v && /^[0-9a-f]{24}$/i.test(v.trim()) ? v.trim().toLowerCase() : null);
 
 export function parseAnalyticsParams(sp: SearchParams | URLSearchParams): AnalyticsParams {
   const get = (k: string) => (sp instanceof URLSearchParams ? sp.get(k) : one(sp[k]));
   const range = get("range");
   const g = get("g");
   const project = get("project")?.trim().toUpperCase() || null;
+  const person = objectId(get("person"));
   return {
     range: isPreset(range) ? range : DEFAULT_PRESET,
     from: get("from"),
     to: get("to"),
     g: isAnalyticsGranularity(g) ? g : null,
     project,
+    person,
+    bot: person ? null : objectId(get("bot")),
     compare: get("compare") !== "0",
   };
 }
@@ -69,10 +76,15 @@ export function analyticsSearch(p: AnalyticsParams): string {
   }
   if (p.g) q.set("g", p.g);
   if (p.project) q.set("project", p.project);
+  if (p.person) q.set("person", p.person);
+  else if (p.bot) q.set("bot", p.bot);
   if (!p.compare) q.set("compare", "0");
   const s = q.toString();
   return s ? `?${s}` : "";
 }
+
+/** `?project=WEB`, `?person=<id>`, `?bot=<id>`: a deep link into the default period with filters set (VEC-135). */
+export const analyticsSearchFor = (filters: Partial<AnalyticsParams>) => analyticsSearch({ ...parseAnalyticsParams(new URLSearchParams()), ...filters });
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;

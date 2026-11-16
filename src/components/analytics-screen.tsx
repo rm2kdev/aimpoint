@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { CalendarRangeIcon, ChartNoAxesColumnIcon } from "lucide-react";
+import { BotIcon, CalendarRangeIcon, ChartNoAxesColumnIcon, UserIcon, XIcon } from "lucide-react";
 import { MobileNavButton } from "@/components/app-shell";
-import { useOrg } from "@/components/org-provider";
+import { useOrg, useOrgEvents } from "@/components/org-provider";
+import { refreshAnalytics } from "@/app/actions/analytics";
+import type { AnalyticsView } from "@/lib/analytics-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -42,14 +44,54 @@ export function formatDuration(ms: number): string {
   if (h < 48) return `${h.toLocaleString("en", { maximumFractionDigits: 1 })} h`;
   return `${(h / 24).toLocaleString("en", { maximumFractionDigits: 1 })} d`;
 }
+/** Live refresh (VEC-135): wait this long after the first task/comment event so a burst lands in one refresh... */
+const LIVE_SETTLE_MS = 1_500;
+/** ...and refresh at most once per this interval while events keep coming. */
+const LIVE_INTERVAL_MS = 10_000;
+
 const signed = (n: number) => (n > 0 ? `+${formatNumber(n)}` : n < 0 ? `−${formatNumber(-n)}` : "0");
 
 /** Analytics screen (VEC-134): period controls in the URL, KPI row, charts and tables over one AnalyticsReport. */
-export function AnalyticsScreen({ report, view, note }: { report: AnalyticsReport; view: AnalyticsParams; note: string | null }) {
+export function AnalyticsScreen(props: AnalyticsView) {
   const router = useRouter();
   const pathname = usePathname();
+  const { org, memberById } = useOrg();
   const [pending, start] = useTransition();
+
+  // Live refresh (VEC-135): task and comment events on the org channel recompute the report for the current
+  // URL through an admin-only server action, throttled, so only this screen re-renders (no route refresh).
+  // A live result is used while it belongs to the current URL and is newer than the server render.
+  const search = analyticsSearch(props.view);
+  const [live, setLive] = useState<{ search: string; data: AnalyticsView } | null>(null);
+  const { report, view, note } = live && live.search === search && live.data.report.generatedAt > props.report.generatedAt ? live.data : props;
+  const searchRef = useRef(search);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastRun = useRef(0);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  useOrgEvents((e) => {
+    if (e.type !== "task.upsert" && e.type !== "task.delete" && e.type !== "feed.add") return;
+    if (timer.current) return; // a refresh is already scheduled and will include this event
+    const wait = Math.max(LIVE_SETTLE_MS, lastRun.current + LIVE_INTERVAL_MS - Date.now());
+    timer.current = setTimeout(async () => {
+      timer.current = null;
+      lastRun.current = Date.now();
+      const s = searchRef.current;
+      const res = await refreshAnalytics(org.slug, s);
+      if (res.ok && res.data) setLive({ search: s, data: res.data });
+    }, wait);
+  });
+
   const tz = report.period.tz;
+  const who = report.period.contributor;
+  const whoName = who ? (memberById.get(who.id)?.name ?? who.name) : null;
 
   // Ranges are cut in the viewer's timezone: hand the browser's zone to the server once, then re-render.
   useEffect(() => {
@@ -80,7 +122,7 @@ export function AnalyticsScreen({ report, view, note }: { report: AnalyticsRepor
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto" data-analytics-scroll>
         <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-4 pt-4 pb-16 sm:px-7">
-          <Controls view={view} report={report} go={go} />
+          <Controls view={view} report={report} go={go} whoName={whoName} />
           <div className="-mt-1 flex flex-col gap-0.5 text-[12.5px]" aria-live="polite">
             <p>
               <span className="text-muted-foreground">Showing </span>
@@ -90,22 +132,39 @@ export function AnalyticsScreen({ report, view, note }: { report: AnalyticsRepor
               <span className="text-muted-foreground">
                 , by {UNIT_WORDS[g]}
                 {report.period.projectId ? ` in ${report.projects[0]?.project.name ?? view.project}` : ", all projects"}
+                {whoName ? ` for ${whoName}` : ""}
               </span>
-              {pending ? <span className="ml-2 text-faint">Updating…</span> : null}
+              {pending ? (
+                <span className="ml-2 text-faint">Updating…</span>
+              ) : (
+                <span className="ml-2 text-faint" data-analytics-updated={report.generatedAt} title="Refreshes on its own as tasks and comments change">
+                  · Live, updated {formatClock(report.generatedAt, tz)}
+                </span>
+              )}
             </p>
+            {whoName ? (
+              <p className="text-faint">
+                Tasks {whoName} opened and closed, their comments and interactions. Backlog, open-task age and tasks right now count tasks assigned to {whoName}.
+              </p>
+            ) : null}
             {view.compare ? <p className="text-faint">Compared with {prevText}</p> : null}
             {note ? <p className="text-destructive">{note}</p> : null}
           </div>
-          <Report report={report} compare={view.compare} loading={pending} rangeText={rangeText} go={go} />
+          <Report report={report} compare={view.compare} loading={pending} rangeText={rangeText} go={go} filtered={!!who} />
         </div>
       </div>
     </div>
   );
 }
 
+/** "14:02:31" in `tz`, for the live-update stamp. */
+function formatClock(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(new Date(iso));
+}
+
 /* ---------------- controls ---------------- */
 
-function Controls({ view, report, go }: { view: AnalyticsParams; report: AnalyticsReport; go: (p: Partial<AnalyticsParams>) => void }) {
+function Controls({ view, report, go, whoName }: { view: AnalyticsParams; report: AnalyticsReport; go: (p: Partial<AnalyticsParams>) => void; whoName: string | null }) {
   const { projects } = useOrg();
   const tz = report.period.tz;
   const from = new Date(report.period.from);
@@ -156,6 +215,20 @@ function Controls({ view, report, go }: { view: AnalyticsParams; report: Analyti
         <Switch checked={view.compare} onCheckedChange={(c) => go({ compare: c })} aria-label="Compare with the previous period" />
         Compare with previous period
       </label>
+      {whoName ? (
+        <button
+          type="button"
+          onClick={() => go({ person: null, bot: null })}
+          data-analytics-contributor={report.period.contributor?.id}
+          className="flex h-[32px] items-center gap-1.5 rounded-[8px] border border-border bg-chip px-2.5 text-[13px] outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50"
+          aria-label={`Showing ${whoName} only. Show everyone`}
+          title="Show everyone"
+        >
+          {report.period.contributor?.kind === "bot" ? <BotIcon className="size-3.5 text-muted-foreground" /> : <UserIcon className="size-3.5 text-muted-foreground" />}
+          <span className="max-w-[180px] truncate font-medium">{whoName}</span>
+          <XIcon className="size-3.5 text-faint" />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -248,12 +321,15 @@ function Report({
   loading,
   rangeText,
   go,
+  filtered,
 }: {
   report: AnalyticsReport;
   compare: boolean;
   loading: boolean;
   rangeText: string;
   go: (p: Partial<AnalyticsParams>) => void;
+  /** Limited to one person or bot. */
+  filtered: boolean;
 }) {
   const { tickets, messages, interactions, breakdown } = report;
   const g = report.period.granularity;
@@ -318,7 +394,8 @@ function Report({
           <ChartNoAxesColumnIcon className="mb-3 size-8 stroke-1 text-faint/70" />
           <h2 className="text-[15px] font-semibold">No activity in this period</h2>
           <p className="mt-1 max-w-md text-[13px] text-muted-foreground">
-            Nothing was opened, closed, commented on or changed from {rangeText}. Try a longer period{report.period.projectId ? " or all projects" : ""}.
+            Nothing was opened, closed, commented on or changed from {rangeText}. Try a longer period{report.period.projectId ? " or all projects" : ""}
+            {filtered ? " or everyone" : ""}.
           </p>
           <div className="mt-4 flex gap-2">
             <Button variant="outline" size="sm" onClick={() => go({ range: "30d", from: null, to: null, g: null })}>
@@ -330,6 +407,11 @@ function Report({
             {report.period.projectId ? (
               <Button variant="outline" size="sm" onClick={() => go({ project: null })}>
                 All projects
+              </Button>
+            ) : null}
+            {filtered ? (
+              <Button variant="outline" size="sm" onClick={() => go({ person: null, bot: null })}>
+                Everyone
               </Button>
             ) : null}
           </div>
@@ -421,8 +503,9 @@ function Report({
           </section>
 
           <section aria-label="Contributors" className="grid gap-3 lg:grid-cols-2">
-            <Contributors title="Top people" rows={report.contributors.people} rangeText={rangeText} loading={loading} />
-            <Contributors title="Top bots" rows={report.contributors.bots} rangeText={rangeText} loading={loading} />
+            {/* Filtered to one contributor: only their own table (the other would always be empty). */}
+            {report.period.contributor?.kind !== "bot" ? <Contributors title="Top people" rows={report.contributors.people} rangeText={rangeText} loading={loading} /> : null}
+            {report.period.contributor?.kind !== "user" ? <Contributors title="Top bots" rows={report.contributors.bots} rangeText={rangeText} loading={loading} /> : null}
           </section>
         </>
       )}
