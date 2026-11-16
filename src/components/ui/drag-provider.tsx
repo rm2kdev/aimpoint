@@ -102,6 +102,12 @@ const AUTOSCROLL_MAX = 14
 const GHOST_POINTER_X = 12
 /** The floating preview is never wider than this. */
 const GHOST_MAX_WIDTH = 420
+/** Below this viewport width (phones) the card is kept fully on screen instead of hanging right of the pointer (VEC-112). */
+const GHOST_NARROW_VIEWPORT = 640
+/** On narrow viewports the card keeps at least this far from the viewport's edges. */
+const GHOST_EDGE_MARGIN = 8
+/** On narrow touch viewports the card floats this far above the finger, so the finger doesn't cover it. */
+const GHOST_FINGER_GAP = 24
 
 /** Nearest ancestor that scrolls vertically (the element itself counts), or null. */
 function scrollParent(el: HTMLElement | null): HTMLElement | null {
@@ -764,6 +770,11 @@ export function createDragStore() {
     let moveRaf = 0
     let ghost: HTMLElement | null = null
     let offset = { x: 0, y: 0 }
+    let rowWidth = 0
+    // Narrow viewport (VEC-112): the card is clamped inside the viewport, and on touch hangs above the finger.
+    let narrow = false
+    let ghostW = 0
+    let ghostH = 0
     let removeShield: (() => void) | null = null
 
     // A floating copy of the row that follows the pointer for the whole drag (VEC-95): in its own list,
@@ -786,10 +797,12 @@ export function createDragStore() {
       g.setAttribute("data-drag-ghost", "")
       g.className =
         "pointer-events-none fixed top-0 left-0 z-[100] list-none rounded-lg bg-popover opacity-95 shadow-lg ring-1 ring-border"
-      g.style.width = `${Math.min(r.width, GHOST_MAX_WIDTH)}px`
+      rowWidth = r.width
+      ghostH = r.height
+      fitGhost(g)
       // Its own compositor layer from the start, so following the pointer is a composite, never a repaint.
       g.style.willChange = "transform"
-      g.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
+      g.style.transform = ghostTransform()
       document.body.appendChild(g)
       // Promote it to the top layer where supported, so nothing on the page can paint over it (VEC-76):
       // a z-index alone loses to the sticky status headings where the engine composites them separately
@@ -811,9 +824,31 @@ export function createDragStore() {
       ghost = g
     }
 
+    // Size the card for the current viewport. On desktop it's the row's width capped at GHOST_MAX_WIDTH,
+    // hanging right of the pointer (unchanged). On a phone the row is about as wide as the screen, so a
+    // card hanging right of a finger mid-row ran half off screen (VEC-112): cap it to the viewport instead.
+    const fitGhost = (g: HTMLElement) => {
+      const vw = document.documentElement.clientWidth || window.innerWidth
+      narrow = vw < GHOST_NARROW_VIEWPORT
+      ghostW = Math.min(rowWidth, GHOST_MAX_WIDTH, narrow ? Math.max(vw - 2 * GHOST_EDGE_MARGIN, 0) : Infinity)
+      g.style.width = `${ghostW}px`
+    }
+
+    const ghostTransform = () => {
+      let x = lastX - offset.x
+      let y = lastY - offset.y
+      if (narrow) {
+        const vw = document.documentElement.clientWidth || window.innerWidth
+        x = Math.max(GHOST_EDGE_MARGIN, Math.min(x, vw - ghostW - GHOST_EDGE_MARGIN))
+        // A finger sits on the card's text otherwise; float it above, unless that runs off the top.
+        if (touch) y = Math.max(GHOST_EDGE_MARGIN, lastY - ghostH - GHOST_FINGER_GAP)
+      }
+      return `translate3d(${x}px, ${y}px, 0)`
+    }
+
     const placeGhost = () => {
       if (!ghost) return
-      ghost.style.transform = `translate3d(${lastX - offset.x}px, ${lastY - offset.y}px, 0)`
+      ghost.style.transform = ghostTransform()
     }
 
     const update = () => {
@@ -851,6 +886,7 @@ export function createDragStore() {
       update()
     }
     const onResize = () => {
+      if (ghost) fitGhost(ghost)
       invalidate()
       scrollers.clear()
       scheduleUpdate()
