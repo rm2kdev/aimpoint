@@ -193,8 +193,10 @@ export function LazyPicker<V extends string>({
 }
 
 
-export function useStatusOptions(): Option<string>[] {
-  const { statuses } = useOrgBase();
+/** Status picker options; with `projectId`, only that project's statuses (a task only takes its own project's, VEC-115). */
+export function useStatusOptions(projectId?: string): Option<string>[] {
+  const { statuses: all } = useOrgBase();
+  const statuses = projectId ? all.filter((s) => s.projectId === projectId) : all;
   return statuses.map((s) => ({ value: s.id, label: s.name, icon: <StatusRing status={s} statuses={statuses} size={15} /> }));
 }
 

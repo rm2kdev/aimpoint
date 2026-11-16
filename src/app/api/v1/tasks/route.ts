@@ -42,7 +42,7 @@ export const POST = botRoute(async (req, ctx) => {
     title: String(b.title ?? ""),
     projectId: project._id.toHexString(),
     type: parseType(b.type) ?? "issue",
-    statusId: await resolveStatus(ctx.org._id, b.status),
+    statusId: await resolveStatus(ctx.org._id, b.status, project._id),
     assigneeId: (await resolveAssignee(ctx, b.assignee)) ?? null,
     priority: parsePriority(b.priority),
     description: toDescriptionHtml(b.description),

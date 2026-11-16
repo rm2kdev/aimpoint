@@ -3,6 +3,7 @@ import { ObjectId, type Filter } from "mongodb";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
+import { resolveProjectStatus } from "@/lib/statuses";
 import { toolsForBot } from "@/lib/bots";
 import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
@@ -109,7 +110,12 @@ async function resolveProject(ctx: McpCtx, ref: string) {
   return p;
 }
 
-async function resolveStatus(ctx: McpCtx, ref: string, statuses?: StatusDoc[]) {
+/**
+ * A status by name or id. With `projectId` (every write) it resolves within that project's own statuses
+ * (VEC-115: a task only takes its own project's statuses). Without it (list filters) it searches the org.
+ */
+async function resolveStatus(ctx: McpCtx, ref: string, projectId?: ObjectId, statuses?: StatusDoc[]) {
+  if (projectId) return resolveProjectStatus(ctx.org._id, projectId, ref);
   statuses ??= await (await cols()).statuses.find({ orgId: ctx.org._id }).sort({ order: 1 }).toArray();
   const s = ref.trim().toLowerCase();
   const st = statuses.find((x) => x._id.toHexString() === s) ?? statuses.find((x) => x.name.toLowerCase() === s);
@@ -510,7 +516,7 @@ const TOOLS: Record<string, ToolImpl> = {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
       const status = str(args, "status");
       const comment = str(args, "comment");
-      const moved = status ? await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status))._id.toHexString() }) : null;
+      const moved = status ? await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status, task.projectId))._id.toHexString() }) : null;
       if (comment) await addCommentAs(ctx.actor, task._id, comment);
       const c = await cols();
       const now = new Date();
@@ -671,7 +677,7 @@ const TOOLS: Record<string, ToolImpl> = {
     inputSchema: { type: "object", properties: { task: TASK_ARG, status: { type: "string", description: 'Status name, e.g. "In Progress".' } }, required: ["task", "status"], additionalProperties: false },
     run: async (args, ctx) => {
       const { task } = await findTask(ctx, str(args, "task", true)!);
-      const st = await resolveStatus(ctx, str(args, "status", true)!);
+      const st = await resolveStatus(ctx, str(args, "status", true)!, task.projectId);
       const t = await updateTaskAs(ctx.actor, task._id, { statusId: st._id.toHexString() });
       return { content: [text(`${t.key} is now ${st.name}.${blockersNote(assignedBlockersOf(t))}`)] };
     },
@@ -720,7 +726,8 @@ const TOOLS: Record<string, ToolImpl> = {
     },
     run: async (args, ctx) => {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
-      const status = str(args, "status") ? (await resolveStatus(ctx, str(args, "status")!))._id.toHexString() : undefined;
+      const destProject = str(args, "project") ? (await resolveProject(ctx, str(args, "project")!))._id : undefined;
+      const status = str(args, "status") ? (await resolveStatus(ctx, str(args, "status")!, destProject ?? task.projectId))._id.toHexString() : undefined;
       if (str(args, "before") || str(args, "after")) {
         const extra = Object.keys(args).filter((k) => args[k] !== undefined && !["task", "before", "after", "status", "project"].includes(k));
         if (extra.length) throw new ToolInputError(`before/after can only be combined with status and project (got ${extra.join(", ")}).`);
@@ -733,7 +740,7 @@ const TOOLS: Record<string, ToolImpl> = {
           beforeKey: await keyOf(str(args, "before")),
           afterKey: await keyOf(str(args, "after")),
           status,
-          project: str(args, "project") ? (await resolveProject(ctx, str(args, "project")!))._id.toHexString() : undefined,
+          project: destProject?.toHexString(),
         });
         return { content: [text(`Moved ${t.key}.`), json({ key: t.key, rank: t.rank, url: taskUrl(ctx.origin, ctx.org, t.key) })] };
       }
@@ -744,7 +751,7 @@ const TOOLS: Record<string, ToolImpl> = {
         type: parseType(args.type),
         priority: parsePriority(args.priority),
         dueDate: args.due_date === undefined ? undefined : args.due_date === null || args.due_date === "" ? null : String(args.due_date),
-        projectId: str(args, "project") ? (await resolveProject(ctx, str(args, "project")!))._id.toHexString() : undefined,
+        projectId: destProject?.toHexString(),
         archived: typeof args.archived === "boolean" ? args.archived : undefined,
         dependsOn: args.depends_on === undefined ? undefined : await resolveTaskIds(ctx, args.depends_on, "depends_on"),
       };
@@ -786,7 +793,7 @@ const TOOLS: Record<string, ToolImpl> = {
         title: str(args, "title", true)!,
         projectId: project._id.toHexString(),
         type: parseType(args.type) ?? "issue",
-        statusId: status ? (await resolveStatus(ctx, status))._id.toHexString() : undefined,
+        statusId: status ? (await resolveStatus(ctx, status, project._id))._id.toHexString() : undefined,
         assigneeId: assignee ? resolvePerson(await loadDirectory(ctx.org._id), ctx.bot._id, assignee) : null,
         priority: parsePriority(args.priority),
         description: args.description === undefined ? undefined : markdownToHtml(String(args.description)),

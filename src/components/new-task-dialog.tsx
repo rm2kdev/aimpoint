@@ -20,7 +20,7 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { CalendarIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
-import type { Priority, Task, TaskRef, TaskType } from "@/lib/types";
+import { matchStatus, type Priority, type Task, type TaskRef, type TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
 
 export interface NewTaskDefaults {
@@ -76,17 +76,21 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaults]);
 
-  const statusOptions = useStatusOptions();
+  const statusOptions = useStatusOptions(projectId);
   const assigneeOptions = useAssigneeOptions();
   const projectOptions = useProjectOptions();
   const project = projectById.get(projectId);
-  const status = statusById.get(statusId);
+  // Statuses are per project (VEC-115): a status picked for (or defaulted from) another project maps to this one's counterpart.
+  const projectStatuses = statuses.filter((s) => s.projectId === projectId);
+  const picked = statusById.get(statusId);
+  const status =
+    picked?.projectId === projectId ? picked : ((picked && matchStatus(projectStatuses, picked)) ?? projectStatuses.find((s) => s.category === "unstarted") ?? projectStatuses[0]);
   const assignee = assigneeId ? memberById.get(assigneeId) : undefined;
 
   const submit = () => {
     if (!title.trim()) return setError("Give the task a title.");
     start(async () => {
-      const r = await createTask(org.slug, { title, description, projectId, statusId, assigneeId, priority, type, dueDate, dependsOn: deps.map((d) => d.id) });
+      const r = await createTask(org.slug, { title, description, projectId, statusId: status?.id, assigneeId, priority, type, dueDate, dependsOn: deps.map((d) => d.id) });
       if (!r.ok) return setError(r.error);
       const t = r.data!;
       emitLocalTask(t);

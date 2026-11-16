@@ -220,12 +220,15 @@ export function StatusesSettings() {
   const { pending, run } = useAction();
   const [adding, setAdding] = useState(false);
 
+  // Statuses are per project (VEC-115): reorder within the moved status's project. VEC-117 brings the per-project editor.
   const move = (i: number, d: -1 | 1) => {
-    const ids = statuses.map((s) => s.id);
-    const j = i + d;
+    const moved = statuses[i];
+    const ids = statuses.filter((s) => s.projectId === moved.projectId).map((s) => s.id);
+    const k = ids.indexOf(moved.id);
+    const j = k + d;
     if (j < 0 || j >= ids.length) return;
-    [ids[i], ids[j]] = [ids[j], ids[i]];
-    run(() => reorderStatuses(org.slug, ids));
+    [ids[k], ids[j]] = [ids[j], ids[k]];
+    run(() => reorderStatuses(org.slug, moved.projectId, ids));
   };
 
   return (
@@ -300,7 +303,7 @@ function StatusEditor({
   const dirty = name !== status.name || category !== status.category || color !== status.color;
   const save = () =>
     run(async () => {
-      const r = await saveStatus(org.slug, { id: status.id || undefined, name, color, category });
+      const r = await saveStatus(org.slug, { id: status.id || undefined, projectId: status.projectId, name, color, category });
       if (r.ok) onDone?.();
       return r;
     }, isNew ? "Status added" : "Status saved");
@@ -373,7 +376,7 @@ function StatusEditor({
             </SelectTrigger>
             <SelectContent>
               {statuses
-                .filter((s) => s.id !== status.id)
+                .filter((s) => s.id !== status.id && s.projectId === status.projectId)
                 .map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
@@ -381,7 +384,7 @@ function StatusEditor({
                 ))}
             </SelectContent>
           </Select>
-          <Button size="sm" variant="destructive" disabled={!moveTo} onClick={() => run(() => deleteStatus(org.slug, status.id, moveTo), "Status deleted")}>
+          <Button size="sm" variant="destructive" disabled={!moveTo} onClick={() => run(() => deleteStatus(org.slug, status.projectId, status.id, moveTo), "Status deleted")}>
             Delete {status.name}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setDeleting(false)}>

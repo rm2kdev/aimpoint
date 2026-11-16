@@ -216,11 +216,18 @@ export async function detachDeleted(orgId: ObjectId, by: By, ids: ObjectId[]) {
   if (dependents.length) await reevaluate(orgId, by, dependents, { drop: ids, finished: ids, deleted: true });
 }
 
-/** Status stages changed (a status now counts as closed, or stopped counting): re-check every dependent task in the org. */
-export async function recomputeOrg(orgId: ObjectId, by: By) {
+/**
+ * Statuses changed stage (one now counts as closed, or stopped counting) or tasks were moved between statuses by an
+ * admin: re-check only the tasks that depend on tasks in those statuses (VEC-115: one project's statuses, so the
+ * rest of the org is untouched).
+ */
+export async function recomputeForStatuses(orgId: ObjectId, by: By, statusIds: ObjectId[]) {
+  if (!statusIds.length) return;
   const c = await cols();
-  const tasks = await c.tasks.find({ orgId, "dependsOn.0": { $exists: true } }).toArray();
-  if (tasks.length) await reevaluate(orgId, by, tasks, { finished: [...new Map(tasks.flatMap((t) => t.dependsOn ?? []).map((id) => [hex(id), id])).values()] });
+  const affected = (await c.tasks.find({ orgId, statusId: { $in: statusIds } }, { projection: { _id: 1 } }).toArray()).map((t) => t._id);
+  if (!affected.length) return;
+  const dependents = await c.tasks.find({ orgId, dependsOn: { $in: affected } }).toArray();
+  if (dependents.length) await reevaluate(orgId, by, dependents, { finished: affected });
 }
 
 /**

@@ -168,7 +168,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     });
   };
 
-  const statusOptions = useStatusOptions();
+  const statusOptions = useStatusOptions(task?.projectId);
   const assigneeOptions = useAssigneeOptions();
   const projectOptions = useProjectOptions(task?.projectId);
   const { newTask } = useShell();

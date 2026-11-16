@@ -58,6 +58,46 @@ export async function statusFor(orgId: ObjectId, projectId: ObjectId, ref: strin
   return other ? matchStatus(list, other) : null;
 }
 
+/** "Todo, In Progress, Done" for error messages. */
+const names = (list: StatusDoc[]) => list.map((s) => s.name).join(", ");
+
+/** The project key for messages ("VEC"). */
+async function projectLabel(orgId: ObjectId, projectId: ObjectId) {
+  const p = await (await cols()).projects.findOne({ _id: projectId, orgId }, { projection: { key: 1, name: 1 } });
+  return p ? p.key : "this project";
+}
+
+/**
+ * A status id that must belong to `projectId` (VEC-115): tasks only ever point at a status of their own project.
+ * An id of another project's status is refused with a UserError naming both projects, never silently mapped.
+ */
+export async function requireProjectStatus(orgId: ObjectId, projectId: ObjectId, statusId: string): Promise<StatusDoc> {
+  const list = await loadStatuses(orgId, projectId);
+  const hit = ObjectId.isValid(statusId) ? list.find((s) => hex(s._id) === statusId) : undefined;
+  if (hit) return hit;
+  const c = await cols();
+  const other = ObjectId.isValid(statusId) ? await c.statuses.findOne({ _id: new ObjectId(statusId), orgId }) : null;
+  const here = await projectLabel(orgId, projectId);
+  if (other) {
+    const there = await projectLabel(orgId, other.projectId);
+    throw new UserError(`"${other.name}" is a status of ${there}, not ${here}. Pick one of ${here}'s statuses: ${names(list)}.`);
+  }
+  throw new UserError(`Unknown status. ${here}'s statuses are: ${names(list)}.`);
+}
+
+/**
+ * A status reference typed by a bot or API caller (name, stage or id), resolved within ONE project. Names and
+ * stages resolve to that project's own status; an id must already be one of its statuses (see requireProjectStatus).
+ */
+export async function resolveProjectStatus(orgId: ObjectId, projectId: ObjectId, ref: string): Promise<StatusDoc> {
+  const r = ref.trim();
+  if (ObjectId.isValid(r) && r.length === 24) return requireProjectStatus(orgId, projectId, r.toLowerCase());
+  const list = await loadStatuses(orgId, projectId);
+  const hit = pickStatus(list, r);
+  if (hit) return hit;
+  throw new UserError(`Unknown status "${r}". ${await projectLabel(orgId, projectId)}'s statuses are: ${names(list)}.`);
+}
+
 /** The project's status that corresponds to `statusId` (from any project of the org): used when a task changes project. */
 export async function statusInProject(orgId: ObjectId, projectId: ObjectId, statusId: ObjectId): Promise<StatusDoc | null> {
   return statusFor(orgId, projectId, hex(statusId));

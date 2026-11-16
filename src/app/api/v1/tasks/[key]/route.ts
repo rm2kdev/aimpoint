@@ -25,14 +25,16 @@ export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
   const found = await findTaskByKey(ctx.org._id, key);
   if (!found) throw new UserError(`Unknown task "${key}".`);
   const b = await readJson(req);
+  // Statuses resolve within the task's project, or the one it moves to (VEC-115).
+  const dest = b.project === undefined ? undefined : (await resolveProject(ctx.org._id, b.project))._id;
   if (b.before !== undefined || b.after !== undefined) {
     const extra = Object.keys(b).filter((k) => !MOVE_FIELDS.has(k));
     if (extra.length) throw new UserError(`\`before\` / \`after\` can only be combined with \`status\` and \`project\` (got ${extra.join(", ")}).`);
     const task = await moveTask(ctx.actor, key, {
       beforeKey: b.before == null ? null : String(b.before),
       afterKey: b.after == null ? null : String(b.after),
-      status: await resolveStatus(ctx.org._id, b.status),
-      project: b.project === undefined ? undefined : (await resolveProject(ctx.org._id, b.project))._id.toHexString(),
+      status: await resolveStatus(ctx.org._id, b.status, dest ?? found.task.projectId),
+      project: dest?.toHexString(),
     });
     return { task };
   }
@@ -40,10 +42,10 @@ export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
     title: b.title === undefined ? undefined : String(b.title),
     description: toDescriptionHtml(b.description),
     type: parseType(b.type),
-    statusId: await resolveStatus(ctx.org._id, b.status),
+    statusId: await resolveStatus(ctx.org._id, b.status, dest ?? found.task.projectId),
     assigneeId: await resolveAssignee(ctx, b.assignee),
     priority: parsePriority(b.priority),
-    projectId: b.project === undefined ? undefined : (await resolveProject(ctx.org._id, b.project))._id.toHexString(),
+    projectId: dest?.toHexString(),
     dueDate: b.dueDate === undefined ? undefined : (b.dueDate as string | null),
     archived: b.archived === undefined ? undefined : Boolean(b.archived),
     dependsOn: await resolveTaskRefs(ctx.org._id, b.dependsOn),

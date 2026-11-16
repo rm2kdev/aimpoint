@@ -4,6 +4,7 @@ import { authenticateBot, toolsForBot } from "@/lib/bots";
 import { cols } from "@/lib/db";
 import { findTaskByKey } from "@/lib/data";
 import { UserError } from "@/lib/result";
+import { resolveProjectStatus } from "@/lib/statuses";
 import type { Actor } from "@/lib/task-service";
 import { isTaskType, type BotDoc, type OrgDoc } from "@/lib/types";
 
@@ -64,9 +65,13 @@ export async function resolveProject(orgId: ObjectId, ref: unknown) {
   return p;
 }
 
-/** Status by name (case-insensitive) or id. */
-export async function resolveStatus(orgId: ObjectId, ref: unknown) {
+/**
+ * Status by name (case-insensitive) or id. With `projectId` (every write) it resolves within that project's own
+ * statuses (VEC-115); without it (list filters) it searches the org.
+ */
+export async function resolveStatus(orgId: ObjectId, ref: unknown, projectId?: ObjectId) {
   if (ref === undefined || ref === null || ref === "") return undefined;
+  if (projectId) return (await resolveProjectStatus(orgId, projectId, String(ref)))._id.toHexString();
   const c = await cols();
   const s = String(ref).trim();
   const statuses = await c.statuses.find({ orgId }).toArray();

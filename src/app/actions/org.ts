@@ -7,12 +7,12 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { cols } from "@/lib/db";
 import { PROJECT_COLORS } from "@/lib/data";
-import { deleteProjectStatuses, seedProjectStatuses } from "@/lib/statuses";
+import { assertRequiredStages, deleteProjectStatuses, loadStatuses, seedProjectStatuses } from "@/lib/statuses";
 import { requireOrg, requireUser } from "@/lib/session";
 import { guard, UserError, deriveKey, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
-import { detachDeleted, recomputeOrg } from "@/lib/dependencies";
-import { isClosedCategory, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory } from "@/lib/types";
+import { detachDeleted, recomputeForStatuses } from "@/lib/dependencies";
+import { isClosedCategory, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
 
@@ -217,9 +217,28 @@ function oidOrThrow(id: string) {
 
 const CATEGORIES: StatusCategory[] = ["backlog", "triage", "unstarted", "started", "done", "cancelled"];
 
+/**
+ * The project a status action works on (VEC-115: statuses belong to a project). Admin-only callers pass its id;
+ * returns the project and its statuses in workflow order.
+ */
+async function statusProject(orgId: ObjectId, projectId: string | undefined) {
+  if (!projectId || !ObjectId.isValid(projectId)) throw new UserError("Statuses belong to a project. Pick the project first.");
+  const c = await cols();
+  const project = await c.projects.findOne({ _id: new ObjectId(projectId), orgId }, { projection: { name: 1, key: 1 } });
+  if (!project) throw new UserError("That project no longer exists.");
+  return { project, statuses: await loadStatuses(orgId, project._id) };
+}
+
+/** A status id of `list` (one project's statuses), or a UserError. */
+function ownStatus(list: StatusDoc[], id: string, projectKey: string) {
+  const s = list.find((x) => x._id.toHexString() === id);
+  if (!s) throw new UserError(`That status isn't one of ${projectKey}'s statuses. Reload and try again.`);
+  return s;
+}
+
 export async function saveStatus(
   slug: string,
-  input: { id?: string; projectId?: string; name: string; color: string; category: StatusCategory },
+  input: { id?: string; projectId: string; name: string; color: string; category: StatusCategory },
 ): Promise<Result> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
@@ -227,52 +246,65 @@ export async function saveStatus(
     if (!name || name.length > 40) throw new UserError("Status names are 1-40 characters.");
     if (!/^#[0-9a-f]{6}$/i.test(input.color)) throw new UserError("Pick a colour.");
     if (!CATEGORIES.includes(input.category)) throw new UserError("Pick a stage.");
+    const { project, statuses } = await statusProject(org._id, input.projectId);
     const c = await cols();
-    if (input.id) {
-      const prev = await c.statuses.findOneAndUpdate({ _id: new ObjectId(input.id), orgId: org._id }, { $set: { name, color: input.color, category: input.category } });
-      // A status that starts or stops counting as closed (done or cancelled) releases or re-blocks the tasks that depend on its tasks.
-      if (prev && isClosedCategory(prev.category) !== isClosedCategory(input.category)) await recomputeOrg(org._id, { id: user._id, name: async () => user.name });
-    } else {
-      // Statuses belong to a project (VEC-114); the project-scoped editor arrives with VEC-115/117.
-      const projectId = input.projectId && ObjectId.isValid(input.projectId) ? new ObjectId(input.projectId) : null;
-      if (!projectId || !(await c.projects.findOne({ _id: projectId, orgId: org._id }, { projection: { _id: 1 } }))) {
-        throw new UserError("Statuses belong to a project now. Pick the project to add it to.");
-      }
-      const last = await c.statuses.find({ orgId: org._id, projectId }).sort({ order: -1 }).limit(1).next();
-      await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
+    // Bots and the API set statuses by name within the task's project, so names are unique per project.
+    if (statuses.some((s) => s.name.toLowerCase() === name.toLowerCase() && s._id.toHexString() !== input.id)) {
+      throw new UserError(`${project.key} already has a status called ${name}.`);
     }
-    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    const by = { id: user._id, name: async () => user.name };
+    if (input.id) {
+      const prev = ownStatus(statuses, input.id, project.key);
+      // A project always keeps one status per required stage (backlog, triage, not started, done, cancelled).
+      assertRequiredStages(statuses.map((s) => (s._id.equals(prev._id) ? { category: input.category } : s)), `${project.name} (${project.key})`);
+      await c.statuses.updateOne({ _id: prev._id, orgId: org._id, projectId: project._id }, { $set: { name, color: input.color, category: input.category } });
+      // Starting or stopping counting as closed (done or cancelled) releases or re-blocks the tasks that wait on this status's tasks.
+      if (isClosedCategory(prev.category) !== isClosedCategory(input.category)) await recomputeForStatuses(org._id, by, [prev._id]);
+    } else {
+      const last = statuses[statuses.length - 1];
+      await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId: project._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
+    }
+    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString(), projectId: project._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
   });
 }
 
-export async function reorderStatuses(slug: string, ids: string[]): Promise<Result> {
+/** Sets a project's workflow order: `ids` must be exactly that project's statuses. */
+export async function reorderStatuses(slug: string, projectId: string, ids: string[]): Promise<Result> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
+    const { project, statuses } = await statusProject(org._id, projectId);
+    const unique = new Set(ids);
+    if (unique.size !== ids.length || ids.length !== statuses.length || statuses.some((s) => !unique.has(s._id.toHexString()))) {
+      throw new UserError(`Send every one of ${project.key}'s statuses, once each. Reload and try again.`);
+    }
     const c = await cols();
     await c.statuses.bulkWrite(
-      ids.map((id, order) => ({ updateOne: { filter: { _id: new ObjectId(id), orgId: org._id }, update: { $set: { order } } } })),
+      ids.map((id, order) => ({ updateOne: { filter: { _id: new ObjectId(id), orgId: org._id, projectId: project._id }, update: { $set: { order } } } })),
     );
-    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString(), projectId: project._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
   });
 }
 
-export async function deleteStatus(slug: string, id: string, moveTo: string): Promise<Result> {
+/** Deletes a project's status, moving its tasks to `moveTo` (a status of the same project). */
+export async function deleteStatus(slug: string, projectId: string, id: string, moveTo: string): Promise<Result> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
     if (id === moveTo) throw new UserError("Pick a different status to move tasks to.");
+    const { project, statuses } = await statusProject(org._id, projectId);
+    const removed = ownStatus(statuses, id, project.key);
+    // Tasks keep pointing at a status of their own project.
+    const target = statuses.find((s) => s._id.toHexString() === moveTo);
+    if (!target) throw new UserError(`Pick one of ${project.key}'s statuses to move its tasks to.`);
+    assertRequiredStages(statuses.filter((s) => !s._id.equals(removed._id)), `${project.name} (${project.key})`);
     const c = await cols();
-    const target = await c.statuses.findOne({ _id: new ObjectId(moveTo), orgId: org._id });
-    if (!target) throw new UserError("Pick a status to move tasks to.");
-    const sid = new ObjectId(id);
-    const removed = await c.statuses.findOne({ _id: sid, orgId: org._id });
-    // Tasks keep pointing at a status of their own project (VEC-114).
-    if (removed && !removed.projectId?.equals(target.projectId)) throw new UserError("Pick a status of the same project to move tasks to.");
-    await c.tasks.updateMany({ orgId: org._id, statusId: sid }, { $set: { statusId: target._id, updatedAt: new Date() } });
-    await c.statuses.deleteOne({ _id: sid, orgId: org._id });
-    if (removed && isClosedCategory(removed.category) !== isClosedCategory(target.category)) await recomputeOrg(org._id, { id: user._id, name: async () => user.name });
-    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    await c.tasks.updateMany({ orgId: org._id, projectId: project._id, statusId: removed._id }, { $set: { statusId: target._id, updatedAt: new Date() } });
+    await c.statuses.deleteOne({ _id: removed._id, orgId: org._id, projectId: project._id });
+    if (isClosedCategory(removed.category) !== isClosedCategory(target.category)) {
+      await recomputeForStatuses(org._id, { id: user._id, name: async () => user.name }, [target._id]);
+    }
+    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString(), projectId: project._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
   });
 }

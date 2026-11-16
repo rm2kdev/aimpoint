@@ -776,7 +776,7 @@ const TaskRow = memo(function TaskRow({
   const onDragHint = dragHints ? (canEdit: boolean) => actions.dragHint(task, canEdit) : undefined;
   const { rowRef } = actions;
   const refCb = useCallback((el: HTMLDivElement | null) => rowRef(task.id, el), [rowRef, task.id]);
-  const statusOptions = useStatusOptions();
+  const statusOptions = useStatusOptions(task.projectId);
   const access = taskAccess(task, me.id, isAdmin);
   const canEdit = access === "full";
   const status = statusById.get(task.statusId);

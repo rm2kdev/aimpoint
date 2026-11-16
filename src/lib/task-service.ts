@@ -5,7 +5,7 @@ import { UserError } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { findTaskByKey, sanitizeDescription, toFeed, toTask, withWorkingBots } from "@/lib/data";
 import { rankBetween } from "@/lib/rank";
-import { statusFor, statusInProject } from "@/lib/statuses";
+import { loadStatuses, requireProjectStatus, statusFor, statusInProject } from "@/lib/statuses";
 import { publishWorking } from "@/lib/claims";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
@@ -51,8 +51,8 @@ export async function isTriaging(botId: ObjectId, taskId: ObjectId) {
  */
 async function assertCloseOut(actor: Actor, task: TaskDoc, patch: TaskPatch) {
   const blocked = (Object.keys(patch) as (keyof TaskPatch)[]).filter((k) => patch[k] !== undefined && !(CLOSE_OUT_FIELDS as readonly string[]).includes(k));
-  const c = await cols();
-  const closing = closeOutStatuses(await c.statuses.find({ orgId: actor.orgId }).toArray());
+  // The task's own project's closing statuses (VEC-115).
+  const closing = closeOutStatuses(await loadStatuses(actor.orgId, task.projectId));
   const names = closing.map((s) => s.name).join(", ") || "a done status";
   if (blocked.length) {
     throw new UserError(`You triaged this task, so you can comment on it and close it out (move it to ${names}) once nothing it depends on is open. Anything else needs its creator, its assignee or an admin.`);
@@ -297,9 +297,10 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     { returnDocument: "before" },
   );
   if (!project) throw new UserError(await missingProjectReason(projectId, actor.orgId, "Pick a project."));
-  // A status of the new task's own project (VEC-114): the given one (or its counterpart there), else the first not-started one.
+  // A status of the new task's own project (VEC-115): the given one must be one of them (another project's is
+  // refused), else the project's first not-started one.
   const status = input.statusId
-    ? await statusFor(actor.orgId, projectId, oid(input.statusId, "status").toHexString())
+    ? await requireProjectStatus(actor.orgId, projectId, oid(input.statusId, "status").toHexString())
     : ((await statusFor(actor.orgId, projectId, "unstarted")) ?? (await c.statuses.find({ orgId: actor.orgId, projectId }).sort({ order: 1 }).limit(1).next()));
   if (!status) throw new UserError("Pick a status.");
   let assigneeId: ObjectId | null = null;
@@ -419,11 +420,12 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   let doneChanged = false;
   let closed = false;
   let enteredTriage = false;
-  // Statuses belong to the task's project (VEC-114): resolve within the destination project when it moves too.
+  // Statuses belong to the task's project (VEC-115): the status must be one of the destination project's
+  // (the task's own unless it moves too). Another project's status is refused, never mapped. Its current status
+  // sent along with a project move means "keep it": mapped below like a move without a status.
   const destProjectId = patch.projectId && ObjectId.isValid(patch.projectId) ? new ObjectId(patch.projectId) : before.projectId;
-  const s = patch.statusId && patch.statusId !== before.statusId.toHexString() ? await statusFor(actor.orgId, destProjectId, oid(patch.statusId, "status").toHexString()) : null;
-  if (patch.statusId && patch.statusId !== before.statusId.toHexString() && !s) throw new UserError("Unknown status.");
-  // Another project's id can resolve to the status the task already has: nothing to change then.
+  const statusChanges = !!patch.statusId && patch.statusId !== before.statusId.toHexString();
+  const s = statusChanges ? await requireProjectStatus(actor.orgId, destProjectId, oid(patch.statusId!, "status").toHexString()) : null;
   if (s && !s._id.equals(before.statusId)) {
     set.statusId = s._id;
     acts.push({ kind: "status", from: before.statusId.toHexString(), to: s._id.toHexString() });

@@ -162,7 +162,7 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
   const access = taskAccess(task, me.id, isAdmin);
   const canWork = access !== "comment";
   const creator = memberById.get(task.createdBy);
-  const statusOptions = useStatusOptions();
+  const statusOptions = useStatusOptions(task.projectId);
   const assigneeOptions = useAssigneeOptions();
 
   const copy = (text: string, what: string) => {
