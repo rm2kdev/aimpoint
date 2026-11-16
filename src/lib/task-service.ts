@@ -335,12 +335,14 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   await c.activity.insertOne({ _id: new ObjectId(), orgId: actor.orgId, taskId: doc._id, actorId: actor.id, kind: "created", createdAt: now });
   const task = toTask(doc, project.key);
   await publish(actor.orgId.toHexString(), { type: "task.upsert", actorId: actor.id.toHexString(), task });
-  // The tasks it depends on just gained a waiter: their derived Stalled / needs-owner state may have changed.
-  if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
   await announceAssignment(actor, doc, task.key);
   if (status.category === "triage") await enterTriage(actor, doc, task.key);
   // A bot creating a task for itself that waits on unowned work takes that work too (VEC-107).
   if (waitingOn.length) ownedBlockers.set(task, await ownUnownedBlockers(actor, doc._id));
+  // The tasks it depends on just gained a waiter: their derived Stalled / needs-owner state may have changed.
+  // Only after taking ownership above, or this broadcast shows a blocker the bot is about to own as unassigned
+  // Stalled and syncStalledNotice sends a false "nobody is assigned" notice (VEC-111).
+  if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
   return task;
 }
 
@@ -523,13 +525,15 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   const prevDeps = before.dependsOn ?? [];
   const addedDeps = set.dependsOn ? set.dependsOn.filter((id) => !prevDeps.some((p) => p.equals(id))) : [];
   const upstream = doneChanged || set.archivedAt !== undefined ? [...(after.dependsOn ?? []), ...removedDeps] : [...addedDeps, ...removedDeps];
-  if (upstream.length) await publishWorking(actor.orgId, actor.id, upstream);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   // A bot leaving its own task parked behind open dependencies (moved to an open status, or deps added) takes
   // the ones nobody owns, so someone is woken for them (VEC-107).
   if (actor.isBot && after.waitingOn?.length && ((set.statusId && !closed) || addedDeps.length)) {
     ownedBlockers.set(task, await ownUnownedBlockers(actor, taskId));
   }
+  // Republished after the ownership step, so no broadcast shows an auto-owned blocker as unassigned Stalled
+  // (that would send a false stalled notice, VEC-111).
+  if (upstream.length) await publishWorking(actor.orgId, actor.id, upstream);
   return task;
 }
 
