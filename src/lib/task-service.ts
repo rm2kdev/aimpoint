@@ -15,6 +15,7 @@ import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, open
 import { planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
 import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
 import { requireFormDestination } from "@/lib/project-forms";
+import { stripMarkdownImages } from "@/lib/form-rich-core";
 import { assertNotStopped } from "@/lib/stop-guard";
 
 /**
@@ -459,11 +460,16 @@ export const FORM_SUBMITTER_EMAIL_MAX = 200;
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** Plain text -> editor HTML: blank lines split paragraphs, single newlines become <br>. Nothing the submitter typed is markup. */
+/**
+ * Plain text -> editor HTML: blank lines split paragraphs, single newlines become <br>. Nothing the submitter typed is
+ * markup, and markdown image syntax is dropped (VEC-243, same as rich forms).
+ */
 function plainToHtml(text: string) {
   return text
     .split(/\n{2,}/)
     .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => stripMarkdownImages(p).trim())
     .filter(Boolean)
     .map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
     .join("");

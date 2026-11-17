@@ -8,6 +8,7 @@ import { botTaskFlow } from "@/lib/flow-bot-view";
 import { botNewTaskViews } from "@/lib/project-defaults";
 import { taskUrl as orgTaskUrl } from "@/lib/paths";
 import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
+import { decodeEntities as decode, htmlToMarkdown, markdownToHtml } from "@/lib/markdown-core";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 
 /* ---------------- people directory ---------------- */
@@ -80,114 +81,8 @@ export class ToolInputError extends Error {}
 
 /* ---------------- HTML <-> Markdown ---------------- */
 
-const decode = (s: string) =>
-  s
-    .replace(/&nbsp;/g, " ")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&#x27;/g, "'")
-    .replace(/&amp;/g, "&");
-
-const attr = (tag: string, name: string) => new RegExp(`\\s${name}="([^"]*)"`, "i").exec(tag)?.[1] ?? "";
-
-/** Sanitised description HTML -> readable Markdown for agents. */
-export function htmlToMarkdown(html: string): string {
-  if (!html.trim()) return "";
-  let s = html;
-  s = s.replace(/<pre[^>]*>\s*<code([^>]*)>([\s\S]*?)<\/code>\s*<\/pre>/gi, (_, a: string, code: string) => {
-    const lang = /language-([\w-]+)/.exec(a)?.[1] ?? "";
-    return `\n\n\`\`\`${lang}\n${decode(code.replace(/<[^>]+>/g, "")).replace(/\n$/, "")}\n\`\`\`\n\n`;
-  });
-  s = s.replace(/<img\b[^>]*>/gi, (tag) => `![${decode(attr(tag, "alt")) || "image"}](${decode(attr(tag, "src"))})`);
-  s = s.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (_, a: string, text: string) => `[${text}](${decode(attr(` ${a}`, "href"))})`);
-  s = s.replace(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n: string, t: string) => `\n\n${"#".repeat(Number(n))} ${t}\n\n`);
-  s = s.replace(/<(strong|b)>([\s\S]*?)<\/\1>/gi, "**$2**").replace(/<(em|i)>([\s\S]*?)<\/\1>/gi, "*$2*").replace(/<s>([\s\S]*?)<\/s>/gi, "~~$1~~");
-  s = s.replace(/<u>([\s\S]*?)<\/u>/gi, "$1").replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, "`$1`");
-  s = s.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, inner: string) => {
-    let n = 0;
-    return `\n\n${inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m: string, t: string) => `${++n}. ${t.replace(/<\/?p>/gi, "").trim()}\n`)}\n`;
-  });
-  s = s.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_, inner: string) => `\n\n${inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_m: string, t: string) => `- ${t.replace(/<\/?p>/gi, "").trim()}\n`)}\n`);
-  s = s.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (_, t: string) => {
-    const inner = t.replace(/<\/p>\s*<p[^>]*>/gi, "\n").replace(/<\/?p[^>]*>/gi, "").trim();
-    return `\n\n${inner.split("\n").map((l) => `> ${l}`).join("\n")}\n\n`;
-  });
-  s = s.replace(/<hr\s*\/?>/gi, "\n\n---\n\n").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n").replace(/<p[^>]*>/gi, "");
-  s = decode(s.replace(/<[^>]+>/g, ""));
-  return s.replace(/\n{3,}/g, "\n\n").trim();
-}
-
-const escHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-function inlineMd(t: string): string {
-  const codes: string[] = [];
-  let s = escHtml(t).replace(/`([^`]+)`/g, (_, c: string) => `\u0000${codes.push(c) - 1}\u0000`);
-  s = s
-    .replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+|\/api\/uploads\/[^\s)]+)\)/g, '<img src="$2" alt="$1">')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, '<a href="$2">$1</a>')
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, "$1<em>$2</em>")
-    .replace(/(^|[^\w])_([^_\n]+)_(?!\w)/g, "$1<em>$2</em>")
-    .replace(/~~([^~]+)~~/g, "<s>$1</s>");
-  return s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => `<code>${codes[Number(i)]}</code>`);
-}
-
-/** Agent-written Markdown (or plain text) -> description HTML. HTML input passes straight to the sanitiser. */
-export function markdownToHtml(src: string): string {
-  if (/<(p|h[1-3]|ul|ol|li|pre|img|a|strong|em|br|blockquote)\b[^>]*>/i.test(src)) return src;
-  const lines = src.replace(/\r\n?/g, "\n").split("\n");
-  const out: string[] = [];
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    const fence = /^```\s*([\w-]*)\s*$/.exec(line);
-    if (fence) {
-      const body: string[] = [];
-      i++;
-      while (i < lines.length && !/^```\s*$/.test(lines[i])) body.push(lines[i++]);
-      i++;
-      out.push(`<pre><code${fence[1] ? ` class="language-${fence[1]}"` : ""}>${escHtml(body.join("\n"))}</code></pre>`);
-      continue;
-    }
-    if (!line.trim()) {
-      i++;
-      continue;
-    }
-    const h = /^(#{1,3})\s+(.*)$/.exec(line);
-    if (h) {
-      out.push(`<h${h[1].length}>${inlineMd(h[2])}</h${h[1].length}>`);
-      i++;
-      continue;
-    }
-    if (/^(-{3,}|\*{3,})\s*$/.test(line)) {
-      out.push("<hr>");
-      i++;
-      continue;
-    }
-    const list = /^\s*([-*+]|\d+[.)])\s+/.exec(line);
-    if (list) {
-      const ordered = /\d/.test(list[1]);
-      const items: string[] = [];
-      while (i < lines.length && /^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) && /\d/.test(/^\s*([-*+]|\d+[.)])/.exec(lines[i])![1]) === ordered) {
-        items.push(`<li><p>${inlineMd(lines[i].replace(/^\s*([-*+]|\d+[.)])\s+/, ""))}</p></li>`);
-        i++;
-      }
-      out.push(ordered ? `<ol>${items.join("")}</ol>` : `<ul>${items.join("")}</ul>`);
-      continue;
-    }
-    if (/^>\s?/.test(line)) {
-      const q: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i])) q.push(lines[i++].replace(/^>\s?/, ""));
-      out.push(`<blockquote><p>${q.map(inlineMd).join("<br>")}</p></blockquote>`);
-      continue;
-    }
-    const para: string[] = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,3}\s|```|>\s?|\s*([-*+]|\d+[.)])\s+)/.test(lines[i])) para.push(lines[i++]);
-    out.push(`<p>${para.map(inlineMd).join("<br>")}</p>`);
-  }
-  return out.join("");
-}
+// Pure helpers in lib/markdown-core.ts (unit-tested there); text is escaped so typed markup stays text (VEC-243).
+export { htmlToMarkdown, markdownToHtml };
 
 /* ---------------- images ---------------- */
 

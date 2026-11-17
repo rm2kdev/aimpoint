@@ -27,10 +27,19 @@ export interface PublicSanitizeOptions {
   imageAllowed?: (src: string) => boolean;
 }
 
+/**
+ * Markdown image syntax typed into a public form (`![x](https://...)`, `![image]()`) is removed (VEC-243): a public
+ * submitter can't attach images by text. Agents also see description text escaped (lib/markdown-core.ts), so this is
+ * the form-side layer on top of that. Works on plain text and on sanitised HTML text runs alike.
+ */
+export function stripMarkdownImages(text: string): string {
+  return text.replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, "");
+}
+
 export function publicSanitize(html: string, opts: PublicSanitizeOptions): string {
   const allowImages = opts.allowImages;
   const imageAllowed = opts.imageAllowed ?? (() => true);
-  return sanitizeHtml(html, {
+  const clean = sanitizeHtml(html, {
     allowedTags: allowImages ? [...PUBLIC_TAGS, "img"] : PUBLIC_TAGS,
     allowedAttributes: { a: ["href", "target", "rel"], img: ["src", "alt"] },
     allowedSchemes: ["http", "https", "mailto"],
@@ -45,6 +54,16 @@ export function publicSanitize(html: string, opts: PublicSanitizeOptions): strin
       // No src left (a javascript:/data: one was removed by the scheme check) or one that isn't the form's own upload.
       return !src || !imageAllowed(src);
     },
+  });
+  // Per text run of the output, not sanitize-html's textFilter: the parser splits text at entities (`&amp;`), so a
+  // filter would see `![x](https://a?b=1` and `&amp;c=2)` separately and miss the image.
+  // Code is left as typed: it reads as code to agents too, never as an image.
+  let code = 0;
+  return clean.replace(/<[^>]*>|[^<]+/g, (part) => {
+    if (part[0] !== "<") return code ? part : stripMarkdownImages(part);
+    const m = /^<(\/?)(pre|code)\b/i.exec(part);
+    if (m) code = Math.max(0, code + (m[1] ? -1 : 1));
+    return part;
   });
 }
 

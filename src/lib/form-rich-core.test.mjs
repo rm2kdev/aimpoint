@@ -1,7 +1,7 @@
 // Run with `pnpm test` (node --test; Node strips the TypeScript types of form-rich-core.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { publicSanitize, htmlText, imageSources, prepareRichDescription, FORM_HTML_MAX, FORM_IMAGES_MAX, PUBLIC_LINK_REL } from "./form-rich-core.ts";
+import { publicSanitize, stripMarkdownImages, htmlText, imageSources, prepareRichDescription, FORM_HTML_MAX, FORM_IMAGES_MAX, PUBLIC_LINK_REL } from "./form-rich-core.ts";
 
 const OWN = "/api/uploads/6af98310a81f713925ea19bc-AbCdEfGhIjKlMnOp.png";
 const own = (src) => src === OWN;
@@ -71,4 +71,13 @@ test("prepareRichDescription limits", () => {
   assert.equal(off.ok, true);
   assert.deepEqual(off.sources, []);
   assert.equal(off.html, "<p>x</p>");
+});
+
+test("markdown image text is stripped from submissions (VEC-243)", () => {
+  assert.equal(clean("<p>a ![x](https://evil.example/t.png) b</p>"), "<p>a  b</p>");
+  assert.equal(clean("<p>![image]()</p>", false), "<p></p>");
+  assert.equal(clean("<p>![x](https://evil.example/t.png?a=1&amp;b=2)</p>"), "<p></p>");
+  assert.equal(clean("<p><code>![x](u)</code></p><pre><code>![y](v)</code></pre>"), "<p><code>![x](u)</code></p><pre><code>![y](v)</code></pre>");
+  assert.equal(stripMarkdownImages("see ![x](https://evil.example/t.png) and ![image]()"), "see  and ");
+  assert.equal(stripMarkdownImages("[link](https://ok.test) and a[0](b) stay"), "[link](https://ok.test) and a[0](b) stay");
 });
