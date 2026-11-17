@@ -67,7 +67,7 @@ export const BACKENDS: Backend[] = [
     title: "Hermes",
     summary: "Vector starts runs on your Hermes Agent through its Agent API.",
     requires:
-      "Hermes with its API server on (API_SERVER_ENABLED=true and an API_SERVER_KEY in its .env), and Vector's MCP server installed in Hermes with this bot's key so it can work on tickets.",
+      "Hermes with its API server on (API_SERVER_ENABLED=true and an API_SERVER_KEY in its .env). Once Vector can reach it, Vector asks Hermes to install Vector's MCP server with this bot's key, so there's nothing to set up by hand.",
     url: {
       label: "Hermes API URL",
       placeholder: "http://127.0.0.1:8642",

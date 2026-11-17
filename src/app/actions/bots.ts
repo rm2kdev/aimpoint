@@ -265,14 +265,14 @@ export async function checkBotKey(slug: string, id: string, key: string): Promis
   });
 }
 
-/** Last check-in and last wake-up, for the wizard's live check. */
-export async function getBotPulse(slug: string, id: string): Promise<Result<Pick<Bot, "lastUsedAt" | "connection">>> {
+/** Last check-in, last wake-up and key hint (an MCP install can reroll the key), for the wizard's live checks. */
+export async function getBotPulse(slug: string, id: string): Promise<Result<Pick<Bot, "lastUsedAt" | "connection" | "keyHint">>> {
   return guard(async () => {
     const { org } = await requireOrg(slug);
     const bot = await (await cols()).bots.findOne({ _id: botId(id), orgId: org._id });
     if (!bot) throw new UserError("This bot no longer exists.");
     const b = toBot(bot);
-    return { lastUsedAt: b.lastUsedAt, connection: b.connection };
+    return { lastUsedAt: b.lastUsedAt, connection: b.connection, keyHint: b.keyHint };
   });
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowUpRightIcon,
@@ -16,6 +16,7 @@ import {
   KeyRoundIcon,
   LoaderCircleIcon,
   PlugIcon,
+  RotateCwIcon,
   ZapIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,10 +25,10 @@ import { useOrg } from "@/components/org-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { checkBotKey, disconnectBot, getBotPulse, rerollBotKey, saveBotConnection, testBotConnection } from "@/app/actions/bots";
+import { checkBotKey, disconnectBot, getBotMcpInstall, getBotPulse, installBotMcp, rerollBotKey, saveBotConnection, testBotConnection } from "@/app/actions/bots";
 import { BACKENDS, backendFor, type Backend } from "@/lib/bot-connect";
 import { timeAgo } from "@/lib/format";
-import type { Bot, BotAgent, BotMethod } from "@/lib/types";
+import type { Bot, BotAgent, BotMcpInstall, BotMethod } from "@/lib/types";
 
 /* ---------------- small parts ---------------- */
 
@@ -86,12 +87,15 @@ function useOrigin() {
 
 /* ---------------- the Connection row ---------------- */
 
-type Step = "backend" | "settings" | "test";
+type Step = "backend" | "settings" | "install" | "test";
 const STEPS: { id: Step; label: string }[] = [
   { id: "backend", label: "Backend" },
   { id: "settings", label: "Settings" },
+  { id: "install", label: "Install" },
   { id: "test", label: "Test" },
 ];
+/** Only Hermes has an Install step: Vector asks it to add Vector's MCP server to its own config (VEC-170). */
+const stepsFor = (method?: BotMethod) => STEPS.filter((s) => s.id !== "install" || method === "hermes-api");
 
 /**
  * The bot's backend: a summary when one is set, otherwise (or on edit) the setup flow.
@@ -227,11 +231,12 @@ function Summary({ bot, setBot, onEdit, onChange }: { bot: Bot; setBot: (b: Bot)
 
 /* ---------------- setup flow ---------------- */
 
-function Stepper({ step }: { step: Step }) {
-  const at = STEPS.findIndex((s) => s.id === step);
+function Stepper({ step, method }: { step: Step; method?: BotMethod }) {
+  const steps = stepsFor(method);
+  const at = steps.findIndex((s) => s.id === step);
   return (
     <ol className="flex items-center gap-1.5 text-[12.5px]" aria-label="Setup progress">
-      {STEPS.map((s, i) => (
+      {steps.map((s, i) => (
         <li key={s.id} className="flex items-center gap-1.5" aria-current={i === at ? "step" : undefined}>
           <span
             className={cn(
@@ -242,7 +247,7 @@ function Stepper({ step }: { step: Step }) {
             {i < at ? <CheckIcon className="size-2.5" strokeWidth={3} /> : i + 1}
           </span>
           <span className={cn("whitespace-nowrap", i === at ? "font-medium text-foreground" : i < at ? "text-muted-foreground" : "text-faint")}>{s.label}</span>
-          {i < STEPS.length - 1 && <span className="mx-0.5 h-px w-3 bg-input sm:mx-1 sm:w-6" aria-hidden />}
+          {i < steps.length - 1 && <span className="mx-0.5 h-px w-3 bg-input sm:mx-1 sm:w-6" aria-hidden />}
         </li>
       ))}
     </ol>
@@ -297,14 +302,16 @@ function Setup({
 }) {
   const [step, setStep] = useState<Step>(initial.step);
   const [method, setMethod] = useState<BotMethod | undefined>(initial.method);
+  // Hermes confirmed it loaded Vector's MCP server, so the Test step needn't tell the admin to check it by hand.
+  const [mcpInstalled, setMcpInstalled] = useState(false);
   const main = BACKENDS.filter((b) => !b.advanced);
   const advanced = BACKENDS.filter((b) => b.advanced);
 
   return (
     <div className="max-w-[720px]">
       <div className="flex items-center justify-between gap-3">
-        <Stepper step={step} />
-        {bot.connection && step !== "test" && (
+        <Stepper step={step} method={method} />
+        {bot.connection && step !== "test" && step !== "install" && (
           <Button size="sm" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -373,11 +380,25 @@ function Setup({
             setApiKey={setApiKey}
             onBack={() => (initial.step === "settings" ? onClose() : setStep("backend"))}
             backLabel={initial.step === "settings" ? "Cancel" : "Back"}
-            onSaved={() => setStep("test")}
+            onSaved={() => setStep(method === "hermes-api" ? "install" : "test")}
           />
         )}
 
-        {step === "test" && method && <Test bot={bot} setBot={setBot} backend={backendFor(method)} onDone={onClose} />}
+        {step === "install" && method === "hermes-api" && (
+          <Install
+            bot={bot}
+            setBot={setBot}
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            onBack={() => setStep("settings")}
+            onNext={(installed) => {
+              setMcpInstalled(installed);
+              setStep("test");
+            }}
+          />
+        )}
+
+        {step === "test" && method && <Test bot={bot} setBot={setBot} backend={backendFor(method)} mcpInstalled={mcpInstalled} onDone={onClose} />}
       </div>
     </div>
   );
@@ -416,7 +437,6 @@ function Settings({
   const [error, setError] = useState<string>();
   const [pending, start] = useTransition();
 
-  const mcpUrl = `${origin}/api/mcp`;
   const offline = b.needsVectorKey && !isPublicHttps(origin);
   // Claude and OpenAI get a key of their own for calling back into Vector. Without one in hand, saving issues a new key.
   const rotates = Boolean(b.needsVectorKey && !apiKey && !prev);
@@ -523,20 +543,7 @@ function Settings({
         )}
       </div>
 
-      {(b.method === "hermes-api" || b.method === "webhook" || b.method === "mcp") && (
-        <div className="mt-6 max-w-xl rounded-[10px] border border-border bg-sidebar px-4 py-3.5">
-          <p className="text-[13px] font-medium">{b.method === "hermes-api" ? "Vector's MCP server, for Hermes" : "Vector's MCP server"}</p>
-          <p className="mt-1 text-[12.5px] text-muted-foreground">
-            {b.method === "hermes-api"
-              ? `Hermes acts on tickets through this server. Install it in Hermes under the name “vector”, with ${bot.name}'s key as a Bearer token.`
-              : `Your agent acts on tickets through this server (or the REST API at ${origin}/api/v1) with ${bot.name}'s key as a Bearer token.`}
-          </p>
-          <div className="mt-3 grid gap-2">
-            <CopyField label="URL" value={mcpUrl} />
-            <KeyField bot={bot} setBot={setBot} apiKey={apiKey} setApiKey={setApiKey} />
-          </div>
-        </div>
-      )}
+      {(b.method === "webhook" || b.method === "mcp") && <McpBox bot={bot} setBot={setBot} apiKey={apiKey} setApiKey={setApiKey} />}
 
       {rotates && bot.lastUsedAt && (
         <p className="mt-4 max-w-xl text-[12.5px] text-muted-foreground">
@@ -552,6 +559,236 @@ function Settings({
         <Button onClick={save} disabled={pending || !canSave}>
           {pending && <LoaderCircleIcon className="animate-spin" />}
           {pending ? (b.push ? `Checking ${b.title}…` : "Saving…") : b.push ? "Save and test" : "Save"}
+        </Button>
+      </Footer>
+    </section>
+  );
+}
+
+/** Vector's MCP server address and the bot's key: what an agent needs to act on tickets. For Hermes, the manual fallback. */
+function McpBox({ bot, setBot, apiKey, setApiKey, hermes }: { bot: Bot; setBot: (b: Bot) => void; apiKey: string | null; setApiKey: (k: string) => void; hermes?: boolean }) {
+  const origin = useOrigin();
+  return (
+    <div className="mt-6 max-w-xl rounded-[10px] border border-border bg-sidebar px-4 py-3.5">
+      <p className="text-[13px] font-medium">{hermes ? "Install Vector's MCP server in Hermes yourself" : "Vector's MCP server"}</p>
+      <p className="mt-1 text-[12.5px] text-muted-foreground">
+        {hermes
+          ? `Add it to Hermes under the name “vector”, with ${bot.name}'s key as a Bearer token, then come back and send a test.`
+          : `Your agent acts on tickets through this server (or the REST API at ${origin}/api/v1) with ${bot.name}'s key as a Bearer token.`}
+      </p>
+      <div className="mt-3 grid gap-2">
+        {hermes && <CopyField label="Name" value="vector" />}
+        <CopyField label="URL" value={`${origin}/api/mcp`} />
+        <KeyField bot={bot} setBot={setBot} apiKey={apiKey} setApiKey={setApiKey} />
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- step 3 (Hermes): install Vector's MCP server ---------------- */
+
+const POLL_MS = 3000;
+
+function elapsed(ms: number) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+}
+
+/**
+ * After the Hermes connection is saved, Vector asks Hermes to install Vector's MCP server itself (installBotMcp,
+ * VEC-169) and follows it here until Hermes has loaded the tools. A fresh bot (or one whose key this page holds)
+ * starts at once; a bot already in use asks first, because without its key in hand Vector issues a new one.
+ * On failure, or whenever the admin prefers, the manual instructions take over.
+ */
+function Install({
+  bot,
+  setBot,
+  apiKey,
+  setApiKey,
+  onBack,
+  onNext,
+}: {
+  bot: Bot;
+  setBot: (b: Bot) => void;
+  apiKey: string | null;
+  setApiKey: (k: string) => void;
+  onBack: () => void;
+  onNext: (installed: boolean) => void;
+}) {
+  const { org } = useOrg();
+  const [job, setJob] = useState<BotMcpInstall | null>(null);
+  /** The previous attempt, shown while asking whether to install again. */
+  const [last, setLast] = useState<BotMcpInstall | null>(null);
+  const [phase, setPhase] = useState<"loading" | "ask" | "running">("loading");
+  const [refused, setRefused] = useState<string>();
+  const [manual, setManual] = useState(false);
+  const [staleKey, setStaleKey] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  const [pending, start] = useTransition();
+  const begun = useRef(false);
+  const botRef = useRef(bot);
+  useEffect(() => {
+    botRef.current = bot;
+  }, [bot]);
+
+  // A reroll changed the key: pick up the new hint so the manual box and the Key row stay right.
+  const refreshKey = async () => {
+    const r = await getBotPulse(org.slug, bot.id).catch(() => null);
+    if (r?.ok && r.data) setBot({ ...botRef.current, keyHint: r.data.keyHint });
+  };
+
+  const begin = () =>
+    start(async () => {
+      setRefused(undefined);
+      const r = await installBotMcp(org.slug, bot.id, { key: (!staleKey && apiKey) || undefined, vectorUrl: window.location.origin }).catch(
+        () => ({ ok: false as const, error: "Vector couldn't start the install. Check your connection and try again." }),
+      );
+      setPhase("running");
+      if (!r.ok) {
+        // Refused before anything was sent (stale key, an install already running...).
+        if (/current key/.test(r.error)) setStaleKey(true);
+        setRefused(r.error);
+        setJob(null);
+        return;
+      }
+      setJob(r.data!);
+      setNow(Date.now());
+      if (r.data!.keyRerolled) void refreshKey();
+    });
+
+  // On open: follow an install that's already going, else start one (fresh bot or key in hand) or ask first.
+  useEffect(() => {
+    if (begun.current) return;
+    begun.current = true;
+    void (async () => {
+      const r = await getBotMcpInstall(org.slug, bot.id).catch(() => null);
+      const prev = r?.ok ? r.data : null;
+      if (prev?.state === "pending") {
+        setJob(prev);
+        setNow(Date.now());
+        setPhase("running");
+      } else if (apiKey || !bot.lastUsedAt) begin();
+      else {
+        setLast(prev ?? null);
+        setPhase("ask");
+      }
+    })();
+    // Runs once per visit to this step.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Follow a pending install. Each poll also moves it on server-side.
+  const pendingJob = job?.state === "pending";
+  useEffect(() => {
+    if (!pendingJob) return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    const poll = setInterval(async () => {
+      const r = await getBotMcpInstall(org.slug, bot.id).catch(() => null);
+      if (r?.ok && r.data) setJob(r.data);
+    }, POLL_MS);
+    return () => {
+      clearInterval(tick);
+      clearInterval(poll);
+    };
+  }, [pendingJob, org.slug, bot.id]);
+
+  const failed = phase === "running" && !pending && (!!refused || job?.state === "failed");
+  const installed = job?.state === "installed";
+  const showManual = manual || failed;
+  const since = job ? now - Date.parse(job.startedAt) : 0;
+
+  // Two lines, like the Test step: Hermes adds the server, then Hermes has loaded the tools.
+  const addState: "idle" | "wait" | "ok" | "fail" = !job ? (refused ? "fail" : pending || phase === "loading" ? "wait" : "idle") : job.phase === "install" ? (job.state === "failed" ? "fail" : "wait") : "ok";
+  const loadState: "idle" | "wait" | "ok" | "fail" = !job || job.phase === "install" ? "idle" : installed ? "ok" : job.state === "failed" ? "fail" : "wait";
+  const reason = refused ?? (job?.state === "failed" ? job.reason : null);
+
+  return (
+    <section aria-labelledby="in-title">
+      <h3 id="in-title" className="text-[15px] font-semibold tracking-[-0.01em]">
+        Install Vector&rsquo;s tools in Hermes
+      </h3>
+      <p className="mt-1 max-w-[68ch] text-[13px] text-muted-foreground">
+        Saved. Hermes works on tickets through Vector&rsquo;s MCP server, so Vector asks Hermes to add it under the name &ldquo;vector&rdquo; with {bot.name}&rsquo;s key, then
+        checks that Hermes can use it.
+      </p>
+
+      {phase === "ask" ? (
+        <div className="mt-5 max-w-xl rounded-[10px] border border-border px-4 py-3.5">
+          <p className="text-[13px]">
+            {last?.state === "installed"
+              ? `Hermes already has Vector's tools (installed ${timeAgo(last.finishedAt ?? last.startedAt)}). Install again if you changed where Hermes runs.`
+              : `Vector can install its tools in Hermes for you.`}
+          </p>
+          <p className="mt-1 text-[12.5px] text-muted-foreground">
+            This page doesn&rsquo;t have {bot.name}&rsquo;s key, so installing gives it a new one. Anything else using {bot.keyHint} stops working.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" onClick={begin} disabled={pending}>
+              {pending && <LoaderCircleIcon className="animate-spin" />} Install with a new key
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <ul className="mt-5 grid max-w-xl gap-1.5" aria-live="polite">
+          <li className="flex items-center gap-3 rounded-[10px] border border-border px-3.5 py-3">
+            <StatusDot state={addState} />
+            <div className="min-w-0 flex-1 leading-tight">
+              <div className="text-[13.5px] font-medium">Hermes adds Vector&rsquo;s MCP server</div>
+              <div className={cn("mt-0.5 text-[12.5px]", addState === "fail" ? "text-destructive" : "text-muted-foreground")}>
+                {addState === "wait"
+                  ? `Asking Hermes to install Vector's tools…${job ? ` ${elapsed(since)}` : ""}`
+                  : addState === "ok"
+                    ? `Added${job?.tools ? `, ${job.tools} tools` : ""}`
+                    : addState === "fail"
+                      ? "Didn't work"
+                      : "Not started"}
+              </div>
+            </div>
+          </li>
+          <li className="flex items-center gap-3 rounded-[10px] border border-border px-3.5 py-3">
+            <StatusDot state={loadState} />
+            <div className="min-w-0 flex-1 leading-tight">
+              <div className="text-[13.5px] font-medium">Hermes loads Vector&rsquo;s tools</div>
+              <div className={cn("mt-0.5 text-[12.5px]", loadState === "fail" ? "text-destructive" : loadState === "ok" ? "text-[#30a46c]" : "text-muted-foreground")}>
+                {loadState === "ok"
+                  ? "Installed"
+                  : loadState === "fail"
+                    ? "Didn't work"
+                    : loadState === "wait"
+                      ? `Waiting for Hermes to pick it up and call Vector${job && job.checks > 1 ? ` (check ${job.checks})` : ""}… ${elapsed(since)}`
+                      : "After the server is added"}
+              </div>
+            </div>
+          </li>
+        </ul>
+      )}
+
+      {loadState === "wait" && <p className="mt-3 max-w-[68ch] text-[12.5px] text-faint">Hermes loads new tools on its own within a minute or two. After a new key it can take up to 5 minutes.</p>}
+
+      {failed && reason && (
+        <p role="alert" className="mt-4 flex max-w-xl gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+          <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
+          {reason}
+        </p>
+      )}
+
+      {showManual ? (
+        <McpBox bot={bot} setBot={setBot} apiKey={apiKey} setApiKey={setApiKey} hermes />
+      ) : installed ? null : (
+        <button type="button" className="mt-4 text-[12.5px] text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setManual(true)}>
+          Set it up myself
+        </button>
+      )}
+
+      <Footer onBack={onBack}>
+        {failed && (
+          <Button variant="outline" onClick={begin} disabled={pending}>
+            {pending ? <LoaderCircleIcon className="animate-spin" /> : <RotateCwIcon />} Try again
+          </Button>
+        )}
+        <Button variant={installed ? "default" : "outline"} onClick={() => onNext(installed)} disabled={!installed && !showManual && phase !== "ask"}>
+          {installed ? "Continue" : "Continue to test"}
+          <ChevronRightIcon />
         </Button>
       </Footer>
     </section>
@@ -657,7 +894,7 @@ function KeyField({ bot, setBot, apiKey, setApiKey }: { bot: Bot; setBot: (b: Bo
 
 /* ---------------- step 3: test ---------------- */
 
-function Test({ bot, setBot, backend: b, onDone }: { bot: Bot; setBot: (b: Bot) => void; backend: Backend; onDone: () => void }) {
+function Test({ bot, setBot, backend: b, mcpInstalled, onDone }: { bot: Bot; setBot: (b: Bot) => void; backend: Backend; mcpInstalled?: boolean; onDone: () => void }) {
   const { org } = useOrg();
   const router = useRouter();
   const [since] = useState(() => Date.now());
@@ -723,7 +960,7 @@ function Test({ bot, setBot, backend: b, onDone }: { bot: Bot; setBot: (b: Bot) 
           </div>
         </li>
       </ul>
-      {b.method === "hermes-api" && delivery?.ok && !checkedIn && (
+      {b.method === "hermes-api" && !mcpInstalled && delivery?.ok && !checkedIn && (
         <p className="mt-3 max-w-[68ch] text-[12.5px] text-faint">Hermes took the run. If this doesn&rsquo;t turn green within a minute or two, check that Vector&rsquo;s MCP server is installed in Hermes with this bot&rsquo;s key.</p>
       )}
 
