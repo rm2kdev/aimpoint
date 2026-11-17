@@ -6,6 +6,7 @@ import { publish } from "@/lib/realtime/server";
 import { publishWorking } from "@/lib/claims";
 import { toFeed } from "@/lib/data";
 import { isClosedCategory, type ActivityDoc } from "@/lib/types";
+import { flowOwnerRemoved } from "@/lib/flows";
 
 /**
  * Take a person out of an organisation: used both when they leave (account page, org settings) and when
@@ -60,6 +61,9 @@ export async function removeMembership(orgId: ObjectId, userId: ObjectId, actorI
       await publish(orgHex, { type: "feed.add", actorId: actorHex, taskId: a.taskId.toHexString(), item: toFeed(a) });
     }
   }
+  // Flow steps they owned become unowned and say so (VEC-174).
+  const person = await c.users.findOne({ _id: userId }, { projection: { name: 1 } });
+  await flowOwnerRemoved(orgId, "person", userId, person?.name ?? "A former member");
   // Their unread inbox for this org is no use to them any more (and may name tasks they can't open).
   await c.notifications.deleteMany({ orgId, userId });
   await publish(orgHex, { type: "org.changed", actorId: actorHex });

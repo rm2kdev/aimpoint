@@ -15,6 +15,7 @@ import { seal, secretHint, unseal } from "@/lib/secrets";
 import { BOT_MAX_TASKS_DEFAULT, BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMethod } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
+import { flowOwnerRemoved } from "@/lib/flows";
 
 export interface BotInput {
   name: string;
@@ -107,8 +108,11 @@ export async function deleteBot(slug: string, id: string): Promise<Result> {
     const { org, user } = await requireOrg(slug, { admin: true });
     const c = await cols();
     const _id = botId(id);
+    const doomed = await c.bots.findOne({ _id, orgId: org._id }, { projection: { name: 1 } });
     const res = await c.bots.deleteOne({ _id, orgId: org._id });
     if (!res.deletedCount) throw new UserError("This bot no longer exists.");
+    // Flow steps it owned become unowned and say so; it stops resolving waits (VEC-174).
+    await flowOwnerRemoved(org._id, "bot", _id, doomed?.name ?? "A deleted bot");
     // Tasks whose row changes for open clients: the bot's assigned ones and the ones it was working on.
     const [assigned, working] = await Promise.all([
       c.tasks.find({ orgId: org._id, assigneeId: _id }, { projection: { _id: 1 } }).toArray(),

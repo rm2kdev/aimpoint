@@ -1,4 +1,5 @@
 import type { ObjectId } from "mongodb";
+import type { FlowAdvance, FlowMode, FlowSource, StepOwnerKind } from "./flow-model";
 
 export type Role = "admin" | "member";
 /**
@@ -138,6 +139,8 @@ export interface ProjectDoc {
   metadata?: ProjectMetaEntry[];
   /** Archived projects keep their tasks but take no new ones and leave the sidebar. */
   archivedAt?: Date | null;
+  /** Project flow (VEC-174): absent = "inherit" the org default; "custom" = its own FlowDoc; "off" = no flow. */
+  flowMode?: FlowMode;
   createdAt: Date;
 }
 export interface ProjectMetaEntry {
@@ -197,9 +200,51 @@ export interface TaskDoc {
    * notification), so it isn't sent again while that lasts; cleared once the task leaves that state (re-arms).
    */
   stalledNoticeAt?: Date | null;
+  /** Position in the project's flow (docs/flows.md, VEC-174/175). Absent = not positioned yet (lazy). */
+  flow?: TaskFlowState | null;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
+}
+/** A task's place in its flow (written by the flow engine, VEC-175). */
+export interface TaskFlowState {
+  /** Null = detached: the status matches no step; re-attaches on the next status change into a step status. */
+  stepId: string | null;
+  source: FlowSource;
+  version: number;
+  enteredAt: Date;
+  /** A person assigned someone else during this step; the next advance applies flow owners again. */
+  ownerOverride?: boolean;
+  /** The flow is switched off for this task (or it became a triage umbrella). */
+  paused?: boolean;
+  /** Wait steps: when the reminder went out (once per entry). */
+  remindedAt?: Date | null;
+}
+/**
+ * A flow (VEC-174, docs/flows.md section 3): the org default (projectId null, one per org) or a project's
+ * override (flowMode "custom"). Unique {orgId, projectId}. Steps in pipeline order; ids as ObjectIds here,
+ * hex strings in the client-safe model (lib/flow-model.ts, converted by lib/flows.ts).
+ */
+export interface FlowDoc {
+  _id: ObjectId;
+  orgId: ObjectId;
+  projectId: ObjectId | null;
+  /** Bumped on every save. */
+  version: number;
+  steps: FlowStepDoc[];
+  updatedAt: Date;
+  updatedBy: ObjectId | null;
+}
+export interface FlowStepDoc {
+  id: string;
+  name: string;
+  status: { statusId?: ObjectId | null; stage: StatusCategory; name?: string | null; deleted?: boolean };
+  owner: { kind: StepOwnerKind; id?: ObjectId | null; removed?: { kind: "bot" | "person"; name: string } | null };
+  instructions?: string;
+  advance: FlowAdvance;
+  wait?: { label: string; resolvers?: ObjectId[]; remindAfterDays?: number | null } | null;
+  required?: boolean;
+  next?: string | null;
 }
 export interface CommentDoc {
   _id: ObjectId;

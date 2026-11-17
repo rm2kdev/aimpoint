@@ -19,7 +19,9 @@ import type {
   BotWakeDoc,
   NotificationDoc,
   LoginChallengeDoc,
+  FlowDoc,
 } from "./types";
+import { seedDefaultFlows, DEFAULT_FLOW_MIGRATION } from "./flows-migration";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
 const dbName = process.env.MONGODB_DB ?? "vector";
@@ -64,6 +66,7 @@ export async function cols() {
     notifications: db.collection<NotificationDoc>("notifications"),
     loginChallenges: db.collection<LoginChallengeDoc>("loginChallenges"),
     deletedUsers: db.collection<DeletedUserDoc>("deletedUsers"),
+    flows: db.collection<FlowDoc>("flows"),
   };
 }
 /**
@@ -124,6 +127,9 @@ async function ensureIndexes(db: Db) {
     db.collection("agentClaims").createIndex({ orgId: 1, claimedAt: 1 }),
     db.collection("agentClaims").createIndex({ orgId: 1, finishedAt: 1 }),
     db.collection("botMentions").createIndex({ orgId: 1, createdAt: 1 }),
+    // Project flows (VEC-174): one org default (projectId null) and at most one override per project.
+    db.collection("flows").createIndex({ orgId: 1, projectId: 1 }, { unique: true }),
+    db.collection("tasks").createIndex({ orgId: 1, "flow.stepId": 1 }),
   ]);
   await migrate(db);
 }
@@ -182,5 +188,12 @@ async function migrate(db: Db) {
   await once(PROJECT_STATUSES_MIGRATION, async () => {
     const report = await migrateProjectStatuses(db);
     console.log("[migrate] project statuses", report);
+  });
+
+  // Project flows (VEC-174): every existing org gets the behaviour-preserving default flow. Projects inherit
+  // it (no project data changes); tasks are positioned lazily by the flow engine.
+  await once(DEFAULT_FLOW_MIGRATION, async () => {
+    const inserted = await seedDefaultFlows(db);
+    console.log("[migrate] default flows", { inserted });
   });
 }

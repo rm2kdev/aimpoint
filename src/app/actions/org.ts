@@ -15,6 +15,7 @@ import { detachDeleted, recomputeForStatuses } from "@/lib/dependencies";
 import { isClosedCategory, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
+import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
 
 function slugify(s: string) {
   return (
@@ -63,6 +64,8 @@ export async function createOrgAction(_: OnboardState, form: FormData): Promise<
   });
   // Statuses belong to projects (VEC-114): the first project starts with the default set.
   await seedProjectStatuses(orgId, projectId);
+  // Every org starts with the default flow (VEC-174); projects inherit it.
+  await seedOrgFlow(orgId);
   redirect(orgPath(slug, "my"));
 }
 
@@ -199,6 +202,7 @@ export async function deleteProject(slug: string, projectId: string, confirmKey:
     }
     await c.projects.deleteOne({ _id: pid, orgId: org._id });
     await deleteProjectStatuses(org._id, pid);
+    await deleteProjectFlow(org._id, pid);
     const orgHex = org._id.toHexString();
     const actorId = user._id.toHexString();
     // Open task lists drop the tasks live; anything else catches up on the org refresh.
@@ -260,6 +264,8 @@ export async function saveStatus(
       await c.statuses.updateOne({ _id: prev._id, orgId: org._id, projectId: project._id }, { $set: { name, color: input.color, category: input.category } });
       // Starting or stopping counting as closed (done or cancelled) releases or re-blocks the tasks that wait on this status's tasks.
       if (isClosedCategory(prev.category) !== isClosedCategory(input.category)) await recomputeForStatuses(org._id, by, [prev._id]);
+      // The project's flow keeps the status's stage and name as its fallback (VEC-174).
+      if (prev.category !== input.category || prev.name !== name) await flowStatusUpdated(org._id, project._id, { _id: prev._id, name, category: input.category });
     } else {
       const last = statuses[statuses.length - 1];
       await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId: project._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
@@ -301,6 +307,8 @@ export async function deleteStatus(slug: string, projectId: string, id: string, 
     const c = await cols();
     await c.tasks.updateMany({ orgId: org._id, projectId: project._id, statusId: removed._id }, { $set: { statusId: target._id, updatedAt: new Date() } });
     await c.statuses.deleteOne({ _id: removed._id, orgId: org._id, projectId: project._id });
+    // Flow steps on the deleted status fall back to its stage/name and are flagged (VEC-174).
+    await flowStatusDeleted(org._id, project._id, removed);
     if (isClosedCategory(removed.category) !== isClosedCategory(target.category)) {
       await recomputeForStatuses(org._id, { id: user._id, name: async () => user.name }, [target._id]);
     }
