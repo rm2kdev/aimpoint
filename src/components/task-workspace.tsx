@@ -890,6 +890,9 @@ const TaskRow = memo(function TaskRow({
       data-live={fresh ? "" : undefined}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
+        // VEC-166: on touch a long-press is the row menu (or a drag), never a native text selection; without
+        // this iOS selects across neighbouring rows on rows that can't drag. Desktop keeps selectable titles.
+        "pointer-coarse:select-none",
         dragging && "cursor-grabbing",
         selected ? "bg-selected" : fresh ? "data-live:bg-live data-live:shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
       )}
