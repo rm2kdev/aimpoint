@@ -441,9 +441,9 @@ function Report({
     return { kind, people: pair[0], bots: pair[1] };
   });
 
-  const stage: DonutSlice[] = breakdown ? STATUS_STAGES.map((s) => ({ key: s, label: STAGE_LABELS[s], value: breakdown.byStage[s] ?? 0, color: STAGE_FILL[s] })) : [];
-  const priority: DonutSlice[] = breakdown ? breakdown.byPriority.map((r) => ({ key: String(r.key), label: PRIORITY_LABELS[r.key], value: r.open, color: PRIORITY_FILL[r.key] })) : [];
-  const type: DonutSlice[] = breakdown ? breakdown.byType.map((r) => ({ key: r.key, label: TYPE_LABELS[r.key], value: r.open, color: TYPE_FILL[r.key] })) : [];
+  const stage: DonutSlice[] = breakdown ? STATUS_STAGES.map((s) => ({ key: s, label: STAGE_LABELS[s], value: breakdown.byStage[s] ?? 0, ...STAGE_FILL[s] })) : [];
+  const priority: DonutSlice[] = breakdown ? breakdown.byPriority.map((r) => ({ key: String(r.key), label: PRIORITY_LABELS[r.key], value: r.open, ...PRIORITY_FILL[r.key] })) : [];
+  const type: DonutSlice[] = breakdown ? breakdown.byType.map((r) => ({ key: r.key, label: TYPE_LABELS[r.key], value: r.open, ...TYPE_FILL[r.key] })) : [];
 
   const projectRows = report
     ? report.projects

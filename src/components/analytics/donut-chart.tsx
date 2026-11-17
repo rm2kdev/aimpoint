@@ -16,6 +16,7 @@ import {
   type ChartColor,
   type ValueFormatter,
 } from "./chart-frame"
+import { SLICE_EDGE } from "./colour-map"
 import { formatNumber, formatPercent } from "./format"
 
 export interface DonutSlice {
@@ -24,6 +25,8 @@ export interface DonutSlice {
   value: number
   /** A chart token index, or any CSS colour (the semantic fills in colour-map.ts). Defaults by position. */
   color?: ChartColor | string
+  /** A quiet tint under 3:1 on the card (colour-map.ts): slice and swatches carry the Faint Ink boundary. */
+  edge?: boolean
 }
 
 export interface DonutChartProps {
@@ -93,7 +96,7 @@ export function DonutChart({
           cell: (s) =>
             s.fill ? (
               <span className="inline-flex items-center gap-1.5">
-                <span aria-hidden className={KIT.swatch} style={{ background: s.fill }} />
+                <span aria-hidden className={cn(KIT.swatch, s.edge && KIT.swatchEdge)} style={{ background: s.fill }} />
                 {s.label}
               </span>
             ) : (
@@ -123,7 +126,7 @@ export function DonutChart({
       legend={
         <SeriesLegend
           variant="grid"
-          items={slices.map((s) => ({ label: s.label, color: s.fill, value: share(s.value) }))}
+          items={slices.map((s) => ({ label: s.label, color: s.fill, edge: s.edge, value: share(s.value) }))}
         />
       }
     >
@@ -145,7 +148,7 @@ export function DonutChart({
               const v = Number(p.value)
               return (
                 <TooltipShell heading={slice?.label ?? p.name}>
-                  <TooltipRow label="Value" value={valueFormatter(v)} color={slice?.fill} />
+                  <TooltipRow label="Value" value={valueFormatter(v)} color={slice?.fill} edge={slice?.edge} />
                   <TooltipRow label="Share" value={share(v)} />
                 </TooltipShell>
               )
@@ -162,8 +165,10 @@ export function DonutChart({
             strokeWidth={slices.length > 1 ? 1 : 0}
             isAnimationActive={false}
           >
+            {/* A quiet tint keeps its pale fill and draws its own boundary instead of the card-coloured
+                separator, so the slice still reads at 3:1 against the card (VEC-162). */}
             {slices.map((s) => (
-              <Cell key={s.key} fill={s.fill} />
+              <Cell key={s.key} fill={s.fill} {...(s.edge ? { stroke: SLICE_EDGE, strokeWidth: 1 } : {})} />
             ))}
           </Pie>
         </PieChart>

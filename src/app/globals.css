@@ -98,9 +98,10 @@
   /* KPI delta chip text on its 10% tint (VEC-163): darker than the base hues so it clears 4.5:1 (4.9:1). */
   --positive-ink: #1a7650;
   --destructive-ink: #c4282e;
-  /* Task type colours (TypeSquare and the Open by type donut, VEC-149); same values in both themes. */
+  /* Task type colours (TypeSquare and the Open by type donut, VEC-149); same values in both themes.
+     Feature is green 11 so Issue and Feature stay apart in lightness under deuteranopia (VEC-162). */
   --type-issue: #e5484d;
-  --type-feature: #30a46c;
+  --type-feature: #18794e;
   --type-task: #8b8d98;
   --sidebar: #f7f7f5;
   --sidebar-foreground: #171717;
