@@ -685,6 +685,8 @@ export interface Member {
   description?: string;
   /** Bots only: max concurrent tasks. */
   maxTasks?: number;
+  /** Bots only: the person who added it (BotDoc.createdBy); may stop / resume its work (VEC-217). */
+  ownerId?: string;
 }
 /** How many tasks a bot is working on right now (see loadBotWorkload). Every bot in the org has an entry. */
 export interface BotWorkload {

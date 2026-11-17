@@ -400,6 +400,7 @@ export async function loadShell(orgId: ObjectId, userId: ObjectId) {
       avatar: b.avatar,
       description: b.description,
       maxTasks: botMaxTasks(b),
+      ownerId: b.createdBy.toHexString(),
     });
   }
   const counts = await loadCounts(orgId, userId, statuses);

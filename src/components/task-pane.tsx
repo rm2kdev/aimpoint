@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PauseIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -25,6 +25,7 @@ import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies"
 import { useShell } from "@/components/app-shell";
 import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
 import { FlowStepper, useFlowPause } from "@/components/task-flow";
+import { StopConfirm, StoppedBanner, useStopWork, WorkingStrip } from "@/components/stop-work";
 import { FormCreator, FormSubmitter, submitterLabel } from "@/components/task-source";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     setTask((cur) => (cur ? { ...cur, ...t } : cur));
   };
   const flowPause = useFlowPause(task, onFlowTask);
+  // VEC-217: Stop / Resume the bot's work (lib/stop-work.ts).
+  const stopWork = useStopWork(task, onFlowTask);
+  const [confirmStop, setConfirmStop] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const onRetry = async () => {
     if (!task || retrying) return;
@@ -264,7 +268,17 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 <RotateCcwIcon className="size-4" /> {waiting.length ? "Retry the chain" : "Retry hand-off"}
               </DropdownMenuItem>
             )}
-            {flowPause.can && (
+            {stopWork.canStop && (
+              <DropdownMenuItem className="gap-2.5" disabled={stopWork.busy} onSelect={() => setConfirmStop(true)}>
+                <OctagonXIcon className="size-4" /> Stop {stopWork.working?.name ?? "the bot"}
+              </DropdownMenuItem>
+            )}
+            {stopWork.canResume && (
+              <DropdownMenuItem className="gap-2.5" disabled={stopWork.busy} onSelect={() => void stopWork.resume()}>
+                <PlayIcon className="size-4" /> Resume work
+              </DropdownMenuItem>
+            )}
+            {flowPause.can && !task.stopped && (
               <DropdownMenuItem className="gap-2.5" disabled={flowPause.busy} onSelect={() => void flowPause.toggle()}>
                 {flowPause.paused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />} {flowPause.paused ? "Resume flow" : "Pause flow"}
               </DropdownMenuItem>
@@ -284,6 +298,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             )}
           </DropdownMenuContent>
         </DropdownMenu>
+        <StopConfirm ctl={stopWork} taskKey={task.key} open={confirmStop} onOpenChange={setConfirmStop} />
       </PaneHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -312,6 +327,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               )}
             </div>
           )}
+          {!task.archivedAt && <StoppedBanner task={task} ctl={stopWork} className="mt-3" />}
+          {!task.archivedAt && <WorkingStrip ctl={stopWork} taskKey={task.key} className="mt-3" />}
           {task.stalled && isStalledReason(task.stalled.reason) && !closed && !task.archivedAt && (
             <div role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 py-2 pr-2 pl-3 text-[12.5px] text-destructive">
               <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
@@ -352,7 +369,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </p>
           )}
 
-          {!task.archivedAt && <FlowStepper task={task} className="mt-4" onTask={onFlowTask} />}
+          {!task.archivedAt && !task.stopped && <FlowStepper task={task} className="mt-4" onTask={onFlowTask} />}
 
           <dl className="mt-5 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[13px]">
             <dt className="text-faint">Status</dt>
@@ -729,7 +746,13 @@ function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null })
           <>
             moved from <b className="font-medium text-foreground">{statusById.get(f.from ?? "")?.name ?? "a removed status"}</b> to{" "}
             <b className="font-medium text-foreground">{statusById.get(f.to ?? "")?.name ?? "a removed status"}</b>
-            {f.note === "started_work" ? " (started work)" : f.note === "resumed_work" ? " (back to work after a mention)" : null}
+            {f.note === "started_work"
+              ? " (started work)"
+              : f.note === "resumed_work"
+                ? " (back to work after a mention)"
+                : f.note === "stopped_work"
+                  ? " (stopped the bot's work)"
+                  : null}
           </>
         );
       case "assignee":
@@ -786,6 +809,22 @@ function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null })
           <>
             asked <b className="font-medium text-foreground">{name(f.to)}</b> to {f.note === "closeout" ? "retry the close-out" : "retry this"}
           </>
+        );
+      case "stopped":
+        return (
+          <>
+            stopped <b className="font-medium text-foreground">{name(f.to)}</b>
+            {f.note === "triage" ? " triaging this" : "'s work on this"}
+            {", so it's paused"}
+          </>
+        );
+      case "resumed":
+        return f.to ? (
+          <>
+            resumed this and handed it back to <b className="font-medium text-foreground">{name(f.to)}</b>
+          </>
+        ) : (
+          "resumed this"
         );
       case "flow_step": {
         // VEC-175: the flow moved it to another step and handed it to that step's owner.

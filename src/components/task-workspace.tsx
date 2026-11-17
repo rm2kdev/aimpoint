@@ -30,6 +30,7 @@ import { TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
 import { projectSettingsPath } from "@/lib/paths";
 import { isClosedCategory, matchStatus, STATUS_STAGES, type Status, type StatusCategory, type Task, type TaskType } from "@/lib/types";
 import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
+import { StoppedChip } from "@/components/stop-work";
 
 export interface Scope {
   projectId?: string;
@@ -974,6 +975,7 @@ const TaskRow = memo(function TaskRow({
             {timeAgo(task.updatedAt)}
           </span>
         ) : null}
+        {!closed && !task.archivedAt && task.stopped && <StoppedChip task={task} />}
         {!closed && !task.archivedAt && task.stalled && <StalledBadge stalled={task.stalled} />}
         {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className="max-sm:hidden" />}
         {!closed && !task.archivedAt && !fresh && <FlowStepChip task={task} className="max-md:hidden" />}

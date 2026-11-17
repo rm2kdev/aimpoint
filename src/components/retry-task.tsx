@@ -14,9 +14,10 @@ import { retryTask } from "@/app/actions/tasks";
  */
 
 /** Whether to offer Retry on this task: open, ready-or-chained, and the viewer may work on it. */
-export function useCanRetry(task: Pick<Task, "statusId" | "assigneeId" | "archivedAt" | "waitingOn" | "createdBy"> | null) {
+export function useCanRetry(task: Pick<Task, "statusId" | "assigneeId" | "archivedAt" | "waitingOn" | "createdBy" | "stopped"> | null) {
   const { me, isAdmin, statusById, memberById } = useOrgBase();
-  if (!task || task.archivedAt) return false;
+  // A stopped task (VEC-215) is handed back with Resume; the server refuses Retry.
+  if (!task || task.archivedAt || task.stopped) return false;
   const cat = statusById.get(task.statusId)?.category;
   if (!cat || cat === "triage" || isClosedCategory(cat)) return false;
   if (taskAccess(task, me.id, isAdmin) === "comment") return false;
