@@ -7,7 +7,7 @@ import type { FlowStatusLike, ResolvedFlow, ResolvedStep } from "./flow-model";
 import type { StatusCategory } from "./types";
 
 /** How a write moved the task along its flow (stored as the flow_step activity note). */
-export type FlowMoveNote = "advanced" | "back" | "synced" | "umbrella";
+export type FlowMoveNote = "advanced" | "back" | "synced" | "umbrella" | "paused" | "resumed";
 
 export const stepIndex = (flow: ResolvedFlow, id: string | null | undefined) => (id ? flow.steps.findIndex((s) => s.id === id) : -1);
 export const stepById = (flow: ResolvedFlow, id: string | null | undefined): ResolvedStep | null => flow.steps[stepIndex(flow, id)] ?? null;
@@ -119,3 +119,40 @@ export function syncByStatus({ flow, current, status }: SyncInput): SyncResult {
   // An open status no step uses (In Progress) belongs to the step before it: the same step = moved within it.
   return hit.id === current?.id ? { kind: "stay" } : { kind: "step", step: hit };
 }
+
+/* ---------------- people's flow actions in the task pane (VEC-183, docs/flows.md 5.6 / 5.7) ---------------- */
+
+/** Who is looking at the task, and who has it (ids hex). */
+export interface FlowViewer {
+  me: string;
+  isAdmin: boolean;
+  createdBy: string;
+  assigneeId: string | null;
+  /** The assignee is a person (not a bot). */
+  assigneeIsPerson: boolean;
+}
+
+/**
+ * The step action a person gets on a task's current step, or null:
+ * - `wait`: a wait step, button labelled from `wait.label` ("Reply received"); moves it on like advance_task.
+ *   For the step's owner (a person), the assignee, the creator or an admin.
+ * - `complete`: "Complete step" on a step a person holds (the step names a person, or a person is assigned on an
+ *   active flow, e.g. someone took over a bot's step); hands it to the next step. For that person, the assignee, the creator or an admin.
+ * Bot-held steps have none: their bot finishes them with complete_task (people can still move the status).
+ */
+export type FlowStepAction = { kind: "wait" | "complete"; label: string; step: ResolvedStep; next: ResolvedStep };
+
+export function flowStepAction(flow: ResolvedFlow, current: ResolvedStep, status: FlowStatusLike, v: FlowViewer): FlowStepAction | null {
+  if (closed(status.category) || status.category === "triage" || current.status.category === "done") return null;
+  const next = nextStepOf(flow, current);
+  if (!next) return null;
+  const ownerPerson = current.owner.kind === "person" && !!current.owner.id;
+  const may = v.isAdmin || v.createdBy === v.me || v.assigneeId === v.me || (ownerPerson && current.owner.id === v.me);
+  if (!may) return null;
+  if (current.advance === "wait") return { kind: "wait", label: current.wait?.label?.trim() || "Mark as happened", step: current, next };
+  const personHolds = ownerPerson || (v.assigneeIsPerson && flowIsActive(flow, current));
+  return personHolds ? { kind: "complete", label: "Complete step", step: current, next } : null;
+}
+
+/** Pause / Resume flow (design 5.6): the task's creator, its assignee or an admin. */
+export const canPauseFlow = (v: Pick<FlowViewer, "me" | "isAdmin" | "createdBy" | "assigneeId">) => v.isAdmin || v.createdBy === v.me || v.assigneeId === v.me;

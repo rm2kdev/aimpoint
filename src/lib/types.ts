@@ -265,7 +265,10 @@ export type ActivityNote =
   | "advanced"
   | "back"
   | "synced"
-  | "umbrella";
+  | "umbrella"
+  /** flow_step (VEC-183): a person paused the task's flow / resumed it (re-synced by status). */
+  | "paused"
+  | "resumed";
 
 export interface ActivityDoc {
   _id: ObjectId;

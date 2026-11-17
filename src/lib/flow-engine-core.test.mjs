@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveFlowSteps, DEFAULT_FLOW_STEPS } from "./flow-model.ts";
-import { flowIsActive, locateStep, moveNote, nextStepOf, ownerPlan, requiredBetween, stepById, syncByStatus, workingStatus } from "./flow-engine-core.ts";
+import { canPauseFlow, flowIsActive, flowStepAction, locateStep, moveNote, nextStepOf, ownerPlan, requiredBetween, stepById, syncByStatus, workingStatus } from "./flow-engine-core.ts";
 
 const S = (id, name, category, order) => ({ id, name, category, order });
 const HERMES = "b".repeat(24);
@@ -249,4 +249,53 @@ test("shared statuses: a status used by two steps picks the next one forward", (
     { source: "project", version: 1 },
   );
   assert.equal(nextStepOf(jump, stepById(jump, "a")).id, "c");
+});
+
+/* ---------------- people's step actions in the task pane (VEC-183) ---------------- */
+
+test("pane step actions: a wait step's label for people with a say, Complete step on a person's step, nothing on bot steps", () => {
+  const RYAN = "1".repeat(24);
+  const MIA = "2".repeat(24);
+  const waitFlow = resolveFlowSteps(
+    [
+      bstep("outreach", "Outreach", "lead", { kind: "bot", id: OUTREACH }, { instructions: "Email the lead." }),
+      bstep("await", "Awaiting reply", "out", { kind: "bot", id: OUTREACH }, { advance: "wait", wait: { label: "Reply received", resolvers: [OUTREACH], remindAfterDays: 5 } }),
+      bstep("planning", "Planning", "plan", { kind: "bot", id: PLANNER }),
+      bstep("signoff", "Sign-off", "sign", { kind: "person", id: SOFIA }, { advance: "manual" }),
+      bstep("won", "Won", "won", { kind: "none" }),
+    ],
+    bld,
+    dir,
+    { source: "project", version: 1 },
+  );
+  const at = (id) => stepById(waitFlow, id);
+  const v = (me, extra = {}) => ({ me, isAdmin: false, createdBy: RYAN, assigneeId: OUTREACH, assigneeIsPerson: false, ...extra });
+  // Wait step: labelled from wait.label, moves to the next step; creator / admin / assignee may, a bystander may not.
+  const w = flowStepAction(waitFlow, at("await"), st("out", bld), v(RYAN));
+  assert.deepEqual([w.kind, w.label, w.next.id], ["wait", "Reply received", "planning"]);
+  assert.equal(flowStepAction(waitFlow, at("await"), st("out", bld), v(MIA)), null);
+  assert.equal(flowStepAction(waitFlow, at("await"), st("out", bld), v(MIA, { isAdmin: true })).kind, "wait");
+  // A bot's step: nothing for people (its bot completes it; people can still change the status).
+  assert.equal(flowStepAction(waitFlow, at("planning"), st("plan", bld), v(RYAN, { assigneeId: PLANNER })), null);
+  // ...unless a person took it over (assigned on an active flow).
+  assert.equal(flowStepAction(waitFlow, at("planning"), st("plan", bld), v(MIA, { assigneeId: MIA, assigneeIsPerson: true })).kind, "complete");
+  // Person-owned step: Complete step for that person even when someone else is assigned, and it hands on to Won.
+  const c = flowStepAction(waitFlow, at("signoff"), st("sign", bld), v(SOFIA, { assigneeId: MIA, assigneeIsPerson: true }));
+  assert.deepEqual([c.kind, c.label, c.next.id], ["complete", "Complete step", "won"]);
+  assert.equal(flowStepAction(waitFlow, at("signoff"), st("sign", bld), v(MIA, { assigneeId: SOFIA, assigneeIsPerson: true, createdBy: OUTREACH })), null);
+  // Finished or cancelled: nothing.
+  assert.equal(flowStepAction(waitFlow, at("won"), st("won", bld), v(RYAN)), null);
+  assert.equal(flowStepAction(waitFlow, at("signoff"), st("lost", bld), v(SOFIA)), null);
+  // The seeded default flow (keep owners): no Complete step even for a person assignee.
+  const std = [S("s1", "Triage", "triage", 1), S("s2", "Todo", "unstarted", 2), S("s4", "In Review", "started", 4), S("s5", "Done", "done", 5)];
+  const def = resolveFlowSteps(DEFAULT_FLOW_STEPS, std, dir, { source: "org", version: 1 });
+  assert.equal(flowStepAction(def, stepById(def, "build"), std[1], v(MIA, { assigneeId: MIA, assigneeIsPerson: true })), null);
+});
+
+test("pause / resume flow: creator, assignee or admin", () => {
+  const base = { createdBy: "c", assigneeId: "a" };
+  assert.ok(canPauseFlow({ ...base, me: "c", isAdmin: false }));
+  assert.ok(canPauseFlow({ ...base, me: "a", isAdmin: false }));
+  assert.ok(canPauseFlow({ ...base, me: "x", isAdmin: true }));
+  assert.ok(!canPauseFlow({ ...base, me: "x", isAdmin: false }));
 });

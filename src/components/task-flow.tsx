@@ -1,12 +1,17 @@
 "use client";
 
-import { CheckIcon, HourglassIcon, PauseIcon, WorkflowIcon } from "lucide-react";
+import { useState } from "react";
+import { CheckIcon, HourglassIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrgBase } from "@/components/org-provider";
 import { MemberAvatar, UnassignedAvatar } from "@/components/bits";
-import { locateStep, nextStepOf, stepIndex } from "@/lib/flow-engine-core";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { canPauseFlow, flowStepAction, locateStep, nextStepOf, stepIndex, type FlowStepAction } from "@/lib/flow-engine-core";
 import type { ResolvedFlow, ResolvedStep } from "@/lib/flow-model";
 import { isClosedCategory, type Member, type Task } from "@/lib/types";
+import { advanceTaskStep, setTaskFlowPaused } from "@/app/actions/tasks";
 
 /**
  * Where a task is in its project's flow (VEC-178, docs/flows.md section 7), for the task pane's stepper and the
@@ -79,6 +84,110 @@ function WaitingChip({ step, task, className }: { step: ResolvedStep; task: Pick
   );
 }
 
+type FlowTaskFields = Pick<Task, "id" | "key" | "projectId" | "statusId" | "assigneeId" | "createdBy" | "flow" | "archivedAt">;
+
+/**
+ * Pause / Resume flow for the task pane menu (VEC-183, docs/flows.md 5.6): offered to the creator, the assignee or
+ * an admin on an open task whose project has a flow the UI shows. Paused, the flow ignores status and assignee
+ * edits and complete_task; resuming re-syncs it by status without handing it to anyone.
+ */
+export function useFlowPause(task: FlowTaskFields | null, onTask?: (t: Task) => void) {
+  const { org, me, isAdmin, flowByProject, statusById } = useOrgBase();
+  const [busy, setBusy] = useState(false);
+  const flow = task ? flowByProject.get(task.projectId) : undefined;
+  const status = task ? statusById.get(task.statusId) : undefined;
+  const paused = !!task?.flow?.paused;
+  const can =
+    !!task && !!flow && !task.archivedAt && (paused || !isClosedCategory(status?.category)) && canPauseFlow({ me: me.id, isAdmin, createdBy: task.createdBy, assigneeId: task.assigneeId });
+  const toggle = async () => {
+    if (!task || busy) return;
+    setBusy(true);
+    const r = await setTaskFlowPaused(org.slug, task.id, !paused);
+    setBusy(false);
+    if (!r.ok) return void toast.error(r.error);
+    if (r.data) onTask?.(r.data);
+    toast.success(paused ? `Resumed the flow on ${task.key}` : `Paused the flow on ${task.key}`, {
+      description: paused ? "It follows its flow again from the step of its status." : "Status and assignee changes won't hand it on until you resume it.",
+    });
+  };
+  return { can, paused, busy, toggle };
+}
+
+const sentence = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+/** The current step's person action (wait label / Complete step), with an optional note, for the stepper. */
+function StepActionRow({ task, action, onTask }: { task: FlowTaskFields; action: FlowStepAction; onTask?: (t: Task) => void }) {
+  const { org, memberById } = useOrgBase();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const next = action.next;
+  const nextOwner = (next.owner.kind === "bot" || next.owner.kind === "person") && next.owner.id ? memberById.get(next.owner.id)?.name : undefined;
+  const where = next.status.category === "done" ? `closes the task (${next.status.name})` : `moves it to ${next.name}${nextOwner ? ` for ${nextOwner}` : ""}`;
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    const r = await advanceTaskStep(org.slug, task.id, action.step.id, note.trim() || null);
+    setBusy(false);
+    if (!r.ok) return void toast.error(r.error);
+    if (r.data) onTask?.(r.data);
+    setOpen(false);
+    setNote("");
+    const done = next.status.category === "done" ? `Closed it (${next.status.name})` : `Moved it to ${next.name}${nextOwner ? ` for ${nextOwner}` : ""}`;
+    toast.success(`${action.kind === "wait" ? action.label : `Completed ${action.step.name}`} on ${task.key}`, { description: `${done}.` });
+  };
+  if (!open) {
+    return (
+      <div className="mt-2.5 flex items-center gap-2 border-t border-border pt-2.5">
+        <Button size="sm" className="h-7 gap-1.5" onClick={() => setOpen(true)}>
+          <CheckIcon className="size-3.5" /> {action.label}
+        </Button>
+        <span className="min-w-0 truncate text-muted-foreground">{sentence(where)}</span>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="mt-2.5 grid gap-2 border-t border-border pt-2.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void run();
+      }}
+    >
+      <label htmlFor={`flow-note-${task.id}`} className="text-muted-foreground">
+        {action.kind === "wait" ? "What happened? Optional, posted as a comment." : `A note for ${next.name}? Optional, posted as a comment.`}
+      </label>
+      <Textarea
+        id={`flow-note-${task.id}`}
+        autoFocus
+        value={note}
+        maxLength={10000}
+        onChange={(e) => setNote(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void run();
+          } else if (e.key === "Escape") {
+            e.stopPropagation();
+            setOpen(false);
+          }
+        }}
+        placeholder={action.kind === "wait" ? "e.g. Reply from J. Smith: wants a quote for 2 bathrooms" : "Anything the next step should know"}
+        className="min-h-14 text-[13px] md:text-[13px]"
+      />
+      <div className="flex items-center gap-2">
+        <Button type="submit" size="sm" className="h-7" disabled={busy}>
+          {action.label}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" className="h-7" disabled={busy} onClick={() => setOpen(false)}>
+          Cancel
+        </Button>
+        <span className="ml-auto min-w-0 truncate text-faint">{sentence(where)}</span>
+      </div>
+    </form>
+  );
+}
+
 interface Owner {
   member?: Member;
   id?: string;
@@ -128,9 +237,10 @@ function PaneWaiting({ step, task }: { step: ResolvedStep; task: Pick<Task, "flo
 }
 
 /** The task pane's compact stepper: completed steps, the current step and who has it, the next step and its owner. */
-export function FlowStepper({ task, className }: { task: Pick<Task, "projectId" | "statusId" | "assigneeId" | "flow">; className?: string }) {
-  const { memberById, statusById } = useOrgBase();
+export function FlowStepper({ task, className, onTask }: { task: FlowTaskFields & Pick<Task, "waitingOn">; className?: string; onTask?: (t: Task) => void }) {
+  const { memberById, statusById, me, isAdmin } = useOrgBase();
   const pos = useFlowPosition(task);
+  const pause = useFlowPause(task, onTask);
   if (!pos) return null;
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
 
@@ -144,14 +254,26 @@ export function FlowStepper({ task, className }: { task: Pick<Task, "projectId" 
         {pos.kind === "paused" ? <PauseIcon className="size-3.5 shrink-0" /> : <WorkflowIcon className="size-3.5 shrink-0" />}
         <span className="min-w-0 flex-1">
           {pos.kind === "paused"
-            ? "Flow paused: it isn't handed on automatically. A split task waits here while its sub-tasks run."
+            ? task.waitingOn.length
+              ? "Flow paused: it isn't handed on automatically. A split task waits here while its sub-tasks run."
+              : "Flow paused: status and assignee changes don't hand it on until the flow is resumed."
             : `Off its flow: ${statusName} isn't one of the flow's steps, so nobody is handed it until it moves back into one.`}
         </span>
+        {pos.kind === "paused" && pause.can && (
+          <Button size="sm" variant="outline" className="-my-1 h-7 gap-1.5 bg-background" disabled={pause.busy} onClick={() => void pause.toggle()}>
+            <PlayIcon className="size-3.5" /> Resume flow
+          </Button>
+        )}
       </section>
     );
   }
 
   const { flow, index, current, next, finished } = pos;
+  const status = statusById.get(task.statusId);
+  const action =
+    !finished && status && !task.archivedAt
+      ? flowStepAction(flow, current, status, { me: me.id, isAdmin, createdBy: task.createdBy, assigneeId: task.assigneeId, assigneeIsPerson: !!assignee && assignee.kind !== "bot" })
+      : null;
   const label = finished ? `Flow finished at ${current.name}` : `Step ${index + 1} of ${flow.steps.length}: ${current.name}`;
   return (
     <section aria-label="Flow" className={cn("rounded-lg border border-border px-3 py-2.5 text-[12.5px]", className)}>
@@ -205,6 +327,7 @@ export function FlowStepper({ task, className }: { task: Pick<Task, "projectId" 
           )}
         </dl>
       )}
+      {action && <StepActionRow key={`${current.id}:${task.statusId}`} task={task} action={action} onTask={onTask} />}
     </section>
   );
 }

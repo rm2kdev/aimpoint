@@ -18,6 +18,7 @@ import {
   type TaskPatch,
 } from "@/lib/task-service";
 import { retryHandOff } from "@/lib/retry-handoff";
+import { advanceStepAs, setFlowPausedAs } from "@/lib/flow-actions";
 import type { Counts, FeedItem, RetryOutcome, Task, TaskDetail, TaskDoc } from "@/lib/types";
 
 export type { MoveInput, NewTaskInput, TaskPatch };
@@ -46,6 +47,20 @@ export async function moveTaskAction(slug: string, taskKey: string, move: MoveIn
  */
 export async function retryTask(slug: string, taskId: string, force = false): Promise<Result<RetryOutcome>> {
   return guard(async () => retryHandOff(actorOf(await requireOrg(slug)), oid(taskId, "task"), { force: force === true }));
+}
+
+/**
+ * The task pane's flow step action (VEC-183): a wait step's "<wait label>" button or "Complete step" on a step a
+ * person holds. Moves it to the next step (like advance_task), posting `comment` first when given. `stepId` is the
+ * step shown, so a stale pane can't move it twice.
+ */
+export async function advanceTaskStep(slug: string, taskId: string, stepId: string, comment: string | null): Promise<Result<Task>> {
+  return guard(async () => advanceStepAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), { stepId: String(stepId ?? ""), comment: typeof comment === "string" ? comment : null }));
+}
+
+/** Pause / Resume the task's flow (VEC-183): creator, assignee or admin. Resuming re-syncs it by status. */
+export async function setTaskFlowPaused(slug: string, taskId: string, paused: boolean): Promise<Result<Task>> {
+  return guard(async () => setFlowPausedAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), paused === true));
 }
 
 export async function deleteTask(slug: string, taskId: string): Promise<Result> {

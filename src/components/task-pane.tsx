@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PauseIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -24,7 +24,7 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
 import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
-import { FlowStepper } from "@/components/task-flow";
+import { FlowStepper, useFlowPause } from "@/components/task-flow";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,6 +62,12 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const [confirmDelete, setConfirmDelete] = useState(false);
   const canRetry = useCanRetry(task);
   const retry = useRetryTask();
+  // The flow actions (VEC-183) answer with the moved task: update the list and this pane before the broadcast lands.
+  const onFlowTask = (t: Task) => {
+    onTask(t);
+    setTask((cur) => (cur ? { ...cur, ...t } : cur));
+  };
+  const flowPause = useFlowPause(task, onFlowTask);
   const [retrying, setRetrying] = useState(false);
   const onRetry = async () => {
     if (!task || retrying) return;
@@ -255,6 +261,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 <RotateCcwIcon className="size-4" /> {waiting.length ? "Retry the chain" : "Retry hand-off"}
               </DropdownMenuItem>
             )}
+            {flowPause.can && (
+              <DropdownMenuItem className="gap-2.5" disabled={flowPause.busy} onSelect={() => void flowPause.toggle()}>
+                {flowPause.paused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />} {flowPause.paused ? "Resume flow" : "Pause flow"}
+              </DropdownMenuItem>
+            )}
             {canEdit && (
               <>
                 <DropdownMenuItem className="gap-2.5" onSelect={() => setArchived(!task.archivedAt)}>
@@ -338,7 +349,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </p>
           )}
 
-          {!task.archivedAt && <FlowStepper task={task} className="mt-4" />}
+          {!task.archivedAt && <FlowStepper task={task} className="mt-4" onTask={onFlowTask} />}
 
           <dl className="mt-5 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[13px]">
             <dt className="text-faint">Status</dt>
@@ -754,6 +765,15 @@ function Feed({ feed }: { feed: FeedItem[] }) {
         const where = <b className="font-medium text-foreground">{f.flowStatus ?? f.to}</b>;
         const steps = f.from ? ` (${f.from} \u2192 ${f.to})` : "";
         if (f.note === "umbrella") return <>split this into sub-tasks, so its flow is paused while they run</>;
+        if (f.note === "paused") return <>paused its flow{f.from ? <> at <b className="font-medium text-foreground">{f.from}</b></> : null}</>;
+        if (f.note === "resumed")
+          return f.to ? (
+            <>
+              resumed its flow at the <b className="font-medium text-foreground">{f.to}</b> step
+            </>
+          ) : (
+            <>resumed its flow (its status isn&apos;t one of the flow&apos;s steps)</>
+          );
         if (f.note === "back" || f.note === "advanced") {
           return (
             <>
