@@ -38,6 +38,8 @@ export type WakeReason =
   | { kind: "triage"; taskId: ObjectId; taskKey: string; title: string; by: string; resumed?: boolean }
   /** A task this bot triaged is ready (its sub-tasks are closed: done or cancelled): summarise the work and close it out. */
   | { kind: "closeout"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string; retry?: boolean }
+  /** VEC-216 (webhook only): a person stopped this bot's work on the task; stop any run still working on it. */
+  | { kind: "stopped"; taskId: ObjectId; taskKey: string; title: string; by: string; work: "assigned" | "triage" }
   | { kind: "test" };
 
 interface WakeMessage {
@@ -63,7 +65,9 @@ export const reasonLabel = (r: WakeReason) =>
           ? `${r.resumed ? "resume triage" : "triage"} ${r.taskKey}`
           : r.kind === "closeout"
             ? `${r.retry ? "retry close-out" : "close out"} ${r.taskKey}`
-            : `mentioned on ${r.taskKey}`;
+            : r.kind === "stopped"
+              ? `stop ${r.taskKey}`
+              : `mentioned on ${r.taskKey}`;
 
 /** Schedules wake-ups after the response is sent. Never throws into the caller. */
 export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason) {
@@ -78,7 +82,7 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
       if (!org) return;
       // A stopped task (VEC-215) gets no work wake-up until it's resumed (Resume clears the stop, then wakes).
       // A mention is still delivered, as a question: mentionResumesWork is false while it's stopped.
-      if (reason.kind !== "test" && reason.kind !== "mentioned" && (await c.tasks.findOne({ _id: reason.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } }))) return;
+      if (reason.kind !== "test" && reason.kind !== "mentioned" && reason.kind !== "stopped" && (await c.tasks.findOne({ _id: reason.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } }))) return;
       const push = bots.filter((b) => b.connection && isPush(b.connection.method));
       await Promise.all(push.map((b) => (isQueuedWake(reason) ? dispatchWake(b, org, reason) : deliver(b, org, reason))));
     } catch (err) {
@@ -89,6 +93,52 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
     after(job);
   } catch {
     // Outside a request (scripts): run detached.
+    void job();
+  }
+}
+
+/**
+ * VEC-216: a person stopped `botId`'s work on a task (lib/stop-work.ts). Cut a run that's still going short where the
+ * backend allows: a Hermes run the wake-up started is cancelled (POST /v1/runs/{id}/stop, run ids kept on the claim);
+ * a webhook bot gets a task.stopped event; a Claude / OpenAI turn running inside a request aborts itself (stopWatch).
+ * Every backend's further tool calls on the task are refused meanwhile. Never throws into the caller.
+ */
+export function signalStop(orgId: ObjectId, stop: { taskId: ObjectId; botId: ObjectId; taskKey: string; title: string; by: string; work: "assigned" | "triage" }) {
+  const job = async () => {
+    try {
+      const c = await cols();
+      const [org, bot] = await Promise.all([c.orgs.findOne({ _id: orgId }), c.bots.findOne({ _id: stop.botId, orgId })]);
+      const conn = bot?.connection;
+      if (!org || !bot || !conn) return;
+      if (conn.method === "webhook") {
+        await deliver(bot, org, { kind: "stopped", taskId: stop.taskId, taskKey: stop.taskKey, title: stop.title, by: stop.by, work: stop.work });
+      } else if (conn.method === "hermes-api" && conn.url && conn.secretSealed) {
+        const runIds = [...new Set((await c.agentClaims.find({ botId: bot._id, taskId: stop.taskId, runId: { $type: "string" } }, { projection: { runId: 1 } }).toArray()).map((cl) => cl.runId!))];
+        const key = unseal(conn.secretSealed);
+        for (const runId of runIds) {
+          let out: BotDelivery;
+          try {
+            const res = await fetch(`${hermesBase(conn.url)}/v1/runs/${encodeURIComponent(runId)}/stop`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${key}` },
+              signal: AbortSignal.timeout(TIMEOUT_MS),
+            });
+            // 404: the run is already gone (finished and swept); nothing left to stop.
+            out = res.ok || res.status === 404 ? { at: new Date(), ok: true, reason: `stop ${stop.taskKey}`, status: res.status } : { at: new Date(), ok: false, reason: `stop ${stop.taskKey}`, status: res.status, error: await httpError(res, "Hermes") };
+          } catch (err) {
+            out = { at: new Date(), ok: false, reason: `stop ${stop.taskKey}`, error: friendlyNetworkError(err as Error) };
+          }
+          if (!out.ok) console.error(`[bot stop] ${bot.name}: couldn't stop Hermes run ${runId}: ${out.error}`);
+          await c.bots.updateOne({ _id: bot._id, "connection.method": conn.method }, { $set: { "connection.lastDelivery": out }, $push: { "connection.deliveries": { $each: [out], $slice: -BOT_DELIVERY_HISTORY } } });
+        }
+      }
+    } catch (err) {
+      console.error("[bot stop]", err);
+    }
+  };
+  try {
+    after(job);
+  } catch {
     void job();
   }
 }
@@ -164,6 +214,8 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
     const msg = await wakeMessage(bot, org, conn, reason);
     const res = await send(bot, org, conn, reason, msg, wake);
     if (res.ok) await markHandedOver(bot, org, reason);
+    // The run working on it, on the bot's claim: Stop (VEC-216) cancels it with POST /v1/runs/{id}/stop.
+    if (res.ok && res.runId && reason.kind !== "test") await (await cols()).agentClaims.updateMany({ botId: bot._id, taskId: reason.taskId }, { $set: { runId: res.runId } });
     out = res.ok
       ? { at: new Date(), ok: true, reason: reasonLabel(reason), status: res.status, ...meta }
       : { at: new Date(), ok: false, reason: reasonLabel(reason), status: res.status, error: res.error, ...meta };
@@ -191,7 +243,8 @@ export function friendlyNetworkError(e: Error) {
   return e.message || "Couldn't reach it.";
 }
 
-type SendResult = { ok: true; status: number } | { ok: false; status?: number; error: string };
+/** `runId`: the Hermes run the wake-up started, so Stop can cancel it (VEC-216). */
+type SendResult = { ok: true; status: number; runId?: string } | { ok: false; status?: number; error: string };
 
 /**
  * The task is now this bot's: same bookkeeping check_for_work does when it hands work out. Also used by the wake
@@ -243,7 +296,7 @@ async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: Wa
   if (conn.method === "claude-api" || conn.method === "openai-api") {
     const vectorKey = conn.vectorKeySealed ? unseal(conn.vectorKeySealed) : null;
     if (!secret || !vectorKey || !conn.vectorUrl || !conn.model) return { ok: false, error: "The connection is missing its key or model. Run setup again." };
-    const args = { bot, org, prompt: msg.prompt, apiKey: secret, vectorKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model };
+    const args = { bot, org, prompt: msg.prompt, apiKey: secret, vectorKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId };
     return conn.method === "claude-api" ? claudeApi(args) : openaiApi(args);
   }
   if (!conn.url || !secret) return { ok: false, error: "The connection is missing its address or key. Run setup again." };
@@ -293,6 +346,10 @@ export const PROGRESS_HINT =
 export const BLOCKER_NOTE =
   "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Aimpoint assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
 
+/** A person can stop a bot's work on a task (VEC-214/216): a refused tool call saying so means stop, not retry. */
+export const STOP_NOTE =
+  "A person can stop your work on a task at any time. If a tool call on it is refused with \"<name> stopped your work on KEY; don't continue\", stop: don't retry or work around it, leave the task as it is and end your turn. You'll be handed it again if they resume it.";
+
 /** A retried hand-off (VEC-159): the earlier run stopped part way (or never started), so carry on rather than redo. */
 /** The hand-back after a person stopped this bot's work and resumed it (VEC-215). */
 const STOP_RESUME_NOTE = (by: string, triage = false) =>
@@ -324,7 +381,7 @@ const RESUMED_NOTE = (w: StatusWords, current: string) =>
   }. Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
 
 const TOOLS_HINT = (w: StatusWords, mcp: string) =>
-  `Act on the ticket with the \`${mcp}\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people.`;
+  `Act on the ticket with the \`${mcp}\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people. ${STOP_NOTE}`;
 
 /** What the backend receives: who did what, the full task and thread, and how to act on it. */
 async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason): Promise<WakeMessage> {
@@ -356,7 +413,9 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const flow = task && project && (reason.kind === "assigned" || reason.kind === "ready") ? await flowBriefing(task, project.key) : null;
   const handoff = reason.kind === "assigned" ? reason.handoff : undefined;
   const head =
-    reason.kind === "triage"
+    reason.kind === "stopped"
+      ? `${reason.by} stopped your ${reason.work === "triage" ? "triage of" : "work on"} ${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}). Stop working on it now: end any run still working on it, don't call more tools on it and leave it as it is. While it's stopped Aimpoint refuses your changes to it (only a reply to a comment that @mentions you is accepted). If they resume it you get a task.resumed event with the task to carry on.`
+      : reason.kind === "triage"
       ? `${reason.resumed ? STOP_RESUME_NOTE(reason.by, true) : ""}${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Aimpoint (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
       : reason.kind === "closeout"
       ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
@@ -406,7 +465,11 @@ async function hermesRun(bot: BotDoc, org: OrgDoc, url: string, key: string, rea
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (res.ok) return { ok: true, status: res.status };
+  if (res.ok) {
+    // 202 {run_id, status}: kept on the claim so Stop can cancel the run (VEC-216).
+    const body = (await res.json().catch(() => null)) as { run_id?: unknown } | null;
+    return { ok: true, status: res.status, ...(typeof body?.run_id === "string" ? { runId: body.run_id } : {}) };
+  }
   // 409 on a retry: Hermes already admitted a run under this wake-up's key (the earlier attempt got through).
   if (res.status === 409 && wake && wake.attempt > 1) return { ok: true, status: res.status };
   return { ok: false, status: res.status, error: await httpError(res, "Hermes") };
@@ -438,58 +501,102 @@ interface ApiArgs {
   mcpUrl: string;
   model: string;
   prompt: string;
+  /** The task the turn is about (null for the connection test): Stop on it cuts the turn short (VEC-216). */
+  taskId: ObjectId | null;
+}
+
+const STOP_POLL_MS = 3_000;
+
+/**
+ * VEC-216: while a direct-API turn runs inside this request, poll whether a person stopped this bot's work on the task
+ * and abort the in-flight model request when they do (the provider stops generating once the connection drops), so
+ * neither Claude's pause_turn loop nor a long Responses call carries on. Any tool call that still lands is refused.
+ */
+function stopWatch(botId: ObjectId, taskId: ObjectId | null) {
+  const ctrl = new AbortController();
+  let stopped = false;
+  const check = async () => {
+    if (!taskId || stopped) return stopped;
+    const hit = await (await cols()).tasks.findOne({ _id: taskId, "stopped.botId": botId }, { projection: { _id: 1 } }).catch(() => null);
+    if (hit) {
+      stopped = true;
+      ctrl.abort(new Error("stopped"));
+    }
+    return stopped;
+  };
+  const timer = taskId ? setInterval(() => void check(), STOP_POLL_MS) : null;
+  return { signal: ctrl.signal, check, isStopped: () => stopped, done: () => timer && clearInterval(timer) };
 }
 
 /** Messages API with the MCP connector: Anthropic calls Vector's MCP server itself. */
 async function claudeApi(a: ApiArgs): Promise<SendResult> {
   const messages: { role: "user" | "assistant"; content: unknown }[] = [{ role: "user", content: a.prompt }];
   const deadline = AbortSignal.timeout(AGENT_TURN_MS);
-  // Long tool loops come back as pause_turn; send the partial turn back to let Claude continue.
-  for (let i = 0; i < 6; i++) {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": a.apiKey,
-        "anthropic-version": "2023-06-01",
-        "anthropic-beta": "mcp-client-2025-11-20",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: a.model,
-        max_tokens: 4096,
-        system: wakeInstructions(a.bot, a.org),
-        messages,
-        mcp_servers: [{ type: "url", url: a.mcpUrl, name: MCP_SERVER_NAME, authorization_token: a.vectorKey }],
-        tools: [{ type: "mcp_toolset", mcp_server_name: MCP_SERVER_NAME }],
-      }),
-      signal: deadline,
-    });
-    if (!res.ok) return { ok: false, status: res.status, error: await httpError(res, "Anthropic") };
-    const msg = (await res.json()) as { stop_reason?: string; content?: unknown[] };
-    if (msg.stop_reason !== "pause_turn") return { ok: true, status: res.status };
-    messages.push({ role: "assistant", content: msg.content ?? [] });
+  const watch = stopWatch(a.bot._id, a.taskId);
+  try {
+    // Long tool loops come back as pause_turn; send the partial turn back to let Claude continue, unless a person
+    // stopped the work meanwhile (VEC-216): then the turn ends here.
+    for (let i = 0; i < 6; i++) {
+      if (await watch.check()) return { ok: true, status: 200 };
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": a.apiKey,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "mcp-client-2025-11-20",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: a.model,
+          max_tokens: 4096,
+          system: wakeInstructions(a.bot, a.org),
+          messages,
+          mcp_servers: [{ type: "url", url: a.mcpUrl, name: MCP_SERVER_NAME, authorization_token: a.vectorKey }],
+          tools: [{ type: "mcp_toolset", mcp_server_name: MCP_SERVER_NAME }],
+        }),
+        signal: AbortSignal.any([deadline, watch.signal]),
+      });
+      if (!res.ok) return { ok: false, status: res.status, error: await httpError(res, "Anthropic") };
+      const msg = (await res.json()) as { stop_reason?: string; content?: unknown[] };
+      if (msg.stop_reason !== "pause_turn") return { ok: true, status: res.status };
+      messages.push({ role: "assistant", content: msg.content ?? [] });
+    }
+    return { ok: true, status: 200 };
+  } catch (err) {
+    // Cut short by a Stop: the wake-up was delivered, the work is stopped (nothing to retry).
+    if (watch.isStopped()) return { ok: true, status: 200 };
+    throw err;
+  } finally {
+    watch.done();
   }
-  return { ok: true, status: 200 };
 }
 
 /** Responses API with a remote MCP tool: OpenAI calls Vector's MCP server itself. */
 async function openaiApi(a: ApiArgs): Promise<SendResult> {
-  const res = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${a.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: a.model,
-      instructions: wakeInstructions(a.bot, a.org),
-      input: a.prompt,
-      tools: [{ type: "mcp", server_label: MCP_SERVER_NAME, server_url: a.mcpUrl, authorization: a.vectorKey, require_approval: "never" }],
-      store: false,
-    }),
-    signal: AbortSignal.timeout(AGENT_TURN_MS),
-  });
-  if (!res.ok) return { ok: false, status: res.status, error: await httpError(res, "OpenAI") };
-  const out = (await res.json()) as { status?: string; error?: { message?: string } | null };
-  if (out.status === "failed") return { ok: false, status: res.status, error: out.error?.message ?? "OpenAI reported the run failed." };
-  return { ok: true, status: res.status };
+  const watch = stopWatch(a.bot._id, a.taskId);
+  try {
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${a.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: a.model,
+        instructions: wakeInstructions(a.bot, a.org),
+        input: a.prompt,
+        tools: [{ type: "mcp", server_label: MCP_SERVER_NAME, server_url: a.mcpUrl, authorization: a.vectorKey, require_approval: "never" }],
+        store: false,
+      }),
+      signal: AbortSignal.any([AbortSignal.timeout(AGENT_TURN_MS), watch.signal]),
+    });
+    if (!res.ok) return { ok: false, status: res.status, error: await httpError(res, "OpenAI") };
+    const out = (await res.json()) as { status?: string; error?: { message?: string } | null };
+    if (out.status === "failed") return { ok: false, status: res.status, error: out.error?.message ?? "OpenAI reported the run failed." };
+    return { ok: true, status: res.status };
+  } catch (err) {
+    if (watch.isStopped()) return { ok: true, status: 200 }; // cut short by a Stop (VEC-216)
+    throw err;
+  } finally {
+    watch.done();
+  }
 }
 
 /** Checks a provider key and model id without running anything. */
@@ -520,7 +627,10 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
   const id = wake ? `wake-${wake.wakeId.toHexString()}` : randomUUID();
   const ts = Math.floor(Date.now() / 1000).toString();
   // A flow hand-off is its own event (VEC-175); its payload also carries the step, instructions and what's next.
-  const event = reason.kind === "test" ? "ping" : reason.kind === "assigned" && reason.handoff && !reason.retry ? "task.handoff" : `task.${reason.kind}`;
+  // VEC-216: the hand-back after a Stop is task.resumed (`resumes` says which work: task.assigned or task.triage).
+  const resumed = (reason.kind === "assigned" || reason.kind === "triage") && !!reason.resumed;
+  const event =
+    reason.kind === "test" ? "ping" : resumed ? "task.resumed" : reason.kind === "assigned" && reason.handoff && !reason.retry ? "task.handoff" : `task.${reason.kind}`;
   const body = JSON.stringify({
     type: event,
     id,
@@ -531,7 +641,9 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     // VEC-159: a person asked for this hand-off again (the bot's earlier run on it stopped).
     ...((reason.kind === "assigned" || reason.kind === "closeout") && reason.retry ? { retry: true } : {}),
     // VEC-215: the hand-back after a person stopped this bot's work and resumed it.
-    ...((reason.kind === "assigned" || reason.kind === "triage") && reason.resumed ? { resumed: true } : {}),
+    ...(resumed ? { resumed: true, resumes: `task.${reason.kind}` } : {}),
+    // VEC-216: task.stopped says which work was stopped.
+    ...(reason.kind === "stopped" ? { stopped: { work: reason.work } } : {}),
     ...(msg.flow ? { flow: msg.flow } : {}),
     prompt: msg.prompt,
     sentAt: new Date().toISOString(),

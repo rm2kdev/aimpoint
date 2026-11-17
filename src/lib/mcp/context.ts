@@ -349,6 +349,23 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     priority: PRIORITY_LABEL[task.priority],
     dueDate: task.dueDate ? task.dueDate.toISOString().slice(0, 10) : null,
     archived: !!task.archivedAt,
+    /**
+     * VEC-216: a person stopped a bot's work on this task (`by`, `at`), and it stays paused until they resume it.
+     * `you` true = it was your work: don't continue; Aimpoint refuses your changes to it (and to tasks linking to it)
+     * meanwhile, except a reply to a mention made after the stop. Resume hands it back with a fresh wake-up.
+     */
+    stopped: task.stopped
+      ? {
+          by: personRef(dir, task.stopped.by),
+          at: task.stopped.at.toISOString(),
+          bot: personRef(dir, task.stopped.botId),
+          kind: task.stopped.kind,
+          you: task.stopped.botId.equals(bot._id),
+          note: task.stopped.botId.equals(bot._id)
+            ? `${personRef(dir, task.stopped.by)?.name ?? "A person"} stopped your ${task.stopped.kind === "triage" ? "triage of" : "work on"} ${key}; don't continue. Your changes to it are refused until they resume it, which hands it back to you.`
+            : `${personRef(dir, task.stopped.by)?.name ?? "A person"} stopped ${personRef(dir, task.stopped.botId)?.name ?? "a bot"}'s ${task.stopped.kind === "triage" ? "triage" : "work"} on ${key}; it's paused until they resume it.`,
+        }
+      : null,
     dependencies,
     /**
      * The task's place in its project's flow (null = the project has no flow). `step` = the step it's at (owner,

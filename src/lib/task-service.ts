@@ -15,6 +15,7 @@ import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, open
 import { planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
 import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
 import { requireFormDestination } from "@/lib/project-forms";
+import { assertNotStopped } from "@/lib/stop-guard";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -359,6 +360,8 @@ interface CreateInternal {
 export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: CreateInternal = {}): Promise<Task> {
   const title = (input.title ?? "").trim();
   if (!title) throw new UserError("Give the task a title.");
+  // A bot whose work a person stopped can't link new tasks to that task (VEC-216).
+  await assertNotStopped(actor, input.dependsOn ?? []);
   if (title.length > 300) throw new UserError("Keep titles under 300 characters.");
   const c = await cols();
   const projectId = oid(input.projectId, "project");
@@ -523,6 +526,8 @@ export async function updateTaskAs(
   const c = await cols();
   const before = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
   if (!before) throw new UserError("This task no longer exists.");
+  // The stopped bot's writes on a stopped task, or linking another task to it, are refused (VEC-216).
+  await assertNotStopped(actor, [taskId, ...(patch.dependsOn ?? [])]);
   const access = taskAccess(
     { createdBy: before.createdBy.toHexString(), assigneeId: before.assigneeId?.toHexString() ?? null },
     actor.id.toHexString(),
@@ -859,6 +864,7 @@ export async function moveTask(actor: Actor, taskKey: string, input: MoveInput):
   const found = await findTaskByKey(actor.orgId, String(taskKey ?? ""));
   if (!found || !found.task.orgId.equals(actor.orgId)) throw new UserError(`Unknown task "${taskKey}".`);
   const task = found.task;
+  await assertNotStopped(actor, [task._id]); // VEC-216
   if (!canEditTask(task, actor.id, actor.isAdmin)) throw new UserError("Only the task's creator or an admin can move it.");
 
   const neighbour = async (key: string | null | undefined, side: string) => {
@@ -908,6 +914,7 @@ export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {
   const c = await cols();
   const t = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
   if (!t) return;
+  await assertNotStopped(actor, [taskId]); // VEC-216
   if (!canEditTask(t, actor.id, actor.isAdmin)) throw new UserError("Only the task's creator or an admin can delete it.");
   // Tasks waiting on this one stop waiting (and are handed over if it was the last thing they waited for).
   await detachDeleted(actor.orgId, byOf(actor), [taskId]);
@@ -931,6 +938,8 @@ export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string)
   const c = await cols();
   const target = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId }, { projection: { _id: 1, projectId: 1, number: 1, title: 1 } });
   if (!target) throw new UserError("This task no longer exists.");
+  // A stopped bot may only answer a mention made after the stop (VEC-216).
+  await assertNotStopped(actor, [taskId], { reply: true });
   // Mentions are <@id> tokens; keep only ids that are members or bots of this org.
   const ids = [...new Set([...text.matchAll(/<@([a-f0-9]{24})>/g)].map((m) => m[1]))].map((id) => new ObjectId(id));
   let mentions: ObjectId[] = [];

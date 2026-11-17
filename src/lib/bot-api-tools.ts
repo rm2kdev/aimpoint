@@ -11,6 +11,7 @@ export async function runAsTool(req: Request, ctx: BotCtx, tool: string, args: R
   const r = await callTool(tool, args, { ...ctx, origin: new URL(req.url).origin });
   const message = r.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("\n");
   if (!r.isError) return { message };
-  const status = /there's no task|isn't a task key/i.test(message) ? 404 : /^only |role doesn't allow/i.test(message) ? 403 : 400;
+  // 409: a person stopped this bot's work on the task (VEC-216).
+  const status = /there's no task|isn't a task key/i.test(message) ? 404 : /^only |role doesn't allow/i.test(message) ? 403 : /^[^\n]* stopped your (work on|triage of) /.test(message) ? 409 : 400;
   return Response.json({ error: message }, { status });
 }

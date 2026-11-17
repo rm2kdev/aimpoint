@@ -636,6 +636,8 @@ export interface AgentClaimDoc {
   kind?: "assigned" | "triage";
   /** "stopped" (VEC-215): a person stopped this work (TaskDoc.stopped). Not working, not finished, never handed out. */
   state: "in_progress" | "done" | "stopped";
+  /** VEC-216: the Hermes run the push wake-up started for this work, so Stop can cancel it (POST /v1/runs/{id}/stop). */
+  runId?: string | null;
   claimedAt: Date;
   finishedAt?: Date | null;
 }

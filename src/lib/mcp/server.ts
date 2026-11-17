@@ -7,7 +7,7 @@ import { groupStatusesByProject, loadStatusWords, resolveProjectStatus, reviewWo
 import { toolsForBot } from "@/lib/bots";
 import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
-import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
+import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { taskAccess } from "@/lib/access";
 import { advanceTarget, atWaitStep, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
@@ -16,6 +16,7 @@ import { botOrgFlows } from "@/lib/flow-bot-view";
 import { botNewTaskViews, NEW_TASKS_NOTE } from "@/lib/project-defaults";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
+import { stopRefusal } from "@/lib/stop-guard";
 import { computeAnalytics } from "@/lib/analytics";
 import { ANALYTICS_PARAM_DOCS, resolveAnalyticsExport } from "@/lib/analytics-export";
 import {
@@ -160,7 +161,8 @@ async function openStatusIds(orgId: ObjectId) {
 async function unclaimedAssigned(ctx: McpCtx) {
   const c = await cols();
   const tasks = await c.tasks
-    .find({ orgId: ctx.org._id, assigneeId: ctx.bot._id, archivedAt: null, statusId: { $in: await openStatusIds(ctx.org._id) }, ...READY }, { projection: { description: 0 } })
+    // A stopped task (VEC-216) is never handed out, also when the stop left no claim behind (a queued hand-off).
+    .find({ orgId: ctx.org._id, assigneeId: ctx.bot._id, archivedAt: null, stopped: null, statusId: { $in: await openStatusIds(ctx.org._id) }, ...READY }, { projection: { description: 0 } })
     .limit(500)
     .toArray();
   const claimed = new Set(
@@ -190,6 +192,7 @@ async function closeoutFilter(ctx: McpCtx) {
     "closeout.deliveredAt": null,
     "closeout.resolvedAt": null,
     archivedAt: null,
+    stopped: null,
     statusId: { $in: await openStatusIds(ctx.org._id) },
     ...READY,
   };
@@ -289,7 +292,7 @@ async function triageQueue(ctx: McpCtx) {
   const c = await cols();
   const ids = (await c.statuses.find({ orgId: ctx.org._id, category: "triage" }, { projection: { _id: 1 } }).toArray()).map((s) => s._id);
   if (!ids.length) return { hasTriage: false, tasks: [] as TaskDoc[] };
-  const tasks = await c.tasks.find({ orgId: ctx.org._id, archivedAt: null, statusId: { $in: ids } }, { projection: { description: 0 } }).sort({ createdAt: 1 }).limit(500).toArray();
+  const tasks = await c.tasks.find({ orgId: ctx.org._id, archivedAt: null, stopped: null, statusId: { $in: ids } }, { projection: { description: 0 } }).sort({ createdAt: 1 }).limit(500).toArray();
   const taken = new Set(
     (await c.agentClaims.find({ kind: "triage", taskId: { $in: tasks.map((t) => t._id) } }, { projection: { taskId: 1 } }).toArray()).map((x) => x.taskId.toHexString()),
   );
@@ -432,6 +435,9 @@ const TOOLS: Record<string, ToolImpl> = {
         const resumed = await resumeOnMention(ctx.org._id, ctx.bot._id, task._id);
         const fresh = resumed ? ((await c.tasks.findOne({ _id: task._id })) ?? task) : task;
         const w = await loadStatusWords(ctx.org._id, fresh.projectId);
+        const stoppedNote = fresh.stopped?.botId.equals(ctx.bot._id)
+          ? ` ${(await loadDirectory(ctx.org._id)).get(fresh.stopped.by.toHexString())?.name ?? "A person"} has stopped your work on ${key} (see \`stopped\`), so answer the comment and nothing more: don't carry on with the task. It's handed back to you if they resume it.`
+          : "";
         const resumeNote = resumed
           ? ` You're its assignee, so this hands the work back to you: it's picked up by you again and ${w.started ? `Aimpoint moved it back to ${w.started} (no need to set that yourself)` : `it stays in ${(await c.statuses.findOne({ _id: fresh.statusId, orgId: ctx.org._id }, { projection: { name: 1 } }))?.name ?? "its current status"}, since this project has no started status`}. Do what the comment asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`
           : "";
@@ -439,7 +445,7 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           fresh,
           project,
-          `You've been mentioned in a comment on ${key} "${task.title}" (project ${project.name}).\n\n${quote}\n\nRead the task and the whole thread below, then respond with add_comment (task "${key}"). The comments marked "new": true are the ones that mentioned you.${resumeNote}`,
+          `You've been mentioned in a comment on ${key} "${task.title}" (project ${project.name}).\n\n${quote}\n\nRead the task and the whole thread below, then respond with add_comment (task "${key}"). The comments marked "new": true are the ones that mentioned you.${stoppedNote}${resumeNote}`,
           { includeImages, highlight: commentIds, extra: { kind: "mention", resumed, mentionCommentIds: commentIds.map((id) => id.toHexString()), queue: await queueCounts(ctx) } },
         );
       }
@@ -499,7 +505,7 @@ const TOOLS: Record<string, ToolImpl> = {
             waiting
               ? ` It's waiting at a flow step, so Aimpoint doesn't count you as working on it: watch for what it waits for and move it on with advance_task when that happens.`
               : `${moved ? ` It's now picked up by you, and Aimpoint moved it to ${w.started ?? "a started status"} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back).`
-          }${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
+          }${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE} ${STOP_NOTE}\n\n${PROGRESS_HINT}`,
           { includeImages, extra: { kind: "assigned", ...(waiting ? { waiting: true } : {}), queue: await queueCounts(ctx), ...(flow ? { flow: flow.payload } : {}) } },
         );
       }
@@ -553,7 +559,7 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           task,
           project,
-          `Triage ${key} "${task.title}" in project ${project.name}. It's now being triaged by you; no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(key, await loadStatusWords(ctx.org._id, task.projectId))}`,
+          `Triage ${key} "${task.title}" in project ${project.name}. It's now being triaged by you; no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(key, await loadStatusWords(ctx.org._id, task.projectId))}\n\n${STOP_NOTE}`,
           { includeImages: bool(args, "include_images", true), extra: { kind: "triage", waitingInTriage: tasks.length - i - 1, workspace: await workspaceSummary(ctx) } },
         );
       }
@@ -575,7 +581,7 @@ const TOOLS: Record<string, ToolImpl> = {
   list_my_tasks: {
     readOnly: true,
     description:
-      "Open tasks assigned to you, plus tasks you've picked up and not finished. `yourState` is in_progress, done or null (not picked up yet). `ready` is false while a task it depends on isn't done (`waitingOn` lists them); check_for_work offers those once they're ready.",
+      "Open tasks assigned to you, plus tasks you've picked up and not finished. `yourState` is in_progress, done or null (not picked up yet). `ready` is false while a task it depends on isn't done (`waitingOn` lists them); check_for_work offers those once they're ready. Tasks a person stopped your work on are listed apart under `stopped` (who, when): don't work on them; they're handed back to you if they're resumed.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     run: async (_args, ctx) => {
       const c = await cols();
@@ -588,7 +594,16 @@ const TOOLS: Record<string, ToolImpl> = {
         .sort({ priority: -1, updatedAt: -1 })
         .limit(200)
         .toArray();
-      return { content: [json({ tasks: await summarise(ctx, tasks as TaskDoc[]) })] };
+      // Stopped by a person (VEC-216): not work to do, so listed apart with who stopped it and when.
+      const mine = (t: TaskDoc) => !!t.stopped?.botId.equals(ctx.bot._id);
+      const stoppedRows = await summarise(ctx, (tasks as TaskDoc[]).filter(mine));
+      const dir = stoppedRows.length ? await loadDirectory(ctx.org._id) : null;
+      const stopInfo = new Map((tasks as TaskDoc[]).filter(mine).map((t) => [t._id.toHexString(), t.stopped!]));
+      const stopped = (tasks as TaskDoc[]).filter(mine).map((t, i) => {
+        const s = stopInfo.get(t._id.toHexString())!;
+        return { ...stoppedRows[i], stoppedBy: personName(dir!, s.by), stoppedAt: s.at.toISOString(), stoppedWork: s.kind };
+      });
+      return { content: [json({ tasks: await summarise(ctx, (tasks as TaskDoc[]).filter((t) => !mine(t))), ...(stopped.length ? { stopped } : {}) })] };
     },
   },
 
@@ -1040,6 +1055,20 @@ export async function callTool(name: string, args: Args, ctx: McpCtx): Promise<T
     return { isError: true, content: [text(`${ctx.bot.name}'s bot role doesn't allow ${name}. Ask an admin to change the role under Settings → Bots → Roles.`)] };
   }
   try {
+    // VEC-216: the bot a person stopped can't write to that task, or link to it, until it's resumed. Checked before the
+    // tool runs, so complete_task / release_task / advance_task never touch the stopped claim either.
+    if (!impl.readOnly) {
+      const a = args ?? {};
+      const refs = [a.task, a.before, a.after, ...(Array.isArray(a.depends_on) ? a.depends_on : [])].filter((r): r is string | number => typeof r === "string" || typeof r === "number");
+      const ids: ObjectId[] = [];
+      for (const ref of refs) {
+        try {
+          ids.push((await findTask(ctx, String(ref))).task._id);
+        } catch {} // unknown keys are the tool's own error to report
+      }
+      const refusal = await stopRefusal(ctx.bot._id, ids, { reply: name === "add_comment" && a.task !== undefined && ids.length === 1 });
+      if (refusal) return { isError: true, content: [text(refusal.message)] };
+    }
     return await impl.run(args ?? {}, ctx);
   } catch (err) {
     if (err instanceof ToolInputError || err instanceof UserError) return { isError: true, content: [text(err.message)] };
@@ -1055,6 +1084,7 @@ Typical loop: call check_for_work. It returns one item at a time:
 - kind "assigned": a task assigned to you, now picked up by you and moved to In Progress for you. Do the work, hand it on with assign_task if needed, then call complete_task with Done (releases the tasks waiting on it), or In Review only when a named person must check something (@mention them).
 - kind "idle": nothing new.
 While you work an assigned task (or one a mention handed back to you), keep its ticket posted with add_comment: a short plan when you pick it up, then a few plain-text lines at each milestone and at least every ~10 minutes saying what's done and what's next, never one per tool call, and straight away when you're blocked or waiting on someone (@mention them). The assigned hand-out repeats the details.
+A person can stop your work on a task (Stop in the task's menu). If a tool call is refused with "<name> stopped your work on KEY; don't continue", stop working on that task: don't retry the call or work around it, leave it as it is and end your turn. The task's \`stopped\` field says who stopped it and when; while it's stopped you're only allowed to answer a comment that @mentions you on it. If they resume it, you're handed it again with a fresh wake-up.
 Call check_for_work again until it says idle. Use get_workspace for project keys, each project's statuses and people's ids.
 Statuses are per project: every project has its own list, a task only takes a status of its own project (by that project's names; a task's context lists them under \`project.statuses\`), and Aimpoint acts on each status's stage (backlog, triage, unstarted, started, done, cancelled), not its name. The names used here (Todo, In Progress, In Review, Done, Cancelled) are the defaults; a project may have renamed them.
 If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task, chain them with \`depends_on\` so they run in a logical order, make the original depend on them, then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).

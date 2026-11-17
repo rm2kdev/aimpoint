@@ -4,6 +4,7 @@ import { authenticateBot, toolsForBot } from "@/lib/bots";
 import { cols } from "@/lib/db";
 import { findTaskByKey } from "@/lib/data";
 import { UserError } from "@/lib/result";
+import { StoppedWorkError } from "@/lib/stop-guard";
 import { resolveProjectStatus, statusFilterIds } from "@/lib/statuses";
 import type { Actor } from "@/lib/task-service";
 import { isTaskType, type BotDoc, type OrgDoc } from "@/lib/types";
@@ -35,6 +36,8 @@ export function botRoute<P>(handler: (req: Request, ctx: BotCtx, params: P) => P
       const data = await handler(req, { ...auth, actor: { orgId: auth.org._id, id: auth.bot._id, isAdmin: false, isBot: true } }, await routeCtx.params);
       return data instanceof Response ? data : Response.json(data);
     } catch (err) {
+      // A person stopped this bot's work on the task (VEC-216): 409 with who and when.
+      if (err instanceof StoppedWorkError) return Response.json({ error: err.message, stopped: err.stop }, { status: 409 });
       if (err instanceof UserError) {
         const status = /only the task's creator/i.test(err.message) ? 403 : /no longer exists|unknown task/i.test(err.message) ? 404 : 400;
         return Response.json({ error: err.message }, { status });

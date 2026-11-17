@@ -5,7 +5,7 @@ import { UserError } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { toFeed, toTask, withWorkingBots } from "@/lib/data";
 import { isPush } from "@/lib/bot-connect";
-import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
+import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { loadTaskFlow } from "@/lib/flow-engine";
 import { flowPauseState } from "@/lib/flow-actions";
 import type { Actor } from "@/lib/task-service";
@@ -115,6 +115,8 @@ export async function stopWorkAs(actor: Actor, taskId: ObjectId): Promise<Task> 
   await publish(hex(actor.orgId), { type: "task.upsert", actorId: hex(actor.id), task: out }, { workingLoaded: true });
   if (moveTo) await record(actor, taskId, { kind: "status", from: hex(task.statusId), to: hex(moveTo), note: "stopped_work" }, now);
   await record(actor, taskId, { kind: "stopped", to: hex(botId), ...(kind === "triage" ? { note: "triage" as ActivityNote } : {}) }, now);
+  // Cut a run that's still going short (VEC-216): cancel the Hermes run, tell a webhook bot (task.stopped).
+  signalStop(actor.orgId, { taskId, botId, taskKey: `${key}-${after.number}`, title: after.title, by: await actorName(actor), work: kind });
   return out;
 }
 
