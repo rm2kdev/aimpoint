@@ -310,11 +310,7 @@ async function finishClaimsOnClose(orgId: ObjectId, taskId: ObjectId) {
   const c = await cols();
   const now = new Date();
   const filter = { taskId, state: "in_progress" as const, kind: { $ne: "triage" as const } };
-  const bots = (await c.agentClaims.distinct("botId", filter)) as ObjectId[];
   await c.agentClaims.updateMany(filter, { $set: { state: "done", finishedAt: now } });
-  // Their slots on a limited plan are free now (VEC-225): send what was held for them. The wake queue is loaded
-  // lazily: it imports this module.
-  if (bots.length) void import("@/lib/wake-queue").then((m) => m.kickHeld(orgId, bots)).catch((err) => console.error("[bot wake] kick failed", err));
 }
 
 /** Assignees can be org members or the org's bots. */

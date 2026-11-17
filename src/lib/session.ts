@@ -67,17 +67,36 @@ export const requireOrgPage = cache(async (slug: string): Promise<OrgContext> =>
   return ctx;
 });
 
+export interface RequireOrgOptions {
+  admin?: boolean;
+  /**
+   * VEC-263: by default a locked org (hosted, no live subscription) is refused with OrgLockedError (a UserError, so
+   * guard() shows the lock message and REST answers 402). Only the paths a locked org must keep (Settings > Billing,
+   * the debug billing switch, your own notifications) pass `locked: "allow"`.
+   */
+  locked?: "allow";
+}
+
+/** Refuses a locked org (VEC-263). Imported lazily: lib/billing -> lib/result -> this module is an import cycle. */
+async function assertActive(ctx: OrgContext, opts: RequireOrgOptions) {
+  if (opts.locked === "allow") return;
+  const { assertOrgActive, billingOn } = await import("@/lib/billing");
+  await billingOn();
+  assertOrgActive(ctx.org, { isAdmin: ctx.isAdmin });
+}
+
 /** For actions / route handlers: throws instead of redirecting. */
-export async function requireOrg(slug: string, opts: { admin?: boolean } = {}): Promise<OrgContext> {
+export async function requireOrg(slug: string, opts: RequireOrgOptions = {}): Promise<OrgContext> {
   const user = await currentUser();
   if (!user) throw new AuthError("You are signed out. Sign in and try again.");
   const ctx = await orgFor(user, slug);
   if (!ctx) throw new AuthError("You are not a member of this organisation.");
   if (opts.admin && !ctx.isAdmin) throw new AuthError("Only admins can do that.");
+  await assertActive(ctx, opts);
   return ctx;
 }
 
-export async function requireOrgById(orgId: string): Promise<OrgContext> {
+export async function requireOrgById(orgId: string, opts: RequireOrgOptions = {}): Promise<OrgContext> {
   const user = await currentUser();
   if (!user) throw new AuthError("Signed out");
   if (!ObjectId.isValid(orgId)) throw new AuthError("Unknown organisation");
@@ -86,7 +105,10 @@ export async function requireOrgById(orgId: string): Promise<OrgContext> {
   if (!org) throw new AuthError("Unknown organisation");
   const membership = await memberships.findOne({ orgId: org._id, userId: user._id });
   if (!membership) throw new AuthError("Not a member");
-  return { user, org, membership, isAdmin: membership.role === "admin" };
+  const ctx = { user, org, membership, isAdmin: membership.role === "admin" };
+  if (opts.admin && !ctx.isAdmin) throw new AuthError("Only admins can do that.");
+  await assertActive(ctx, opts);
+  return ctx;
 }
 
 async function orgFor(user: UserDoc, slug: string): Promise<OrgContext | null> {

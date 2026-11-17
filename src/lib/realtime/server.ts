@@ -3,6 +3,8 @@ import { EventEmitter } from "node:events";
 import Pusher from "pusher";
 import { ObjectId } from "mongodb";
 import { loadBotWorkload, withWorkingBots } from "@/lib/data";
+import { billingOn } from "@/lib/billing";
+import { orgActiveById } from "@/lib/billing-limits";
 import type { RealtimeEvent } from "./events";
 
 /**
@@ -54,16 +56,34 @@ export function localPresence(orgId: string, userId: string, delta: 1 | -1) {
  * stale or empty list). The task object is updated in place, so a caller returning it gets the same list.
  */
 export async function publish(orgId: string, event: RealtimeEvent, opts: { workingLoaded?: boolean } = {}) {
+  const live = await liveOrg(orgId, event);
   try {
-    if (event.type === "task.upsert" && !opts.workingLoaded) await withWorkingBots([event.task]);
-    await emit(orgId, event);
+    if (live) {
+      if (event.type === "task.upsert" && !opts.workingLoaded) await withWorkingBots([event.task]);
+      await emit(orgId, event);
+    }
   } catch (err) {
     // Real-time is best-effort; the write already succeeded.
     console.error("[realtime] publish failed", err);
   }
   // Every change that can move a task in or out of "unassigned" Stalled ends in its task.upsert (VEC-108).
   if (event.type === "task.upsert") await (await import("@/lib/stalled-notice")).syncStalledNotice(orgId, event.task);
-  if (WORKLOAD_TRIGGERS.has(event.type)) await refreshWorkload(orgId);
+  if (live && WORKLOAD_TRIGGERS.has(event.type)) await refreshWorkload(orgId);
+}
+
+/**
+ * VEC-263: a locked org (hosted, no live subscription) gets no realtime events, since Pusher messages are the cost
+ * driver. `org.changed` still goes out, so a tab that was open when the org locked (or unlocked) refreshes into the
+ * right state. Billing off (self-hosted) is always live. A failed lookup publishes as before.
+ */
+async function liveOrg(orgId: string, event: RealtimeEvent): Promise<boolean> {
+  if (event.type === "org.changed") return true;
+  try {
+    if (!(await billingOn())) return true;
+    return await orgActiveById(new ObjectId(orgId));
+  } catch {
+    return true;
+  }
 }
 
 async function emit(orgId: string, event: RealtimeEvent) {

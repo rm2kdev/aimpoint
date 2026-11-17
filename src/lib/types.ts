@@ -409,8 +409,8 @@ export interface TaskDoc {
    */
   triagedBy?: ObjectId | null;
   /**
-   * VEC-225: a push triager was skipped for this Triage task because it was at its plan's limit of simultaneous work
-   * (Free: one task), and no other triager took it. The wake sweep offers it again once a triager is free.
+   * VEC-263: the org was locked (hosted, no live subscription) when this task landed in Triage, so no push triager was
+   * woken. The wake sweep offers it again once the org is usable.
    */
   triageHeld?: { at: Date; exclude: ObjectId | null } | null;
   /**
@@ -749,9 +749,9 @@ export interface BotWakeDoc {
   updatedAt: Date;
   failedAt: Date | null;
   notifiedAt: Date | null;
-  /** VEC-225: the org's plan limits simultaneous bot work, so this wake-up takes the bot's slot while it is sent. */
+  /** VEC-263: queued while the org was locked (no live subscription); re-held, not retried on the clock, if it fails. */
   gated?: boolean;
-  /** VEC-225: held back because the bot is at its plan's limit; sent (oldest first) when its slot frees. */
+  /** VEC-263: held back while the org is locked; sent (oldest first) by the sweep once it's usable again. */
   heldAt?: Date | null;
 }
 

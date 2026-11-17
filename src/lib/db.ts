@@ -120,7 +120,7 @@ async function ensureIndexes(db: Db) {
     db.collection("botWakes").createIndex({ botId: 1, taskId: 1, kind: 1 }, { unique: true }),
     db.collection("botWakes").createIndex({ failedAt: 1, nextAttemptAt: 1 }),
     db.collection("botWakes").createIndex({ taskId: 1 }),
-    // VEC-225: Triage tasks a busy (plan-limited) triager was skipped for; the wake sweep looks them up every 15 s.
+    // VEC-263 (was VEC-225): Triage tasks held while their org is locked; the wake sweep looks them up every 15 s.
     db.collection("tasks").createIndex({ "triageHeld.at": 1 }, { partialFilterExpression: { "triageHeld.at": { $exists: true } } }),
     db.collection("botWakes").createIndex({ botId: 1, heldAt: 1 }),
     db.collection("notifications").createIndex({ orgId: 1, userId: 1, createdAt: -1 }),

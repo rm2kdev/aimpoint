@@ -5,6 +5,7 @@ import { cols } from "@/lib/db";
 import { findTaskByKey } from "@/lib/data";
 import { UserError } from "@/lib/result";
 import { PlanLimitError } from "@/lib/billing-limits";
+import { assertOrgActive, billingOn } from "@/lib/billing";
 import { StoppedWorkError } from "@/lib/stop-guard";
 import { resolveProjectStatus, statusFilterIds } from "@/lib/statuses";
 import type { Actor } from "@/lib/task-service";
@@ -34,6 +35,9 @@ export function botRoute<P>(handler: (req: Request, ctx: BotCtx, params: P) => P
       return Response.json({ error: `${auth.bot.name}'s role doesn't allow ${tool}.` }, { status: 403 });
     }
     try {
+      // VEC-263: a locked (unpaid) org gets 402 with the lock message on every endpoint.
+      await billingOn();
+      assertOrgActive(auth.org);
       const data = await handler(req, { ...auth, actor: { orgId: auth.org._id, id: auth.bot._id, isAdmin: false, isBot: true } }, await routeCtx.params);
       return data instanceof Response ? data : Response.json(data);
     } catch (err) {

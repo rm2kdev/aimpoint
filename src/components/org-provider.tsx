@@ -212,7 +212,11 @@ export function OrgProvider({
     countTimer.current = setTimeout(run, 400);
   }, [org.slug]);
 
+  // VEC-263: a locked (unpaid) org opens no realtime connection: the server refuses its channels anyway, and a Pusher
+  // connection costs money even when no channel is authorised. Subscribing reloads the page (Checkout return).
+  const realtimeOff = !!serverBilling?.locked;
   useEffect(() => {
+    if (realtimeOff) return;
     const dispatch = (e: RealtimeEvent) => {
       if (e.type === "presence") return setOnline(e.userIds);
       if (e.type === "bots.workload") {
@@ -280,7 +284,7 @@ export function OrgProvider({
       } catch {}
     };
     return () => es.close();
-  }, [org.id, org.slug, me.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts]);
+  }, [org.id, org.slug, me.id, realtime.driver, realtime.key, realtime.cluster, router, refreshCounts, realtimeOff]);
 
   // Statuses keep their identity across server refreshes that didn't change them (every org.changed refreshes
   // the layout), so OrgBase, and with it every task row, re-renders only when a status really changed.

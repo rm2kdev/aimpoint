@@ -9,7 +9,7 @@ import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
-import { busyWith, concurrencyLimit } from "@/lib/bot-capacity";
+import { billingOn, isOrgActive } from "@/lib/billing";
 import { atWaitStep, flowBriefing, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
 import { MCP_SERVER_NAME, legacyMcpNote, mcpServerNameFor } from "@/lib/mcp-name";
@@ -82,6 +82,9 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
         c.bots.find({ orgId, _id: { $in: botIds }, "connection.method": { $exists: true } }).toArray(),
       ]);
       if (!org) return;
+      // VEC-263: a locked (unpaid) org wakes no bot. Task wake-ups are still queued, as held (wake-queue.ts), and go
+      // out once it's usable again; one-off deliveries (a connection test) are dropped.
+      if (!isQueuedWake(reason) && reason.kind !== "stopped" && (await billingOn()) && !isOrgActive(org)) return;
       // A stopped task (VEC-215) gets no work wake-up until it's resumed (Resume clears the stop, then wakes).
       // A mention is still delivered, as a question: mentionResumesWork is false while it's stopped.
       if (reason.kind !== "test" && reason.kind !== "mentioned" && reason.kind !== "stopped" && (await c.tasks.findOne({ _id: reason.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } }))) return;
@@ -171,16 +174,14 @@ export function wakeTriage(
       if (!org) return;
       const first = task.prefer ? bots.filter((b) => b._id.equals(task.prefer!)) : [];
       const ordered = [...first, ...bots.filter((b) => !first.includes(b))];
-      // VEC-225: a triager at its plan's limit of simultaneous work is skipped; if nobody takes it, the task is marked
-      // so the wake sweep offers it again once one is free.
-      const limit = concurrencyLimit(org);
-      const busy = async (botId: ObjectId) => limit !== null && (await busyWith(orgId, botId, task.taskId)).length >= limit;
-      let skipped = false;
-      for (const bot of ordered.filter((b) => b.connection && isPush(b.connection.method))) {
-        if (await busy(bot._id)) {
-          skipped = true;
-          continue;
-        }
+      const pushed = ordered.filter((b) => b.connection && isPush(b.connection.method));
+      // VEC-263: a locked (unpaid) org wakes no triager. The task is marked so the wake sweep offers it again once
+      // the org is usable.
+      if (pushed.length && (await billingOn()) && !isOrgActive(org)) {
+        await c.tasks.updateOne({ _id: task.taskId, archivedAt: null }, { $set: { triageHeld: { at: new Date(), exclude: task.exclude ?? null } } });
+        return;
+      }
+      for (const bot of pushed) {
         const reason: WakeReason = { kind: "triage", taskId: task.taskId, taskKey: task.taskKey, title: task.title, by: task.by, ...(first.includes(bot) ? { resumed: true } : {}) };
         const claimId = new ObjectId();
         try {
@@ -191,18 +192,11 @@ export function wakeTriage(
           if (e.keyPattern && "kind" in e.keyPattern) return; // another bot is already triaging it
           continue; // this bot already holds another claim on the task (it's working on it as the assignee)
         }
-        // A concurrent hand-off may have taken its slot between the check and the claim: back off (offered again later).
-        if (await busy(bot._id)) {
-          await c.agentClaims.deleteOne({ _id: claimId });
-          skipped = true;
-          continue;
-        }
         await publishWorking(orgId, bot._id, [task.taskId]);
         if ((await deliver(bot, org, reason)).ok) return;
         await c.agentClaims.deleteOne({ _id: claimId });
         await publishWorking(orgId, bot._id, [task.taskId]);
       }
-      if (skipped) await c.tasks.updateOne({ _id: task.taskId, archivedAt: null }, { $set: { triageHeld: { at: new Date(), exclude: task.exclude ?? null } } });
     } catch (err) {
       console.error("[bot wake triage]", err);
     }

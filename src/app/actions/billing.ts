@@ -17,7 +17,7 @@ async function assertBillingOn() {
 export async function startCheckout(slug: string, returnTo: CheckoutReturn = "billing"): Promise<Result<{ url: string }>> {
   return guard(async () => {
     await assertBillingOn();
-    const { org } = await requireOrg(slug, { admin: true });
+    const { org } = await requireOrg(slug, { admin: true, locked: "allow" });
     return { url: await createCheckoutSession(org, await requestOrigin(), returnTo === "app" ? "app" : "billing") };
   });
 }
@@ -26,7 +26,7 @@ export async function startCheckout(slug: string, returnTo: CheckoutReturn = "bi
 export async function openBillingPortal(slug: string): Promise<Result<{ url: string }>> {
   return guard(async () => {
     await assertBillingOn();
-    const { org } = await requireOrg(slug, { admin: true });
+    const { org } = await requireOrg(slug, { admin: true, locked: "allow" });
     return { url: await createPortalSession(org, await requestOrigin()) };
   });
 }

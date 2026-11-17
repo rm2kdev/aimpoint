@@ -17,7 +17,7 @@ import { orgPath } from "@/lib/paths";
  */
 export async function setBillingDebugAction(slug: string, enabled: boolean): Promise<Result<{ enabled: boolean }>> {
   return guard(async () => {
-    const { user } = await requireOrg(slug, { admin: true });
+    const { user } = await requireOrg(slug, { admin: true, locked: "allow" });
     if (!billingDebugAvailable())
       throw new UserError("Debug settings are off on this instance. They need AIMPOINT_DEBUG=1 on a self-hosted instance (BILLING_ENABLED unset).");
     if (typeof enabled !== "boolean") throw new UserError("Pick on or off.");
