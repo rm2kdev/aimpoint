@@ -24,6 +24,27 @@ export function chartColor(index: number, pick?: ChartColor): string {
   return pick ? CHART_COLORS[pick - 1] : CHART_COLORS[index % CHART_COLORS.length]
 }
 
+/**
+ * The measure half of the colour map (DESIGN.md \"Analytics charts\"): one measure, one colour on
+ * every chart, legend, tooltip and table. Pass these as `Series.color`, never a bare index, so
+ * Opened and Closed (or People and Bots) can't swap colours between cards.
+ */
+export const MEASURE_COLOR = {
+  /** Tasks created: teal. */
+  opened: 2,
+  /** Tasks moved to done or cancelled: indigo, the data echo of the Done ring (not the cobalt). */
+  closed: 1,
+  /** Open tasks / the backlog level: orange. */
+  open: 5,
+  /** Work by people: violet. */
+  people: 3,
+  /** Work by bots: pink. */
+  bots: 4,
+} as const satisfies Record<string, ChartColor>
+
+/** Width of every line and area edge: 2px, so a thin series still reads as colour at 1x. */
+export const SERIES_STROKE = 2
+
 export type ValueFormatter = (value: number) => string
 
 /** One plotted measure: `key` is the field on each datum, `label` what people read. */
@@ -356,6 +377,8 @@ export interface DataTableColumn<Row> {
   label: string
   cell: (row: Row) => React.ReactNode
   numeric?: boolean
+  /** Series colour shown as a swatch before the header, so the table keys like the legend. */
+  color?: string
 }
 
 /** The Show table view of every chart (and the analytics screen's own tables). */
@@ -375,7 +398,14 @@ export function DataTable<Row>({
         <tr className={cn("sticky top-0 border-b border-border bg-background text-left text-faint", KIT.label)}>
           {columns.map((c) => (
             <th key={c.label} scope="col" className={cn("py-1.5 pr-3 font-medium", c.numeric && "text-right")}>
-              {c.label}
+              {c.color ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <span aria-hidden className={KIT.swatch} style={{ background: c.color }} />
+                  {c.label}
+                </span>
+              ) : (
+                c.label
+              )}
             </th>
           ))}
         </tr>

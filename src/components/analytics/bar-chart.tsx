@@ -133,7 +133,7 @@ export function BarChart({
       rows={data}
       columns={[
         { label: categoryLabel ?? (granularity ? "Date" : "Category"), cell: (d) => exact(d[categoryKey]) },
-        ...series.map((s) => ({ label: s.label, numeric: true, cell: (d: BarDatum) => valueFormatter(num(d[s.key])) })),
+        ...series.map((s, i) => ({ label: s.label, numeric: true, color: chartColor(i, s.color), cell: (d: BarDatum) => valueFormatter(num(d[s.key])) })),
         ...(stacked && series.length > 1
           ? [{ label: "Total", numeric: true, cell: (d: BarDatum) => valueFormatter(series.reduce((n, s) => n + num(d[s.key]), 0)) }]
           : []),

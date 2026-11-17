@@ -7,6 +7,7 @@ export {
   CHART_COLORS,
   DataTable,
   KIT,
+  MEASURE_COLOR,
   RowsSkeleton,
   type AnalyticsCardProps,
   type ChartColor,

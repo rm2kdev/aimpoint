@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { AnalyticsCard, BarChart, DataTable, DonutChart, KpiTile, TimeSeriesChart, formatNumber, type DataTableColumn, type DonutSlice } from "@/components/analytics";
+import { AnalyticsCard, BarChart, DataTable, DonutChart, KpiTile, MEASURE_COLOR, TimeSeriesChart, formatNumber, type DataTableColumn, type DonutSlice } from "@/components/analytics";
 import {
   ANALYTICS_PRESETS,
   GRANULARITY_LABELS,
@@ -521,8 +521,8 @@ function Report({
             description={`Tasks created and tasks moved to done or cancelled, per ${UNIT_WORDS[g]}`}
             data={series}
             series={[
-              { key: "opened", label: "Opened", color: 1 },
-              { key: "closed", label: "Closed", color: 2 },
+              { key: "opened", label: "Opened", color: MEASURE_COLOR.opened },
+              { key: "closed", label: "Closed", color: MEASURE_COLOR.closed },
             ]}
             granularity={g}
             loading={loading}
@@ -535,7 +535,7 @@ function Report({
                 : `Open tasks at the end of each ${UNIT_WORDS[g]}`
             }
             data={series}
-            series={[{ key: "backlog", label: "Open tasks", color: 3, summary: "level" }]}
+            series={[{ key: "backlog", label: "Open tasks", color: MEASURE_COLOR.open, summary: "level" }]}
             variant="area"
             granularity={g}
             loading={loading}
@@ -545,8 +545,8 @@ function Report({
             description={`Comments per ${UNIT_WORDS[g]} by people and bots`}
             data={series}
             series={[
-              { key: "people", label: "People", color: 1 },
-              { key: "bots", label: "Bots", color: 4 },
+              { key: "people", label: "People", color: MEASURE_COLOR.people },
+              { key: "bots", label: "Bots", color: MEASURE_COLOR.bots },
             ]}
             stacked
             granularity={g}
@@ -559,8 +559,8 @@ function Report({
             categoryKey="kind"
             categoryLabel="Kind"
             series={[
-              { key: "people", label: "People", color: 1 },
-              { key: "bots", label: "Bots", color: 4 },
+              { key: "people", label: "People", color: MEASURE_COLOR.people },
+              { key: "bots", label: "Bots", color: MEASURE_COLOR.bots },
             ]}
             stacked
             horizontal
@@ -578,8 +578,8 @@ function Report({
           categoryKey="project"
           categoryLabel="Project"
           series={[
-            { key: "opened", label: "Opened", color: 1 },
-            { key: "closed", label: "Closed", color: 2 },
+            { key: "opened", label: "Opened", color: MEASURE_COLOR.opened },
+            { key: "closed", label: "Closed", color: MEASURE_COLOR.closed },
           ]}
           horizontal
           categoryWidth={124}

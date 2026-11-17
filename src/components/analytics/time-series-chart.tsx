@@ -12,6 +12,7 @@ import {
   chartColor,
   seriesConfig,
   seriesVar,
+  SERIES_STROKE,
   valueAxisWidth,
   type Series,
   type ValueFormatter,
@@ -86,7 +87,7 @@ export function TimeSeriesChart({
       rows={data}
       columns={[
         { label: granularity === "hour" ? "Time" : "Date", cell: (d) => formatExact(d.t, granularity) },
-        ...series.map((s) => ({ label: s.label, numeric: true, cell: (d: TimePoint) => valueFormatter(num(d[s.key])) })),
+        ...series.map((s, i) => ({ label: s.label, numeric: true, color: chartColor(i, s.color), cell: (d: TimePoint) => valueFormatter(num(d[s.key])) })),
         ...(stacked && series.length > 1
           ? [{ label: "Total", numeric: true, cell: (d: TimePoint) => valueFormatter(series.reduce((n, s) => n + num(d[s.key]), 0)) }]
           : []),
@@ -158,7 +159,7 @@ export function TimeSeriesChart({
                 type={CURVE}
                 stackId={stacked ? "stack" : undefined}
                 stroke={seriesVar(i)}
-                strokeWidth={1.75}
+                strokeWidth={SERIES_STROKE}
                 fill={seriesVar(i)}
                 fillOpacity={AREA_FILL_OPACITY}
                 dot={dots ? { ...dots, fill: seriesVar(i) } : false}
@@ -177,7 +178,7 @@ export function TimeSeriesChart({
                 name={s.label}
                 type={CURVE}
                 stroke={seriesVar(i)}
-                strokeWidth={1.75}
+                strokeWidth={SERIES_STROKE}
                 dot={dots ? { ...dots, fill: seriesVar(i) } : false}
                 activeDot={{ r: 3.5, strokeWidth: 0 }}
                 isAnimationActive={false}
