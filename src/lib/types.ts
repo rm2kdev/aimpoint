@@ -103,6 +103,29 @@ export interface OrgDoc {
   createdAt: Date;
   /** Org-wide defaults (VEC-128). Absent fields read as their preset (see loadOrgDefaults). */
   defaults?: Partial<OrgDefaults>;
+  /** Stripe subscription state (VEC-222), written by the Stripe webhook. Absent = never subscribed (Free when billing is on). */
+  billing?: OrgBilling;
+}
+/** Stripe subscription statuses (https://docs.stripe.com/api/subscriptions/object#subscription_object-status). */
+export type BillingStatus =
+  | "active"
+  | "trialing"
+  | "past_due"
+  | "canceled"
+  | "unpaid"
+  | "incomplete"
+  | "incomplete_expired"
+  | "paused";
+/** An org's billing state, read by `lib/billing.ts` getPlan (VEC-222). */
+export interface OrgBilling {
+  stripeCustomerId?: string | null;
+  subscriptionId?: string | null;
+  status?: BillingStatus | null;
+  currentPeriodEnd?: Date | null;
+  cancelAtPeriodEnd?: boolean;
+  /** When the subscription went past_due; the Pro grace period counts from here (else from currentPeriodEnd). */
+  pastDueSince?: Date | null;
+  updatedAt?: Date;
 }
 /**
  * Stages a person's new task may start in by default (VEC-128): open stages only, never done/cancelled.
