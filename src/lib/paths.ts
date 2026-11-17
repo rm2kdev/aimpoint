@@ -31,8 +31,13 @@ export const rolePath = (slug: string, roleId: string) => orgPath(slug, "setting
 /** Flows settings (VEC-187): the org default flow, its New tasks row (the old Defaults tab) and a project's own Flow row. */
 export const flowsPath = (slug: string) => `${orgPath(slug, "settings", "flows")}#default-flow`;
 export const newTasksPath = (slug: string) => `${orgPath(slug, "settings", "flows")}#new-tasks`;
-export const projectFlowPath = (slug: string, projectId: string) => `${orgPath(slug, "settings", "projects", projectId)}#flow`;
-export const projectNewTasksPath = (slug: string, projectId: string) => `${orgPath(slug, "settings", "projects", projectId)}#new-tasks`;
+export const projectFlowPath = (slug: string, projectId: string) => `${projectSettingsPath(slug, projectId)}#flow`;
+export const projectNewTasksPath = (slug: string, projectId: string) => `${projectSettingsPath(slug, projectId)}#new-tasks`;
+
+/** `/o/<slug>/settings/projects/<projectId>`: a project's settings page (admins edit, members get a read-only view). */
+export function projectSettingsPath(slug: string, projectId: string): string {
+  return orgPath(slug, "settings", "projects", projectId);
+}
 
 /** `/o/<slug>/analytics` plus an optional `?range=...` query (see lib/analytics-range.ts `analyticsSearch`). Admins only. */
 export const analyticsPath = (slug: string, search = "") => `${orgPath(slug, "analytics")}${search}`;

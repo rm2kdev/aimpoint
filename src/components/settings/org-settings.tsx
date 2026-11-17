@@ -16,7 +16,7 @@ import {
   renameOrg,
 } from "@/app/actions/org";
 import type { Role } from "@/lib/types";
-import { orgPath } from "@/lib/paths";
+import { orgPath, projectSettingsPath } from "@/lib/paths";
 
 export interface InviteRow {
   id: string;
@@ -97,7 +97,7 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
           {ordered.map((p) => (
             <EntityRow
               key={p.id}
-              href={orgPath(org.slug, "settings", "projects", p.id)}
+              href={projectSettingsPath(org.slug, p.id)}
               avatar={<ProjectTile color={p.color} />}
               name={p.name}
               tags={
@@ -123,7 +123,7 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
                 toast.success(`Created ${r.data!.key}`, { description: "Add context for agents, if it needs any." });
                 setName("");
                 setKey("");
-                router.push(orgPath(org.slug, "settings", "projects", r.data!.id));
+                router.push(projectSettingsPath(org.slug, r.data!.id));
               });
             }}
           >

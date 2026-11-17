@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, PlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -27,6 +27,7 @@ import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
 import { TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
+import { projectSettingsPath } from "@/lib/paths";
 import { isClosedCategory, matchStatus, STATUS_STAGES, type Status, type StatusCategory, type Task, type TaskType } from "@/lib/types";
 import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
 
@@ -557,6 +558,9 @@ export function TaskWorkspace({
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
           <MobileNavButton />
           <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">{title}</h1>
+          {scope.projectId && !scope.mine && !scope.archived && (
+            <ProjectSettingsCog slug={org.slug} projectId={scope.projectId} name={projectById.get(scope.projectId)?.name ?? title} isAdmin={isAdmin} />
+          )}
           <span className="tabular font-mono text-[12px] text-faint">{scope.archived ? archivedList.length : openCount}</span>
           {scope.archived ? null : (
           <div className="ml-3 hidden items-center rounded-full border border-input p-0.5 sm:flex" role="radiogroup" aria-label="Filter by type">
@@ -1038,6 +1042,27 @@ function ArchiveButton({ task, onArchive }: { task: Task; onArchive: (archived: 
       <TooltipContent>
         {task.archivedAt ? "Restore" : "Archive"} <Kbd className="ml-1">E</Kbd>
       </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/**
+ * Settings cog beside a single project's title (VEC-212): links to that project's settings page.
+ * Everyone who can see the project page can open it (admins edit, members get the read-only view),
+ * so only the wording changes with the role.
+ */
+function ProjectSettingsCog({ slug, projectId, name, isAdmin }: { slug: string; projectId: string; name: string; isAdmin: boolean }) {
+  const label = isAdmin ? "Project settings" : "View project settings";
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button asChild variant="ghost" size="icon-sm" className="-ml-1.5 shrink-0 text-muted-foreground hover:text-foreground" data-project-settings>
+          <Link href={projectSettingsPath(slug, projectId)} aria-label={isAdmin ? `Settings for ${name}` : `View settings for ${name}`}>
+            <SettingsIcon className="size-4" />
+          </Link>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
     </Tooltip>
   );
 }

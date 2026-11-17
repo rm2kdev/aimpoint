@@ -18,7 +18,7 @@ import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
-import { accountPath, analyticsPath, newTasksPath, orgPath, projectPath, rolesPath, taskPath, withTask } from "@/lib/paths";
+import { accountPath, analyticsPath, newTasksPath, orgPath, projectPath, projectSettingsPath, rolesPath, taskPath, withTask } from "@/lib/paths";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { org, projects, isAdmin } = useOrg();
@@ -49,6 +49,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
     router.push(href);
   };
   const base = orgPath(org.slug);
+  // On a single project's page (`/o/<slug>/p/<key>`), offer a jump to that project's settings (VEC-212).
+  const pageKey = pathname.startsWith(`${base}/p/`) ? decodeURIComponent(pathname.slice(base.length + 3).split("/")[0] ?? "").toUpperCase() : "";
+  const pageProject = pageKey ? projects.find((p) => p.key === pageKey) : undefined;
 
   return (
     <CommandDialog open={open} onOpenChange={onOpenChange} title="Search" description="Search tasks or jump to a view" className="sm:max-w-[560px]">
@@ -84,6 +87,16 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                   <PlusIcon /> New task <span className="ml-auto font-mono text-[11px] text-faint">N</span>
                 </CommandItem>
               </CommandGroup>
+              {pageProject && (
+                <CommandGroup heading="This project">
+                  <CommandItem onSelect={() => go(projectSettingsPath(org.slug, pageProject.id))} className="gap-2.5" data-nav="project-settings">
+                    <SettingsIcon /> {isAdmin ? "Project settings" : "View project settings"}
+                    <span className="ml-auto flex min-w-0 items-center gap-1.5 text-[11px] text-faint">
+                      <ProjectDot color={pageProject.color} /> <span className="truncate">{pageProject.name}</span>
+                    </span>
+                  </CommandItem>
+                </CommandGroup>
+              )}
               <CommandGroup heading="Go to">
                 <CommandItem onSelect={() => go(orgPath(org.slug, "my"))} className="gap-2.5">
                   <UserIcon /> My Tasks
