@@ -76,6 +76,7 @@ export async function deleteOrganisationCascade(orgId: ObjectId, actorId: Object
     c.invites.deleteMany({ orgId }),
     c.statuses.deleteMany({ orgId }),
     c.flows.deleteMany({ orgId }),
+    c.projectForms.deleteMany({ orgId }),
     c.botRoles.deleteMany({ orgId }),
     c.bots.deleteMany({ orgId }),
   ]);

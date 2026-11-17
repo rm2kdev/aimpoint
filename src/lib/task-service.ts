@@ -13,7 +13,8 @@ import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
 import { planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
-import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskType } from "@/lib/types";
+import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
+import { requireFormDestination } from "@/lib/project-forms";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -24,6 +25,8 @@ export interface Actor {
   id: ObjectId;
   isAdmin: boolean;
   isBot?: boolean;
+  /** Display name when the actor is neither a user nor a bot (an external form, VEC-205). */
+  name?: string;
 }
 
 /** Ownership rule: the creator and org admins may change a task; everyone in the org can read and comment. */
@@ -203,6 +206,7 @@ export const oid = (id: string, what = "item") => {
 
 /** Display name of a user or bot, for wake-up messages. */
 async function actorName(actor: Actor) {
+  if (actor.name) return actor.name;
   const c = await cols();
   const doc = actor.isBot ? await c.bots.findOne({ _id: actor.id }, { projection: { name: 1 } }) : await c.users.findOne({ _id: actor.id }, { projection: { name: 1 } });
   return doc?.name ?? "Someone";
@@ -343,7 +347,14 @@ async function missingProjectReason(projectId: ObjectId, orgId: ObjectId, fallba
   return p?.archivedAt ? `${p.name} (${p.key}) is archived and doesn't take new tasks. An admin can restore it in project settings.` : fallback;
 }
 
-export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<Task> {
+/** Internal create options no client input may set: provenance of a form submission (createTaskFromForm). */
+interface CreateInternal {
+  source?: TaskSourceDoc;
+  /** Note and `to` on the "created" activity entry. */
+  createdNote?: { note: ActivityNote; to: string };
+}
+
+export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: CreateInternal = {}): Promise<Task> {
   const title = (input.title ?? "").trim();
   if (!title) throw new UserError("Give the task a title.");
   if (title.length > 300) throw new UserError("Keep titles under 300 characters.");
@@ -396,12 +407,13 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     waitingOn,
     rank,
     ...(flowPlan.flow !== undefined ? { flow: flowPlan.flow } : {}),
+    ...(internal.source ? { source: internal.source } : {}),
     createdBy: actor.id,
     createdAt: now,
     updatedAt: now,
   };
   await c.tasks.insertOne(doc);
-  await c.activity.insertOne({ _id: new ObjectId(), orgId: actor.orgId, taskId: doc._id, actorId: actor.id, kind: "created", createdAt: now });
+  await c.activity.insertOne({ _id: new ObjectId(), orgId: actor.orgId, taskId: doc._id, actorId: actor.id, kind: "created", ...(internal.createdNote ?? {}), createdAt: now });
   if (flowPlan.activity) await c.activity.insertOne(flowActivityDoc(actor, doc._id, flowPlan.activity, now));
   const task = toTask(doc, project.key);
   await publish(actor.orgId.toHexString(), { type: "task.upsert", actorId: actor.id.toHexString(), task });
@@ -414,6 +426,72 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   // Stalled and syncStalledNotice sends a false "nobody is assigned" notice (VEC-111).
   if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
   return task;
+}
+
+/** What a person submits through an external form (VEC-205). `description` is plain text. */
+export interface FormSubmission {
+  title: string;
+  description?: string;
+  /** Only used by a "choose" form, and only when it's one of the form's allowed types. Ignored by a fixed form. */
+  type?: string | null;
+  submitterName?: string | null;
+  submitterEmail?: string | null;
+}
+
+export const FORM_DESCRIPTION_MAX = 10_000;
+export const FORM_SUBMITTER_NAME_MAX = 100;
+export const FORM_SUBMITTER_EMAIL_MAX = 200;
+
+const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** Plain text -> editor HTML: blank lines split paragraphs, single newlines become <br>. Nothing the submitter typed is markup. */
+function plainToHtml(text: string) {
+  return text
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${escapeHtml(p).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
+/**
+ * A submission through an external form becomes a task in the form's project, in the form's destination status and
+ * with its type (the submitted type only for a "choose" form, and only one it allows). The task records where it came
+ * from (`source`), its creator is the form (`createdBy` = form id, so only admins can edit it), the activity reads
+ * "created" with note "form" and the form's name, and the normal create path runs: task.upsert, flow owner wake-ups,
+ * and a Triage destination reaches the triage bots like any new triage task. Re-reads the form so a form disabled or
+ * deleted since the caller loaded it takes nothing. Throws UserError on bad input.
+ */
+export async function createTaskFromForm(form: Pick<ProjectFormDoc, "_id" | "orgId">, input: FormSubmission): Promise<Task> {
+  const c = await cols();
+  const live = await c.projectForms.findOne({ _id: form._id, orgId: form.orgId });
+  if (!live || !live.enabled) throw new UserError("This form isn't taking submissions.");
+  const title = String(input.title ?? "").trim();
+  if (!title) throw new UserError("Give it a title.");
+  const description = String(input.description ?? "").replace(/\r\n?/g, "\n");
+  if (description.length > FORM_DESCRIPTION_MAX) throw new UserError(`Keep the description under ${FORM_DESCRIPTION_MAX.toLocaleString()} characters.`);
+  let type: TaskType = live.type;
+  if (live.typeMode === "choose" && input.type !== undefined && input.type !== null && input.type !== "") {
+    if (!isTaskType(input.type) || !live.allowedTypes.includes(input.type)) throw new UserError(`Pick one of: ${live.allowedTypes.join(", ")}.`);
+    type = input.type;
+  }
+  const submitterName = String(input.submitterName ?? "").trim() || null;
+  if (submitterName && submitterName.length > FORM_SUBMITTER_NAME_MAX) throw new UserError(`Keep your name under ${FORM_SUBMITTER_NAME_MAX} characters.`);
+  const submitterEmail = String(input.submitterEmail ?? "").trim().toLowerCase() || null;
+  if (submitterEmail && (submitterEmail.length > FORM_SUBMITTER_EMAIL_MAX || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(submitterEmail))) {
+    throw new UserError("That email address doesn't look right.");
+  }
+  // The destination is re-checked: one of the project's own statuses, still in an allowed stage.
+  const status = await requireFormDestination(live.orgId, live.projectId, live.destinationStatusId.toHexString());
+  const actor: Actor = { orgId: live.orgId, id: live._id, isAdmin: false, isBot: false, name: live.name };
+  return createTaskAs(
+    actor,
+    { title, projectId: live.projectId.toHexString(), type, statusId: status._id.toHexString(), description: plainToHtml(description) },
+    {
+      source: { kind: "form", formId: live._id, formName: live.name, submitterName, submitterEmail },
+      createdNote: { note: "form", to: live.name },
+    },
+  );
 }
 
 export interface TaskPatch {

@@ -166,6 +166,66 @@ export interface ProjectDoc {
   defaults?: ProjectDefaultsDoc;
   createdAt: Date;
 }
+/**
+ * External forms (VEC-204/205): a public form hosted by a project. Each submission becomes a task in the form's
+ * project, in `destinationStatusId` (one of that project's own statuses, stage backlog / triage / unstarted), with
+ * the type set by `typeMode`. Managed by admins through lib/project-forms.ts; submitted through createTaskFromForm.
+ */
+export interface ProjectFormDoc {
+  _id: ObjectId;
+  orgId: ObjectId;
+  projectId: ObjectId;
+  name: string;
+  /** Unguessable id used in the public URL (`/f/<publicId>`). Unique across all orgs. */
+  publicId: string;
+  enabled: boolean;
+  /**
+   * Set when Vector switched the form off itself (its status was deleted or left the allowed stages and nothing
+   * equivalent was left to re-map to), so the settings UI can say why. Cleared when an admin re-enables it.
+   */
+  disabledReason?: string | null;
+  destinationStatusId: ObjectId;
+  /** "fixed": every submission gets `type`. "choose": the submitter picks one of `allowedTypes` (`type` = the preselected one). */
+  typeMode: FormTypeMode;
+  type: TaskType;
+  /** With typeMode "choose": the types a submitter may pick (2+). Empty for "fixed". */
+  allowedTypes: TaskType[];
+  /** Plain text shown above the form. */
+  intro?: string | null;
+  createdBy: ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export type FormTypeMode = "fixed" | "choose";
+/** Stages a form may file into: never started/done/cancelled work. */
+export const FORM_DESTINATION_STAGES = ["backlog", "triage", "unstarted"] as const satisfies readonly StatusCategory[];
+export const isFormDestinationStage = (v: unknown): v is (typeof FORM_DESTINATION_STAGES)[number] =>
+  typeof v === "string" && (FORM_DESTINATION_STAGES as readonly string[]).includes(v);
+/** Client-safe form (settings UI, server action results). */
+export interface ProjectForm {
+  id: string;
+  projectId: string;
+  name: string;
+  publicId: string;
+  enabled: boolean;
+  disabledReason: string | null;
+  destinationStatusId: string;
+  typeMode: FormTypeMode;
+  type: TaskType;
+  allowedTypes: TaskType[];
+  intro: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+/** Where a task came from when not created in the app/API by a member or bot (VEC-205). */
+export interface TaskSourceDoc {
+  kind: "form";
+  formId: ObjectId;
+  /** The form's name at submission time (the form may be renamed or deleted later). */
+  formName: string;
+  submitterName?: string | null;
+  submitterEmail?: string | null;
+}
 export interface ProjectDefaultsDoc {
   /**
    * Status (one of THIS project's own, open stage) a person's new task without an explicit status starts in.
@@ -232,6 +292,8 @@ export interface TaskDoc {
   stalledNoticeAt?: Date | null;
   /** Position in the project's flow (docs/flows.md, VEC-174/175). Absent = not positioned yet (lazy). */
   flow?: TaskFlowState | null;
+  /** Set when the task was submitted through an external form (VEC-205); `createdBy` is then the form's id. */
+  source?: TaskSourceDoc | null;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -298,7 +360,9 @@ export type ActivityNote =
   | "umbrella"
   /** flow_step (VEC-183): a person paused the task's flow / resumed it (re-synced by status). */
   | "paused"
-  | "resumed";
+  | "resumed"
+  /** created (VEC-205): submitted through an external form; `to` holds the form's name at the time. */
+  | "form";
 
 export interface ActivityDoc {
   _id: ObjectId;

@@ -17,6 +17,7 @@ import { orgPath } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
 import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
 import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
+import { deleteProjectForms, formsStatusDeleted, formsStatusStageChanged } from "@/lib/project-forms";
 
 function slugify(s: string) {
   return (
@@ -204,6 +205,7 @@ export async function deleteProject(slug: string, projectId: string, confirmKey:
     await c.projects.deleteOne({ _id: pid, orgId: org._id });
     await deleteProjectStatuses(org._id, pid);
     await deleteProjectFlow(org._id, pid);
+    await deleteProjectForms(org._id, pid);
     const orgHex = org._id.toHexString();
     const actorId = user._id.toHexString();
     // Open task lists drop the tasks live; anything else catches up on the org refresh.
@@ -269,6 +271,8 @@ export async function saveStatus(
       if (prev.category !== input.category || prev.name !== name) await flowStatusUpdated(org._id, project._id, { _id: prev._id, name, category: input.category });
       // A new-task override can't point at a done/cancelled status: drop it so new tasks fall back to the org default (VEC-190).
       if (!isDefaultStage(input.category)) await clearNewTaskStatusOverrides(org._id, [prev._id]);
+      // External forms filing into it move to another status of its old stage, or are switched off (VEC-205).
+      await formsStatusStageChanged(org._id, project._id, { _id: prev._id, name }, prev.category, input.category);
     } else {
       const last = statuses[statuses.length - 1];
       await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId: project._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
@@ -312,6 +316,8 @@ export async function deleteStatus(slug: string, projectId: string, id: string, 
     await c.statuses.deleteOne({ _id: removed._id, orgId: org._id, projectId: project._id });
     // A project overriding new tasks into it falls back to the org default (VEC-190), no dangling id.
     await clearNewTaskStatusOverrides(org._id, [removed._id]);
+    // External forms filing into it follow its tasks, or move within its stage, or are switched off (VEC-205).
+    await formsStatusDeleted(org._id, project._id, removed, target);
     // Flow steps on the deleted status fall back to its stage/name and are flagged (VEC-174).
     await flowStatusDeleted(org._id, project._id, removed);
     if (isClosedCategory(removed.category) !== isClosedCategory(target.category)) {

@@ -20,6 +20,7 @@ import type {
   NotificationDoc,
   LoginChallengeDoc,
   FlowDoc,
+  ProjectFormDoc,
 } from "./types";
 import { seedDefaultFlows, DEFAULT_FLOW_MIGRATION } from "./flows-migration";
 
@@ -67,6 +68,7 @@ export async function cols() {
     loginChallenges: db.collection<LoginChallengeDoc>("loginChallenges"),
     deletedUsers: db.collection<DeletedUserDoc>("deletedUsers"),
     flows: db.collection<FlowDoc>("flows"),
+    projectForms: db.collection<ProjectFormDoc>("projectForms"),
   };
 }
 /**
@@ -130,6 +132,10 @@ async function ensureIndexes(db: Db) {
     // Project flows (VEC-174): one org default (projectId null) and at most one override per project.
     db.collection("flows").createIndex({ orgId: 1, projectId: 1 }, { unique: true }),
     db.collection("tasks").createIndex({ orgId: 1, "flow.stepId": 1 }),
+    // External forms (VEC-205): many per project; the public id resolves a submission.
+    db.collection("projectForms").createIndex({ publicId: 1 }, { unique: true }),
+    db.collection("projectForms").createIndex({ orgId: 1, projectId: 1, createdAt: 1 }),
+    db.collection("projectForms").createIndex({ orgId: 1, destinationStatusId: 1 }),
   ]);
   await migrate(db);
 }
