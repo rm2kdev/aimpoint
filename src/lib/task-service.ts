@@ -41,6 +41,19 @@ async function resetClaimOnAssign(taskId: ObjectId, assigneeId: ObjectId | null)
   await c.agentClaims.deleteMany({ taskId, botId: assigneeId, $or: [{ kind: { $ne: "triage" } }, { state: "done" }] });
 }
 
+/**
+ * The task changed owner away from a bot (a person's reassign, a status drag that crosses a flow step, a flow advance
+ * by someone else): that bot isn't working on it any more, so its pick-up is finished like complete_task would
+ * (VEC-180). Marked done rather than deleted: it no longer counts as working (ring, tray, stillInProgress), Stalled
+ * only looks at the current assignee's claim, and resetClaimOnAssign drops it if the task comes back to this bot.
+ * Runs before the task.upsert, which then carries only the new owner as working. Triage claims are left alone.
+ */
+async function finishClaimOnUnassign(taskId: ObjectId, from: ObjectId | null, to: ObjectId | null) {
+  if (!from || (to && from.equals(to))) return;
+  const c = await cols();
+  await c.agentClaims.updateMany({ taskId, botId: from, state: "in_progress", kind: { $ne: "triage" } }, { $set: { state: "done", finishedAt: new Date() } });
+}
+
 /** The bot took this task with check_for_triage and hasn't finished or released it. */
 export async function isTriaging(botId: ObjectId, taskId: ObjectId) {
   const c = await cols();
@@ -603,7 +616,10 @@ export async function updateTaskAs(
   set.updatedAt = now;
   const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId: actor.orgId }, { $set: set }, { returnDocument: "after" });
   if (!after) throw new UserError("This task no longer exists.");
-  if (set.assigneeId !== undefined) await resetClaimOnAssign(taskId, set.assigneeId);
+  if (set.assigneeId !== undefined) {
+    await finishClaimOnUnassign(taskId, before.assigneeId ?? null, set.assigneeId);
+    await resetClaimOnAssign(taskId, set.assigneeId);
+  }
   // The same bot owns the next step too: drop its finished claim before the broadcast, so it's handed the task afresh.
   if (flowPlan.handoff?.sameOwner && flowPlan.handoff.ownerKind === "bot") await reopenForNextStep(taskId, flowPlan.handoff.ownerId);
   if (closed) await finishClaimsOnClose(taskId);
