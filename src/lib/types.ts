@@ -743,9 +743,24 @@ export interface Task {
   rank: string;
   /** Where the flow engine put it (VEC-178): the task pane's stepper and the row's step chip read this. */
   flow?: TaskFlowView | null;
+  /**
+   * Set when the task came in through an external form (VEC-205/208); `createdBy` is then the form's id, which no
+   * member list resolves, so show the form (`formName`) instead. Only ever sent to org members and the org's bots:
+   * the public form endpoint must not hand a Task back to the submitter.
+   */
+  source?: TaskSource | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+}
+/** Client-safe TaskSourceDoc. */
+export interface TaskSource {
+  kind: "form";
+  formId: string;
+  /** The form's name when the task was submitted. */
+  formName: string;
+  submitterName: string | null;
+  submitterEmail: string | null;
 }
 /** A task's flow position as the client sees it (from TaskDoc.flow). Absent / null = never positioned. */
 export interface TaskFlowView {

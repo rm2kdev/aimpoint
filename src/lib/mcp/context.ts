@@ -278,7 +278,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const st = (id?: string | null) => (id ? statusById.get(id)?.name ?? "a deleted status" : "none");
     const pr = (v?: string | null) => PRIORITY_LABEL[Number(v)] ?? v;
     switch (a.kind) {
-      case "created": return "created the task";
+      case "created": return a.note === "form" ? `submitted it via the external form "${a.to ?? task.source?.formName ?? "?"}"` : "created the task";
       case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : ""}`;
       case "assignee": return a.to ? `assigned it to ${name(a.to)}${a.note === "auto_owner" ? ` (nobody owned it and ${a.waiter ?? "a task it assigned to itself"} was waiting on it)` : ""}` : `unassigned ${name(a.from)}`;
       case "priority": return `changed priority from ${pr(a.from)} to ${pr(a.to)}`;
@@ -376,7 +376,21 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     assignee: personRef(dir, task.assigneeId),
     /** The bot that broke this task down in Triage. It may close it out once nothing it depends on is open. */
     triagedBy: personRef(dir, task.triagedBy ?? null),
-    createdBy: personRef(dir, task.createdBy),
+    /** For a form-submitted task (see `source`) this is the form itself, kind "form". */
+    createdBy: task.source ? { id: task.createdBy.toHexString(), name: `${task.source.formName} (external form)`, kind: "form" as const } : personRef(dir, task.createdBy),
+    /**
+     * Where the task came from when nobody in the org created it (VEC-208). null = created normally by a member or
+     * bot. kind "form": submitted through one of the project's external forms by someone outside the org, so
+     * `submitter` (name/email as they typed them, either may be null) is the reporter to credit or follow up with;
+     * they can't see this task or its comments.
+     */
+    source: task.source
+      ? {
+          kind: task.source.kind,
+          form: { id: task.source.formId.toHexString(), name: task.source.formName },
+          submitter: { name: task.source.submitterName ?? null, email: task.source.submitterEmail ?? null },
+        }
+      : null,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
     description,
@@ -390,7 +404,11 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       new: highlight.has(cm._id.toHexString()) || undefined,
       createdAt: cm.createdAt.toISOString(),
     })),
-    activity: activity.map((a) => ({ actor: personRef(dir, a.actorId)?.name, change: describe(a), at: a.createdAt.toISOString() })),
+    activity: activity.map((a) => ({
+      actor: a.kind === "created" && a.note === "form" ? task.source?.submitterName || task.source?.submitterEmail || "Someone outside the org" : personRef(dir, a.actorId)?.name,
+      change: describe(a),
+      at: a.createdAt.toISOString(),
+    })),
     you: {
       assigned: isAssignee,
       createdThisTask: isCreator,

@@ -25,6 +25,8 @@ import type {
   TaskDetail,
   TaskDoc,
   TaskRef,
+  TaskSource,
+  TaskSourceDoc,
 } from "@/lib/types";
 import { botMaxTasks } from "@/lib/types";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
@@ -133,11 +135,19 @@ export function toTask(t: TaskDoc, projectKey: string, workingBotIds: string[] =
     stalled: null,
     rank: t.rank ?? "",
     flow: t.flow ? { stepId: t.flow.stepId ?? null, paused: !!t.flow.paused, enteredAt: new Date(t.flow.enteredAt).toISOString() } : null,
+    source: t.source ? toTaskSource(t.source) : null,
     createdBy: t.createdBy.toHexString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
   };
 }
+export const toTaskSource = (s: TaskSourceDoc): TaskSource => ({
+  kind: s.kind,
+  formId: s.formId.toHexString(),
+  formName: s.formName,
+  submitterName: s.submitterName ?? null,
+  submitterEmail: s.submitterEmail ?? null,
+});
 export const toTaskDetail = (
   t: TaskDoc,
   projectKey: string,

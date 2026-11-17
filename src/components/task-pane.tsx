@@ -25,6 +25,7 @@ import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies"
 import { useShell } from "@/components/app-shell";
 import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
 import { FlowStepper, useFlowPause } from "@/components/task-flow";
+import { FormCreator, FormSubmitter, submitterLabel } from "@/components/task-source";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,7 +47,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
-import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskType } from "@/lib/types";
+import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -236,6 +237,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const canEdit = access === "full";
   const canWork = access !== "comment";
   const creator = memberById.get(task.createdBy);
+  // A form-submitted task's creator is the form (VEC-208): only admins can edit it, so the notes name nobody else.
+  const owner = task.source ? null : (creator?.name ?? "the creator");
   const closed = status?.category === "done" || status?.category === "cancelled";
   const waiting = task.dependencies.filter((d) => !isClosedCategory(statusById.get(d.statusId)?.category));
 
@@ -344,8 +347,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             <p className="mt-3 flex items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground">
               <LockIcon className="size-3.5 shrink-0" />
               {canWork
-                ? `You're the assignee, so you can move it and change its details. Only ${creator?.name ?? "the creator"} or an admin can edit the title and description.`
-                : `Only ${creator?.name ?? "the creator"}, the assignee or an admin can change this task. You can still comment.`}
+                ? `You're the assignee, so you can move it and change its details. Only ${owner ? `${owner} or an admin` : "an admin"} can edit the title and description.`
+                : `Only ${owner ? `${owner}, the assignee` : "the assignee"} or an admin can change this task. You can still comment.`}
             </p>
           )}
 
@@ -424,14 +427,29 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               <time dateTime={task.createdAt} title={new Date(task.createdAt).toLocaleString()}>
                 {formatDay(task.createdAt)}
               </time>
-              {creator && (
+              {task.source ? (
                 <>
-                  <span className="text-faint">by</span>
-                  <MemberAvatar member={creator} id={creator.id} size={16} />
-                  <span className="truncate">{creator.name}</span>
+                  <span className="text-faint">via</span>
+                  <FormCreator source={task.source} />
                 </>
+              ) : (
+                creator && (
+                  <>
+                    <span className="text-faint">by</span>
+                    <MemberAvatar member={creator} id={creator.id} size={16} />
+                    <span className="truncate">{creator.name}</span>
+                  </>
+                )
               )}
             </dd>
+            {task.source && (
+              <>
+                <dt className="text-faint">Submitted by</dt>
+                <dd className="flex h-7 min-w-0 items-center text-muted-foreground">
+                  <FormSubmitter source={task.source} />
+                </dd>
+              </>
+            )}
             <dt className="text-faint">Updated</dt>
             <dd className="flex h-7 items-center text-muted-foreground">
               <time dateTime={task.updatedAt} title={new Date(task.updatedAt).toLocaleString()}>
@@ -467,7 +485,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </p>
           </div>
 
-          <Feed feed={feed} />
+          <Feed feed={feed} source={task.source ?? null} />
           <MentionComposer
             onSend={async (body) => {
               const r = await addComment(org.slug, task.id, body);
@@ -682,7 +700,7 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
   );
 }
 
-function Feed({ feed }: { feed: FeedItem[] }) {
+function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null }) {
   const { memberById, statusById, projectById, me } = useOrg();
   const [, tick] = useState(0);
   useEffect(() => {
@@ -692,9 +710,19 @@ function Feed({ feed }: { feed: FeedItem[] }) {
   if (!feed.length) return null;
   const name = (id: string | null | undefined) => (id ? memberById.get(id)?.name ?? "a former member" : "nobody");
 
+  /** A form submission's actor is the form id, which no member resolves: show who submitted it instead. */
+  const actorName = (f: FeedItem, member: string | undefined) =>
+    member ?? (f.kind === "created" && f.note === "form" ? (source && submitterLabel(source)) || "Someone" : "Former member");
   const describe = (f: FeedItem) => {
     switch (f.kind) {
       case "created":
+        // VEC-208: the actor is the form; the line names the submitter (see actorName) and the form.
+        if (f.note === "form")
+          return (
+            <>
+              submitted this via the <b className="font-medium text-foreground">{f.to ?? source?.formName ?? "external"}</b> form
+            </>
+          );
         return "created this task";
       case "status":
         return (
@@ -834,7 +862,7 @@ function Feed({ feed }: { feed: FeedItem[] }) {
                 <span className="size-1.5 rounded-full bg-input" />
               </span>
               <span className="min-w-0">
-                <span className="font-medium text-foreground">{actor?.name ?? "Former member"}</span> {describe(f)}
+                <span className="font-medium text-foreground">{actorName(f, actor?.name)}</span> {describe(f)}
                 <time className="ml-2 text-[12px] text-faint" dateTime={f.createdAt} title={new Date(f.createdAt).toLocaleString()}>
                   {timeAgo(f.createdAt)}
                 </time>

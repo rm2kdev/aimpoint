@@ -10,6 +10,8 @@ import { loadDirectory, personName } from "@/lib/mcp/context";
  * GET /api/v1/tasks/WEB-12: the task with its description and activity, plus `flow` (VEC-176): its place in its
  * project's flow, the same object as `flow` in MCP get_task (current step with owner and instructions, `next` step
  * and who gets it, `holder`, `howToFinish`, the pipeline). Null when the project has no flow.
+ * `task.source` (VEC-208): null for tasks created normally; `{kind: "form", formId, formName, submitterName,
+ * submitterEmail}` when someone outside the org submitted it through an external form (`createdBy` is then the form id).
  */
 export const GET = botRoute<{ key: string }>(async (_req, ctx, { key }) => {
   const found = await findTaskByKey(ctx.org._id, key);

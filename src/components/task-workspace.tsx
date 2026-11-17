@@ -17,6 +17,7 @@ import { useTaskContextMenu } from "@/components/task-context-menu";
 import { DueBadge } from "@/components/due-date";
 import { StalledBadge, WaitingBadge } from "@/components/dependencies";
 import { FlowStepChip } from "@/components/task-flow";
+import { FormSourceChip } from "@/components/task-source";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -972,6 +973,7 @@ const TaskRow = memo(function TaskRow({
         {!closed && !task.archivedAt && task.stalled && <StalledBadge stalled={task.stalled} />}
         {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className="max-sm:hidden" />}
         {!closed && !task.archivedAt && !fresh && <FlowStepChip task={task} className="max-md:hidden" />}
+        {!fresh && <FormSourceChip source={task.source} className="max-lg:hidden" />}
         {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className="max-sm:hidden" />}
         {(
           <>

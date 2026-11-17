@@ -240,7 +240,7 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
         )}
         {!canWork && (
           <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">
-            Only {creator?.name ?? "the creator"}, the assignee or an admin can change this task.
+            Only {task.source ? "the assignee" : `${creator?.name ?? "the creator"}, the assignee`} or an admin can change this task.
           </p>
         )}
         {canRetry && (
