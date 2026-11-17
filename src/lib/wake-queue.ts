@@ -462,6 +462,8 @@ export async function sweepWakes(): Promise<{ retried: number; resent: number; r
   const retried = await retryDue();
   const released = await releaseAllHeld();
   const resent = await reconcile();
+  // Unclaimed public form uploads (VEC-233) ride along: throttled to every 10 min inside, so this is usually a no-op.
+  await import("./form-uploads").then((m) => m.sweepFormUploadsSoon()).catch((err) => console.error("[form uploads sweep]", err));
   return { retried, resent, released };
 }
 

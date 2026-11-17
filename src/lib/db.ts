@@ -21,6 +21,7 @@ import type {
   LoginChallengeDoc,
   FlowDoc,
   ProjectFormDoc,
+  FormUploadDoc,
 } from "./types";
 import { seedDefaultFlows, DEFAULT_FLOW_MIGRATION } from "./flows-migration";
 
@@ -69,6 +70,7 @@ export async function cols() {
     deletedUsers: db.collection<DeletedUserDoc>("deletedUsers"),
     flows: db.collection<FlowDoc>("flows"),
     projectForms: db.collection<ProjectFormDoc>("projectForms"),
+    formUploads: db.collection<FormUploadDoc>("formUploads"),
   };
 }
 /**
@@ -139,6 +141,11 @@ async function ensureIndexes(db: Db) {
     db.collection("projectForms").createIndex({ publicId: 1 }, { unique: true }),
     db.collection("projectForms").createIndex({ orgId: 1, projectId: 1, createdAt: 1 }),
     db.collection("projectForms").createIndex({ orgId: 1, destinationStatusId: 1 }),
+    // Public form image uploads (VEC-233): looked up by URL on submit, swept when unclaimed, TTL backstop on expiresAt.
+    db.collection("formUploads").createIndex({ url: 1 }, { unique: true }),
+    db.collection("formUploads").createIndex({ claimedTaskId: 1, createdAt: 1 }),
+    db.collection("formUploads").createIndex({ orgId: 1 }),
+    db.collection("formUploads").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
     // Stripe billing (VEC-223): webhook lookups by customer/subscription; processed event ids kept 30 days.
     db.collection("orgs").createIndex({ "billing.stripeCustomerId": 1 }, { sparse: true }),
     db.collection("orgs").createIndex({ "billing.subscriptionId": 1 }, { sparse: true }),

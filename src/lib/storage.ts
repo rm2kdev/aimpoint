@@ -3,6 +3,7 @@ import { mkdir, writeFile, readFile, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { del, list, put } from "@vercel/blob";
 import { nanoid } from "nanoid";
+import { sniffImageType } from "./form-upload-core";
 
 /**
  * Image storage adapter.
@@ -39,21 +40,40 @@ export async function saveImage(orgId: string, file: File): Promise<string> {
 
 const SAFE_NAME = /^[a-f0-9]{24}-[A-Za-z0-9_-]{16}\.(png|jpg|gif|webp|avif)$/;
 
+/**
+ * Stores an image a public form uploaded (VEC-233), already checked by `checkFormImage` (sniffed type, size).
+ * Same `<orgId>-<random>.<ext>` name as member uploads, so /api/uploads/[name] serves it to org members only.
+ */
+export async function saveFormImage(orgId: string, data: Uint8Array, type: string, ext: string): Promise<{ name: string; url: string }> {
+  if (!/^[a-f0-9]{24}$/.test(orgId)) throw new Error("Unknown organisation.");
+  const name = `${orgId}-${nanoid(16)}.${ext}`;
+  if (!SAFE_NAME.test(name)) throw new Error("Unsupported image type.");
+  if (storageDriver === "blob") {
+    const blob = await put(`uploads/${name}`, Buffer.from(data), { access: "public", contentType: type, addRandomSuffix: false });
+    return { name, url: blob.url };
+  }
+  await mkdir(LOCAL_DIR, { recursive: true });
+  await writeFile(path.join(LOCAL_DIR, name), data);
+  return { name, url: `/api/uploads/${name}` };
+}
+
+/** Deletes one stored task/comment image by name + URL (best effort: a missing file is fine). Never touches avatars. */
+export async function deleteImageFile(name: string, url: string): Promise<void> {
+  if (!SAFE_NAME.test(name)) return;
+  try {
+    if (url.startsWith("/api/uploads/")) await unlink(path.join(LOCAL_DIR, name));
+    else if (storageDriver === "blob" && url.split(/[?#]/)[0].endsWith(`/uploads/${name}`)) await del(url);
+  } catch {
+    // already gone
+  }
+}
+
 /* ---- profile pictures (user-level, not tied to one org) ---- */
 
 export const AVATAR_TYPES: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
 export const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 /** `avatar-<userId>-<random>.<ext>`: the user id says who may read it, the random part makes it unguessable. */
 export const AVATAR_NAME = /^avatar-([a-f0-9]{24})-[A-Za-z0-9_-]{21}\.(png|jpg|gif|webp)$/;
-
-/** The real type from the file's first bytes; the browser-supplied MIME type alone can't be trusted. */
-function sniffImageType(b: Buffer): string | null {
-  if (b.length >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
-  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
-  if (b.length >= 6 && /^GIF8[79]a$/.test(b.subarray(0, 6).toString("latin1"))) return "image/gif";
-  if (b.length >= 12 && b.subarray(0, 4).toString("latin1") === "RIFF" && b.subarray(8, 12).toString("latin1") === "WEBP") return "image/webp";
-  return null;
-}
 
 /** Validates (type by MIME and content, size) and stores a profile picture. Throws a readable Error. */
 export async function saveAvatar(userId: string, file: File): Promise<string> {

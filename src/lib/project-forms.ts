@@ -5,6 +5,7 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { loadStatuses, requireProjectStatus } from "@/lib/statuses";
 import { requireFeatureById } from "@/lib/billing-limits";
+import { resolveFormOptions, type FormOptions } from "@/lib/form-upload-core";
 import {
   FORM_DESTINATION_STAGES,
   TASK_TYPES,
@@ -44,6 +45,10 @@ export interface FormInput {
   /** typeMode choose: the types a submitter may pick. */
   allowedTypes?: TaskType[];
   intro?: string | null;
+  /** VEC-233: rich text description (default false). */
+  richText?: boolean;
+  /** VEC-233: submitters may add images; needs richText (default false). */
+  allowImages?: boolean;
 }
 export type FormPatch = Partial<FormInput>;
 
@@ -60,6 +65,7 @@ export function toProjectForm(f: ProjectFormDoc): ProjectForm {
     type: f.type,
     allowedTypes: [...f.allowedTypes],
     intro: f.intro ?? null,
+    ...formOptions(f),
     createdAt: f.createdAt.toISOString(),
     updatedAt: f.updatedAt.toISOString(),
   };
@@ -105,6 +111,19 @@ function cleanIntro(v: unknown) {
   return intro || null;
 }
 
+/** The form's editor options, with forms saved before VEC-233 reading as plain text without images. */
+export function formOptions(f: Pick<ProjectFormDoc, "richText" | "allowImages">): FormOptions {
+  const richText = f.richText === true;
+  return { richText, allowImages: richText && f.allowImages === true };
+}
+
+/** Validates richText/allowImages like cleanTypes: fields left out keep `kept`; images need rich text. */
+function cleanOptions(richText: unknown, allowImages: unknown, kept?: FormOptions): FormOptions {
+  const r = resolveFormOptions({ richText, allowImages }, kept);
+  if (typeof r === "string") throw new UserError(r);
+  return r;
+}
+
 const TYPE_WORDS = TASK_TYPES.join(", ");
 
 /** Validates the type settings as a whole: fixed = one known type; choose = 2+ known types, the default among them. */
@@ -141,6 +160,7 @@ export async function createProjectForm(actor: FormActor, projectId: string, inp
   if (project.archivedAt) throw new UserError(`${project.name} (${project.key}) is archived. Restore it before adding forms.`);
   const status = await requireFormDestination(actor.orgId, project._id, input.destinationStatusId);
   const types = cleanTypes(input.typeMode ?? "fixed", input.type, input.allowedTypes);
+  const options = cleanOptions(input.richText, input.allowImages);
   const now = new Date();
   const doc: ProjectFormDoc = {
     _id: new ObjectId(),
@@ -153,6 +173,7 @@ export async function createProjectForm(actor: FormActor, projectId: string, inp
     destinationStatusId: status._id,
     ...types,
     intro: cleanIntro(input.intro),
+    ...options,
     createdBy: actor.userId,
     createdAt: now,
     updatedAt: now,
@@ -180,6 +201,9 @@ export async function updateProjectForm(actor: FormActor, formId: string, patch:
     // Fields left out keep their saved values (a fixed form switching to choose has no list yet, so it must send one).
     Object.assign(set, cleanTypes(patch.typeMode ?? form.typeMode, patch.type, patch.allowedTypes ?? form.allowedTypes, form.type));
   }
+  if (patch.richText !== undefined || patch.allowImages !== undefined) {
+    Object.assign(set, cleanOptions(patch.richText, patch.allowImages, formOptions(form)));
+  }
   if (patch.enabled !== undefined) {
     if (typeof patch.enabled !== "boolean") throw new UserError("`enabled` is true or false.");
     set.enabled = patch.enabled;
@@ -206,17 +230,21 @@ export async function deleteProjectForm(actor: FormActor, formId: string): Promi
   return form.projectId.toHexString();
 }
 
+/** A form taking submissions, with its editor options resolved. */
+export type OpenForm = ProjectFormDoc & FormOptions;
+
 /**
  * The form behind a public link, if it takes submissions: enabled, its project still exists and isn't archived.
- * Null otherwise (the public route answers 404 either way, so nothing about why leaks).
+ * Null otherwise (the public route answers 404 either way, so nothing about why leaks). `richText`/`allowImages`
+ * are always filled in (false for forms saved before VEC-233).
  */
-export async function findOpenForm(publicId: string): Promise<ProjectFormDoc | null> {
+export async function findOpenForm(publicId: string): Promise<OpenForm | null> {
   if (typeof publicId !== "string" || !/^[\w-]{10,64}$/.test(publicId)) return null;
   const c = await cols();
   const form = await c.projectForms.findOne({ publicId, enabled: true });
   if (!form) return null;
   const project = await c.projects.findOne({ _id: form.projectId, orgId: form.orgId }, { projection: { archivedAt: 1 } });
-  return project && !project.archivedAt ? form : null;
+  return project && !project.archivedAt ? { ...form, ...formOptions(form) } : null;
 }
 
 /* ---------------- keeping destinations valid ---------------- */

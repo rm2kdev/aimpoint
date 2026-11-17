@@ -10,6 +10,7 @@ import {
 } from "./task-service";
 import { UserError } from "./result";
 import { hasFeature } from "./billing-limits";
+import { rateWindow, retryAfter } from "./form-upload-core";
 
 /**
  * The public side of external forms (VEC-207): what `POST /api/forms/<publicId>` does with a submission.
@@ -86,26 +87,21 @@ async function rateCol() {
 }
 
 /** Raw IPs are never stored: only a keyed hash, enough to count per client. */
-function ipKey(ip: string) {
+export function ipKey(ip: string) {
   return createHash("sha256").update(`aimpoint:form-ip:${process.env.AUTH_SECRET ?? ""}:${ip}`).digest("base64url").slice(0, 22);
 }
 
-/** Count one submission against a fixed window; returns seconds to wait when it's over the limit. */
-async function hit(key: string, limit: { max: number; windowMs: number }): Promise<number | null> {
+/** Count one submission (or public upload, VEC-233) against a fixed window; returns seconds to wait when it's over the limit. */
+export async function hit(key: string, limit: { max: number; windowMs: number }): Promise<number | null> {
   const col = await rateCol();
   const now = Date.now();
-  const windowStart = Math.floor(now / limit.windowMs) * limit.windowMs;
-  const _id = `${key}:${windowStart}`;
-  const doc = await col.findOneAndUpdate(
-    { _id },
-    { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(windowStart + limit.windowMs) } },
-    { upsert: true, returnDocument: "after" },
-  );
-  if (doc && doc.count > limit.max) return Math.max(1, Math.ceil((windowStart + limit.windowMs - now) / 1000));
-  return null;
+  const w = rateWindow(now, limit);
+  const _id = `${key}:${w.start}`;
+  const doc = await col.findOneAndUpdate({ _id }, { $inc: { count: 1 }, $setOnInsert: { expiresAt: new Date(w.end) } }, { upsert: true, returnDocument: "after" });
+  return doc ? retryAfter(doc.count, now, limit) : null;
 }
 
-function waitText(seconds: number) {
+export function waitText(seconds: number) {
   const m = Math.ceil(seconds / 60);
   return m <= 1 ? "a minute" : `${m} minutes`;
 }

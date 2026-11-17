@@ -219,6 +219,13 @@ export interface ProjectFormDoc {
   allowedTypes: TaskType[];
   /** Plain text shown above the form. */
   intro?: string | null;
+  /**
+   * VEC-233: the description uses the rich text editor instead of a plain textarea. Missing on forms saved before
+   * it existed, which reads as false (`toProjectForm`, `findOpenForm` fill it in).
+   */
+  richText?: boolean;
+  /** VEC-233: submitters may add images (public uploads). Only ever true together with `richText`. */
+  allowImages?: boolean;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -241,8 +248,31 @@ export interface ProjectForm {
   type: TaskType;
   allowedTypes: TaskType[];
   intro: string | null;
+  richText: boolean;
+  allowImages: boolean;
   createdAt: string;
   updatedAt: string;
+}
+/**
+ * An image uploaded through a public form (VEC-233, `POST /api/forms/<publicId>/uploads`), kept as pending until a
+ * submission of the same form claims it (`claimedTaskId`). Unclaimed ones are deleted with their file after
+ * FORM_UPLOAD_PENDING_MS (lib/form-uploads.ts); `expiresAt` is a TTL backstop, unset once claimed.
+ */
+export interface FormUploadDoc {
+  _id: ObjectId;
+  /** Stored file name (`<orgId>-<random>.<ext>`). */
+  name: string;
+  /** What the uploader got back and the description will reference. */
+  url: string;
+  formId: ObjectId;
+  orgId: ObjectId;
+  /** Keyed hash of the uploader's IP (never the raw IP). */
+  ipHash: string;
+  type: string;
+  size: number;
+  createdAt: Date;
+  claimedTaskId: ObjectId | null;
+  expiresAt?: Date;
 }
 /** Where a task came from when not created in the app/API by a member or bot (VEC-205). */
 export interface TaskSourceDoc {
