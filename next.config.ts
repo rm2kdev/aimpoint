@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // Every screen is per-user and per-organisation, so routes render at request time.
   cacheComponents: false,
   devIndicators: { position: "bottom-right" },
+  // Build version for the service worker URL (VEC-156): each deploy registers /sw.js?v=<new id>,
+  // which installs a fresh worker and drops the previous build's caches.
+  env: { VECTOR_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA || Date.now().toString(36) },
   // Let other machines on the LAN (e.g. the Mac mini at 10.0.0.2) load dev JS/HMR.
   allowedDevOrigins: ["10.0.0.2", "192.168.1.90", "*.local"],
   turbopack: {
@@ -19,6 +22,24 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     serverActions: { bodySizeLimit: "2mb" },
+  },
+  async headers() {
+    return [
+      {
+        // The worker must always be re-checked (never served from the HTTP cache) and may control
+        // the whole origin (VEC-156).
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+        ],
+      },
+      {
+        source: "/offline.html",
+        headers: [{ key: "Cache-Control", value: "no-cache" }],
+      },
+    ];
   },
   async redirects() {
     return [
