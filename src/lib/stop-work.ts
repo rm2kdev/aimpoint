@@ -156,7 +156,9 @@ export async function resumeWorkAs(actor: Actor, taskId: ObjectId): Promise<Task
   } else if (open && assigneeBot && !after.waitingOn?.length) {
     // Exactly one wake-up: through the wake queue (retried if it fails), or the next check_for_work for a polling bot.
     if (assigneeBot.connection && isPush(assigneeBot.connection.method)) {
-      wakeBots(actor.orgId, [assigneeBot._id], { kind: "assigned", taskId, taskKey: `${key}-${after.number}`, title: after.title, by, retry: true, resumed: true });
+      // Reassigned while stopped (VEC-219): this bot never worked on it, so its note says so rather than "stopped your work".
+      const reassignedFrom = assigneeBot._id.equals(stop.botId) ? undefined : (stoppedBot?.name ?? "another bot");
+      wakeBots(actor.orgId, [assigneeBot._id], { kind: "assigned", taskId, taskKey: `${key}-${after.number}`, title: after.title, by, retry: true, resumed: true, ...(reassignedFrom ? { reassignedFrom } : {}) });
     }
     handedTo = assigneeBot._id;
   }

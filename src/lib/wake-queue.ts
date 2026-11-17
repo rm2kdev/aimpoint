@@ -67,6 +67,7 @@ function storedReason(r: QueuedReason): BotWakeDoc["reason"] {
     ...("commentId" in r ? { commentId: r.commentId } : {}),
     ...("retry" in r && r.retry ? { retry: true } : {}),
     ...("resumed" in r && r.resumed ? { resumed: true } : {}),
+    ...("reassignedFrom" in r && r.reassignedFrom ? { reassignedFrom: r.reassignedFrom } : {}),
     ...("handoff" in r && r.handoff ? { handoff: r.handoff } : {}),
   };
 }
@@ -82,7 +83,7 @@ function toReason(w: BotWakeDoc): QueuedReason {
     case "mentioned":
       return { kind: "mentioned", ...base, commentId: r.commentId ?? new ObjectId() };
     default:
-      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}), ...(r.resumed ? { resumed: true } : {}), ...(r.handoff ? { handoff: r.handoff } : {}) };
+      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}), ...(r.resumed ? { resumed: true } : {}), ...(r.reassignedFrom ? { reassignedFrom: r.reassignedFrom } : {}), ...(r.handoff ? { handoff: r.handoff } : {}) };
   }
 }
 

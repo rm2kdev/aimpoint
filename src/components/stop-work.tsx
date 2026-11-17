@@ -73,7 +73,10 @@ export function useStopWork(task: StopFields | null, onTask?: (t: Task) => void)
     });
   };
   const hasFlow = !!task && !!flowByProject.get(task.projectId);
-  return { canStop, canResume, busy, working, triaging, hasFlow, stoppedBot, stop, resume };
+  // Who Resume hands it to (VEC-219, mirrors resumeWorkAs): a triage stop goes back to its triager; an assigned stop to
+  // the current assignee bot, which may not be the stopped bot after a reassignment; a person or nobody gets no hand-off.
+  const resumeTo = !task?.stopped ? undefined : task.stopped.kind === "triage" ? stoppedBot : assigneeBot?.kind === "bot" ? assigneeBot : undefined;
+  return { canStop, canResume, busy, working, triaging, hasFlow, stoppedBot, resumeTo, stop, resume };
 }
 
 /** Pane strip while a bot works on the task, with Stop (confirm first). */
@@ -134,8 +137,15 @@ export function StoppedBanner({ task, ctl, className }: { task: StopFields; ctl:
   const { memberById, me } = useOrgBase();
   if (!task.stopped) return null;
   const by = task.stopped.by === me.id ? "you" : (memberById.get(task.stopped.by)?.name ?? "a former member");
-  const bot = ctl.stoppedBot?.name ?? "the bot";
+  const bot = ctl.resumeTo?.name;
   const when = timeAgo(task.stopped.at);
+  const note = ctl.canResume
+    ? bot
+      ? `Make your changes, then Resume to hand it back to ${bot}.`
+      : "Make your changes, then Resume to clear the stop. Nobody is handed it: it's not assigned to a bot any more."
+    : bot
+      ? `${bot}'s work is on hold until it's resumed (by the task's creator, ${bot}'s owner or an admin).`
+      : "It's on hold until it's resumed (by the task's creator, its assignee or an admin).";
   return (
     <div role="status" data-stopped className={cn("flex items-start gap-2 rounded-lg border border-border bg-sidebar py-2 pr-2 pl-3 text-[12.5px] text-foreground/80", className)}>
       <CirclePauseIcon className="mt-px size-3.5 shrink-0" />
@@ -143,7 +153,7 @@ export function StoppedBanner({ task, ctl, className }: { task: StopFields; ctl:
         <span className="font-medium text-foreground">
           Stopped by {by}, paused.
         </span>{" "}
-        {ctl.canResume ? `Make your changes, then Resume to hand it back to ${bot}.` : `${bot}'s work is on hold until it's resumed (by the task's creator, ${bot}'s owner or an admin).`}{" "}
+        {note}{" "}
         <time className="text-faint" dateTime={task.stopped.at} title={new Date(task.stopped.at).toLocaleString()}>
           {when === "now" ? "just now" : when}
         </time>

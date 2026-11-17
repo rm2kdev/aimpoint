@@ -591,6 +591,8 @@ export interface BotWakeDoc {
     retry?: boolean;
     /** With retry: the hand-back after a person stopped the bot's work and resumed it (VEC-215). */
     resumed?: boolean;
+    /** With resumed: the stopped bot's name when the task was reassigned to this bot while stopped (VEC-219). */
+    reassignedFrom?: string;
     /** An assigned wake-up from a flow hand-off (VEC-175). */
     handoff?: { fromStep: string | null; toStep: string };
   };
