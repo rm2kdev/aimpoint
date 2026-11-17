@@ -20,6 +20,12 @@ export interface KpiTileProps {
   deltaFormat?: (value: number) => string
   /** Shown after the delta, e.g. "vs previous 30 days". */
   comparisonLabel?: string
+  /**
+   * Colour of the one series this tile sums up (e.g. `var(--chart-2)` for Opened), drawn as the
+   * legend swatch before the label so the tile matches its chart. Omit when no single series plots
+   * the measure; the tile then stays neutral (DESIGN.md "Analytics charts" colour map).
+   */
+  color?: string
   loading?: boolean
   className?: string
 }
@@ -33,6 +39,7 @@ export function KpiTile({
   format = formatNumber,
   deltaFormat = format,
   comparisonLabel = "vs previous period",
+  color,
   loading,
   className,
 }: KpiTileProps) {
@@ -73,7 +80,10 @@ export function KpiTile({
         className,
       )}
     >
-      <div className="truncate text-[13px] leading-[1.45] text-muted-foreground">{label}</div>
+      <div className="flex min-w-0 items-center gap-1.5 text-[13px] leading-[1.45] text-muted-foreground">
+        {color ? <span aria-hidden data-slot="kpi-swatch" className={KIT.swatch} style={{ background: color }} /> : null}
+        <span className="truncate">{label}</span>
+      </div>
       {loading ? (
         <>
           {/* Same line boxes as the loaded tile (30px value, 20px delta row), so nothing jumps. */}

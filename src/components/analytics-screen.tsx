@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useOptimistic, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { BotIcon, CalendarRangeIcon, ChartNoAxesColumnIcon, UserIcon, XIcon } from "lucide-react";
-import { ProjectDot } from "@/components/bits";
+import { BotAvatar, MemberAvatar, ProjectDot, UnassignedAvatar, UserAvatar } from "@/components/bits";
 import { MobileNavButton } from "@/components/app-shell";
 import { AnalyticsExportButton } from "@/components/analytics-export-button";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
@@ -32,7 +32,7 @@ import {
 } from "@/lib/analytics-range";
 import { STAGE_LABELS } from "@/lib/stages";
 import { PRIORITY_LABELS, TYPE_LABELS } from "@/lib/format";
-import { ANALYTICS_GRANULARITIES, STATUS_STAGES, isAnalyticsGranularity, type AnalyticsContributor, type AnalyticsGranularity, type AnalyticsReport } from "@/lib/types";
+import { ANALYTICS_GRANULARITIES, STATUS_STAGES, isAnalyticsGranularity, type AnalyticsContributor, type AnalyticsGranularity, type AnalyticsReport, type Member } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const UNIT_WORDS: Record<AnalyticsGranularity, string> = { hour: "hour", day: "day", week: "week", month: "month" };
@@ -500,9 +500,9 @@ function Report({
     <>
       <Section id="analytics-period" title="This period" dim={dim}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6" role="group" aria-label="Key figures">
-          <KpiTile label="Opened" value={tickets?.opened.total ?? null} previous={prev(tickets?.opened.previous)} goodDirection="neutral" comparisonLabel={vs} loading={loading} />
-          <KpiTile label="Closed" value={tickets?.closed.total ?? null} previous={prev(tickets?.closed.previous)} comparisonLabel={vs} loading={loading} />
-          <KpiTile label="Net backlog" value={net} previous={prev(netPrev ?? undefined)} goodDirection="down" format={signed} deltaFormat={formatNumber} comparisonLabel={vs} loading={loading} />
+          <KpiTile label="Opened" color="var(--chart-2)" value={tickets?.opened.total ?? null} previous={prev(tickets?.opened.previous)} goodDirection="neutral" comparisonLabel={vs} loading={loading} />
+          <KpiTile label="Closed" color="var(--chart-1)" value={tickets?.closed.total ?? null} previous={prev(tickets?.closed.previous)} comparisonLabel={vs} loading={loading} />
+          <KpiTile label="Net backlog" color="var(--chart-5)" value={net} previous={prev(netPrev ?? undefined)} goodDirection="down" format={signed} deltaFormat={formatNumber} comparisonLabel={vs} loading={loading} />
           <KpiTile
             label="Median cycle time"
             value={tickets?.cycleTime.medianMs ?? null}
@@ -718,6 +718,29 @@ function foldDeletedBots(rows: AnalyticsContributor[], known: (id: string) => bo
   return out;
 }
 
+/** Name cell with the contributor's avatar (hashed person colour or bot avatar) before it. */
+function ContributorName({ row, member }: { row: ContributorRow; member?: Member }) {
+  const name = row.count != null ? (row.count > 1 ? `Deleted bots (${row.count})` : "Deleted bot") : (member?.name ?? row.name);
+  // Bots deleted since have no avatar left: the dashed "nobody" circle. A bot we only know by name
+  // keeps the bot shape, so it never reads as a person.
+  const avatar =
+    row.count != null ? (
+      <UnassignedAvatar size={18} />
+    ) : member ? (
+      <MemberAvatar member={member} id={row.id} size={18} />
+    ) : row.kind === "bot" ? (
+      <BotAvatar name={name} size={18} />
+    ) : (
+      <UserAvatar id={row.id} name={name} size={18} />
+    );
+  return (
+    <span className="flex h-5 min-w-0 items-center gap-2">
+      {avatar}
+      <span className="truncate">{name}</span>
+    </span>
+  );
+}
+
 function Contributors({
   title,
   rows,
@@ -736,7 +759,7 @@ function Contributors({
 }) {
   const shown = foldDeletedBots(rows, (id) => memberById.has(id)).slice(0, CONTRIBUTOR_ROWS);
   const columns: DataTableColumn<ContributorRow>[] = [
-    { label: "Name", cell: (c) => (c.count != null ? (c.count > 1 ? `Deleted bots (${c.count})` : "Deleted bot") : (memberById.get(c.id)?.name ?? c.name)) },
+    { label: "Name", cell: (c) => <ContributorName row={c} member={memberById.get(c.id)} /> },
     { label: "Closed", numeric: true, cell: (c) => formatNumber(c.tasksClosed) },
     { label: "Comments", numeric: true, cell: (c) => formatNumber(c.comments) },
     { label: "Interactions", numeric: true, cell: (c) => formatNumber(c.interactions) },
