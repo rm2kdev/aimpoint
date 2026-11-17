@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-11-15T17:22:07+08:00",
-  "title": "Design System: Vector",
+  "title": "Design System: Aimpoint",
   "extensions": {
     "colorMeta": {
       "brand-blue": {
@@ -907,7 +907,7 @@
   ],
   "narrative": {
     "northStar": "The Calm Ledger",
-    "overview": "Vector is a list you can leave open all day. A warm off-white sidebar sits beside a pure white work column; tasks are 40px rows with soft 9px corners and a 2px breath between them, grouped under sticky status headings. The chrome is hairlines and grey type. Almost everything that carries colour is data: the status ring, the project dot, the type tag, the avatar. The interface itself owns one blue (selection and focus), one near-black (the primary action), and one warm yellow that only appears when a teammate changed something you have not looked at yet.\n\nThe precision comes from Vercel: Geist Sans for UI, Geist Mono with tabular numerals for task keys and counts, 1px borders, a near-black primary button, and a true #0a0a0a dark mode rather than a grey one. The calm comes from Things 3: generous row height, one list per view, a detail pane that slides in beside the list rather than replacing it, and no visible grid lines between rows. Density is moderate; the list never turns into a table.\n\nMotion is small and causal. Rows glide to their new position when their status changes (FLIP, 380ms), the status ring's arc animates as it fills, and live highlights fade rather than snap. Nothing moves on its own. Under `prefers-reduced-motion` every transition collapses to near-zero.",
+    "overview": "Aimpoint is a list you can leave open all day. A warm off-white sidebar sits beside a pure white work column; tasks are 40px rows with soft 9px corners and a 2px breath between them, grouped under sticky status headings. The chrome is hairlines and grey type. Almost everything that carries colour is data: the status ring, the project dot, the type tag, the avatar. The interface itself owns one blue (selection and focus), one near-black (the primary action), and one warm yellow that only appears when a teammate changed something you have not looked at yet.\n\nThe precision comes from Vercel: Geist Sans for UI, Geist Mono with tabular numerals for task keys and counts, 1px borders, a near-black primary button, and a true #0a0a0a dark mode rather than a grey one. The calm comes from Things 3: generous row height, one list per view, a detail pane that slides in beside the list rather than replacing it, and no visible grid lines between rows. Density is moderate; the list never turns into a table.\n\nMotion is small and causal. Rows glide to their new position when their status changes (FLIP, 380ms), the status ring's arc animates as it fills, and live highlights fade rather than snap. Nothing moves on its own. Under `prefers-reduced-motion` every transition collapses to near-zero.",
     "keyCharacteristics": [
       "Two-tone canvas: warm sidebar paper beside pure white work area; #0a0a0a / #111111 in dark.",
       "Tasks as 40px rounded rows with a 4px gap, never ruled table lines.",

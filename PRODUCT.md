@@ -19,7 +19,7 @@ Small software teams (2-20 people) who want an issue and feature-request tracker
 
 ## Product Purpose
 
-Vector is a place to store and track issues and feature requests for a team. Success: capturing a task takes seconds, the whole team sees changes live without refreshing, and the list never feels heavier than the work it describes.
+Aimpoint is a place to store and track issues and feature requests for a team. Success: capturing a task takes seconds, the whole team sees changes live without refreshing, and the list never feels heavier than the work it describes.
 
 ## Positioning
 
@@ -42,7 +42,7 @@ Deliberately small: the essentials of a team tracker (orgs, roles, assignment, r
 
 ## Brand Commitments
 
-- Name: Vector (working name).
+- Name: Aimpoint (renamed from Vector, VEC-196).
 - Binding visual references from the user: the calm, clean style of Things 3 (macOS) and Vercel. Sidebar-based workflow.
 
 ## Evidence on Hand

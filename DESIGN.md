@@ -1,5 +1,5 @@
 ---
-name: Vector
+name: Aimpoint
 description: Issues and feature requests for small software teams; a calm list that stays live.
 colors:
   brand-blue: "#2f6fed"
@@ -191,13 +191,13 @@ components:
     width: "248px"
 ---
 
-# Design System: Vector
+# Design System: Aimpoint
 
 ## Overview
 
 **Creative North Star: "The Calm Ledger"**
 
-Vector is a list you can leave open all day. A warm off-white sidebar sits beside a pure white work column; tasks are 40px rows with soft 9px corners and a 2px breath between them, grouped under sticky status headings. The chrome is hairlines and grey type. Almost everything that carries colour is data: the status ring, the project dot, the type tag, the avatar. The interface itself owns one blue (selection and focus), one near-black (the primary action), and one warm yellow that only appears when a teammate changed something you have not looked at yet.
+Aimpoint is a list you can leave open all day. A warm off-white sidebar sits beside a pure white work column; tasks are 40px rows with soft 9px corners and a 2px breath between them, grouped under sticky status headings. The chrome is hairlines and grey type. Almost everything that carries colour is data: the status ring, the project dot, the type tag, the avatar. The interface itself owns one blue (selection and focus), one near-black (the primary action), and one warm yellow that only appears when a teammate changed something you have not looked at yet.
 
 The precision comes from Vercel: Geist Sans for UI, Geist Mono with tabular numerals for task keys and counts, 1px borders, a near-black primary button, and a true #0a0a0a dark mode rather than a grey one. The calm comes from Things 3: generous row height, one list per view, a detail pane that slides in beside the list rather than replacing it, and no visible grid lines between rows. Density is moderate; the list never turns into a table.
 

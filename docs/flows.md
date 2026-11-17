@@ -7,7 +7,7 @@ VEC-176 (bot API/MCP), VEC-177 (editor UI), VEC-178 (task UI), VEC-179 (E2E).
 
 A project can say, in order, who handles a task at each point of its workflow: "triage bot, then developer
 bot, then tester bot, then CI/CD bot, then Done", or "outreach bot, wait for the customer's reply, planning
-bot, specification bot, a person signs off". When the owner of one step finishes, Vector moves the task to the
+bot, specification bot, a person signs off". When the owner of one step finishes, Aimpoint moves the task to the
 next step's status, assigns the next owner, and hands it over (wake-up for a bot, notification for a person)
 with that step's instructions.
 
@@ -76,7 +76,7 @@ flow?: {
   enteredAt: Date;
   /** A person assigned someone else during this step; the next advance applies flow owners again. */
   ownerOverride?: boolean;
-  /** Someone switched the flow off for this task: Vector behaves exactly as without flows. */
+  /** Someone switched the flow off for this task: Aimpoint behaves exactly as without flows. */
   paused?: boolean;
   /** Wait steps: when a reminder was sent (once per entry). */
   remindedAt?: Date | null;

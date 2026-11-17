@@ -1,6 +1,8 @@
-# Vector
+# Aimpoint
 
 A small, calm task tracker for software teams: issues and feature requests, organised by organisation and project, live for everyone.
+
+Aimpoint was called Vector until VEC-196. Names that existing data, keys and integrations depend on keep the old spelling; see [Renamed from Vector](#renamed-from-vector).
 
 - Multi-user, multi-organisation, with **admin** / **member** roles
 - **Projects** inside each organisation; task IDs use the project key (`WEB-12`). Each project has its own settings page with free-form key/value **agent context** (repos, commands, conventions) that bots receive with every task, plus archive and delete
@@ -23,7 +25,7 @@ pnpm seed                       # optional: demo org "Northwind Labs"
 pnpm dev
 ```
 
-Seeded logins (password `vector-demo`): `ryan@demo.vector.dev` (admin), `jonah@demo.vector.dev` (admin), `mia@demo.vector.dev`, `sofia@demo.vector.dev`.
+Seeded logins (password `vector-demo`): `ryan@demo.vector.dev` (admin), `jonah@demo.vector.dev` (admin), `mia@demo.vector.dev`, `sofia@demo.vector.dev`. They keep the pre-rename names so databases seeded before the rename still log in.
 
 Locally, with no Pusher or Blob variables set:
 
@@ -32,7 +34,7 @@ Locally, with no Pusher or Blob variables set:
 
 ## Deploy to Vercel
 
-1. Create a MongoDB Atlas cluster and set `MONGODB_URI` / `MONGODB_DB`.
+1. Create a MongoDB Atlas cluster and set `MONGODB_URI` / `MONGODB_DB` (the database name defaults to `vector`, kept from before the rename so existing deployments don't switch to an empty database).
 2. Set `AUTH_SECRET`.
 3. **Real-time:** create a Pusher Channels app (or a Pusher-compatible service such as Soketi) and set `PUSHER_APP_ID`, `PUSHER_SECRET`, `NEXT_PUBLIC_PUSHER_KEY`, `NEXT_PUBLIC_PUSHER_CLUSTER`. Clients subscribe to `private-org-<orgId>`; `/api/realtime/pusher-auth` only authorises members of that org. (Serverless functions can't hold SSE connections or share an in-memory bus, so the local driver is dev-only.)
 4. **Images:** add a Vercel Blob store to the project; Vercel injects `BLOB_READ_WRITE_TOKEN` and uploads switch to Blob automatically.
@@ -68,23 +70,25 @@ Admins create bots under **Bots** in the sidebar (name, description, a shape-and
 
 ### Bot backends
 
-Each bot's page has a **Backend** row: pick what runs the bot, fill in its settings in Vector, then send a test. Catalogue: `src/lib/bot-connect.ts`.
+Each bot's page has a **Backend** row: pick what runs the bot, fill in its settings in Aimpoint, then send a test. Catalogue: `src/lib/bot-connect.ts`.
 
-| Backend | Settings in Vector | What Vector does on assignment or @mention |
+| Backend | Settings in Aimpoint | What Aimpoint does on assignment or @mention |
 | --- | --- | --- |
 | Claude | Anthropic API key, model | Messages API with the MCP connector pointed at `/api/mcp` |
 | OpenAI | OpenAI API key, model | Responses API with a remote MCP tool pointed at `/api/mcp` |
-| Hermes | Hermes API URL, `API_SERVER_KEY` | `POST <url>/v1/runs`; Hermes needs Vector's MCP server installed with the bot's key |
+| Hermes | Hermes API URL, `API_SERVER_KEY` | `POST <url>/v1/runs`; Hermes needs Aimpoint's MCP server installed with the bot's key (the wizard's Install step adds it as `aimpoint`, key in `MCP_AIMPOINT_API_KEY`, and removes an old `vector` entry and `MCP_VECTOR_API_KEY` once its test passes) |
 | Webhook | URL, signing secret | signed POST (`X-Aimpoint-Signature: sha256=HMAC(secret, "<ts>.<body>")`, also sent as `X-Vector-Signature`) |
 | MCP only | none | nothing; the agent calls `check_for_work` itself |
 
-Vector sends the task, its description and the whole thread (the same JSON the MCP tools return) with instructions to act through the `aimpoint` MCP tools (`vector` for bots set up before the rename, until they reinstall) (`src/lib/bot-dispatch.ts`, run with `after()`). A successful delivery marks the assignment picked up or the mention delivered, so `check_for_work` doesn't hand it out again. Self-assignments and self-mentions don't trigger a run. Hermes runs use one session per bot and task, so follow-up mentions continue the conversation.
+Aimpoint sends the task, its description and the whole thread (the same JSON the MCP tools return) with instructions to act through the `aimpoint` MCP tools (`vector`, with a note that it's Aimpoint's old name, for bots set up before the rename until they reinstall; Claude and OpenAI backends always get `aimpoint`) (`src/lib/bot-dispatch.ts`, run with `after()`). A successful delivery marks the assignment picked up or the mention delivered, so `check_for_work` doesn't hand it out again. Self-assignments and self-mentions don't trigger a run. Hermes runs use one session per bot and task, so follow-up mentions continue the conversation.
 
-Webhook events (`X-Aimpoint-Event`, also sent as `X-Vector-Event`, and the body's `type`): `ping` (test), `task.assigned`, `task.mentioned`, `task.ready` (an assigned task's last dependency is closed), `task.triage` (a task landed in Triage for this bot) and `task.closeout` (a task this bot triaged is ready to close out). Every task event carries the full task context and the prompt.
+Every webhook POST carries `X-Aimpoint-Event`, `X-Aimpoint-Delivery`, `X-Aimpoint-Timestamp` (the `<ts>` in the signature) and `X-Aimpoint-Signature`, plus the same values as `X-Vector-Event`, `X-Vector-Delivery`, `X-Vector-Timestamp` and `X-Vector-Signature` for receivers written before the rename; `User-Agent` is `Aimpoint-Webhooks/1 Vector-Webhooks/1`.
 
-Task wake-ups that fail (agent down, timeout, network) are queued in `botWakes` and retried after 30 s, 2 min, 10 min, 30 min, 1 h and 2 h; every attempt of one wake-up carries the same `X-Aimpoint-Delivery` id (also sent as `X-Vector-Delivery`) (Hermes: the same `Idempotency-Key`), so a receiver can drop a repeat. Before a retry Vector checks the task is still owed and whether the bot already acted on it; a sweep also re-sends ready/assigned hand-offs and close-outs that never got that far. If the last attempt fails the task shows as Stalled and its creator (or the org admins) is notified. The bot keeps its last 20 deliveries in `connection.deliveries`. See `src/lib/wake-queue.ts`.
+Webhook events (`X-Aimpoint-Event` and the body's `type`): `ping` (test), `task.assigned`, `task.mentioned`, `task.ready` (an assigned task's last dependency is closed), `task.triage` (a task landed in Triage for this bot) and `task.closeout` (a task this bot triaged is ready to close out). Every task event carries the full task context and the prompt.
 
-Credentials (provider keys, `API_SERVER_KEY`, webhook secret, and a copy of the bot key that Claude/OpenAI use to call back) are sealed with AES-256-GCM keyed from `AUTH_SECRET`. Saving checks them first: Hermes `/v1/capabilities`, or the provider's model endpoint. Claude and OpenAI need Vector on public HTTPS and run the whole agent turn inside the request (up to 4 minutes), so on Vercel the function's `maxDuration` caps them.
+Task wake-ups that fail (agent down, timeout, network) are queued in `botWakes` and retried after 30 s, 2 min, 10 min, 30 min, 1 h and 2 h; every attempt of one wake-up carries the same `X-Aimpoint-Delivery` id (also sent as `X-Vector-Delivery`) (Hermes: the same `Idempotency-Key`), so a receiver can drop a repeat. Before a retry Aimpoint checks the task is still owed and whether the bot already acted on it; a sweep also re-sends ready/assigned hand-offs and close-outs that never got that far. If the last attempt fails the task shows as Stalled and its creator (or the org admins) is notified. The bot keeps its last 20 deliveries in `connection.deliveries`. See `src/lib/wake-queue.ts`.
+
+Credentials (provider keys, `API_SERVER_KEY`, webhook secret, and a copy of the bot key that Claude/OpenAI use to call back) are sealed with AES-256-GCM keyed from `AUTH_SECRET`. Saving checks them first: Hermes `/v1/capabilities`, or the provider's model endpoint. Claude and OpenAI need Aimpoint on public HTTPS and run the whole agent turn inside the request (up to 4 minutes), so on Vercel the function's `maxDuration` caps them.
 
 ### MCP server
 
@@ -93,6 +97,8 @@ Credentials (provider keys, `API_SERVER_KEY`, webhook secret, and a copy of the 
 ```json
 { "mcpServers": { "aimpoint": { "type": "http", "url": "https://<host>/api/mcp", "headers": { "Authorization": "Bearer <key>" } } } }
 ```
+
+The server reports itself as `aimpoint` (`serverInfo.title` "Aimpoint · <org>"; a missing or bad key gets 401 with `WWW-Authenticate: Bearer realm="aimpoint"`). The key in `mcpServers` is only the client's label: clients configured as `vector` before the rename keep working, their tools are just named `mcp__vector__*`.
 
 An agent's cron loop calls `check_for_work` until it returns `kind: "idle"`. Each call returns one item, most urgent first:
 
@@ -187,3 +193,11 @@ Admins get **Export CSV** on the Analytics screen: `GET /o/<slug>/analytics/expo
 - Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).
 - Comments are plain text with @mentions (stored as `<@id>` tokens, validated against the org on save); descriptions are sanitised HTML.
 - Not built yet: email notifications, billing, presence avatars, drag-to-reorder within a status.
+
+## Renamed from Vector
+
+The product, UI copy, MCP server name (`aimpoint`), webhook headers (`X-Aimpoint-*`), package name and the `.prose-aimpoint` class use the new name. Kept on purpose, so nothing already deployed breaks:
+
+- Old integration names still served: the `vector` MCP server name for bots set up before the rename (`src/lib/mcp-name.ts`), `X-Vector-*` webhook headers next to `X-Aimpoint-*`, and `VECTOR_MCP_*` install sentinels next to `AIMPOINT_MCP_*`.
+- Unchanged because data depends on them: the `MONGODB_DB` default `vector`, the `vec_` API key prefix, the seeded `@demo.vector.dev` logins and `vector-demo` password, crypto key labels, stored `vectorUrl` / `vectorKeySealed` fields, browser storage keys, and the Hermes `Idempotency-Key` / session id prefixes (renaming them would reset every bot's Hermes sessions).
+- The `VEC` project key and `VEC-…` ticket numbers are data, not the product name.
