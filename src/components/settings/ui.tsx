@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { ChartNoAxesColumnIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -23,33 +23,96 @@ export const SETTINGS_TABS = [
 ] as const;
 
 /** Header + tab bar shared by every settings page. Tabs are real routes, so detail pages keep their tab lit. */
-export function SettingsFrame({ children }: { children: React.ReactNode }) {
-  const { org, isAdmin } = useOrg();
+/** Room kept between the active tab and an edge fade when it's scrolled into view. */
+const TAB_FADE = 24;
+
+/**
+ * The settings tab strip. On phones it's wider than the header, so it scrolls
+ * sideways: the active tab is scrolled into view (the nav only, never the page)
+ * and an edge fades out on each side that has more tabs.
+ */
+function SettingsTabs() {
+  const { org } = useOrg();
   const pathname = usePathname();
+  const navRef = useRef<HTMLElement>(null);
+  const placed = useRef(false);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  // Bring the active tab fully into view, clear of the fades.
+  useEffect(() => {
+    const nav = navRef.current;
+    const link = nav?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!nav || !link) return;
+    const start = link.offsetLeft;
+    const end = start + link.offsetWidth;
+    const pad = nav.scrollWidth > nav.clientWidth ? TAB_FADE : 0;
+    let left = nav.scrollLeft;
+    if (start - pad < left) left = start - pad;
+    else if (end + pad > left + nav.clientWidth) left = end + pad - nav.clientWidth;
+    if (left !== nav.scrollLeft) nav.scrollTo({ left: Math.max(0, left), behavior: placed.current ? "smooth" : "instant" });
+    placed.current = true;
+  }, [pathname]);
+
+  // Track which sides have more tabs, for the fades.
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+    const measure = () => {
+      const max = nav.scrollWidth - nav.clientWidth;
+      const left = nav.scrollLeft > 1;
+      const right = max - nav.scrollLeft > 1;
+      setEdges((e) => (e.left === left && e.right === right ? e : { left, right }));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(nav);
+    nav.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      ro.disconnect();
+      nav.removeEventListener("scroll", measure);
+    };
+  }, []);
+
+  const fade = (on: boolean) => (on ? `transparent, black ${TAB_FADE}px` : "black, black");
+  const mask = edges.left || edges.right ? `linear-gradient(to right, ${fade(edges.left)}, black calc(100% - ${TAB_FADE}px), ${edges.right ? "transparent" : "black"})` : undefined;
+
+  return (
+    <nav
+      ref={navRef}
+      className="relative ml-4 flex min-w-0 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
+      aria-label="Settings sections"
+      data-overflow-left={edges.left || undefined}
+      data-overflow-right={edges.right || undefined}
+    >
+      {SETTINGS_TABS.map(([t, label]) => {
+        const href = orgPath(org.slug, "settings", t);
+        const active = pathname === href || pathname.startsWith(`${href}/`);
+        return (
+          <Link
+            key={t}
+            href={href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "flex h-7 shrink-0 items-center rounded-md px-2.5 text-[13px] transition-colors",
+              active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+export function SettingsFrame({ children }: { children: React.ReactNode }) {
+  const { isAdmin } = useOrg();
   return (
     <section className="flex min-w-0 flex-1 flex-col" aria-label="Settings">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
         <MobileNavButton />
         <h1 className="text-[15px] font-semibold tracking-[-0.01em]">Settings</h1>
-        <nav className="ml-4 flex min-w-0 items-center gap-1 overflow-x-auto" aria-label="Settings sections">
-          {SETTINGS_TABS.map(([t, label]) => {
-            const href = orgPath(org.slug, "settings", t);
-            const active = pathname === href || pathname.startsWith(`${href}/`);
-            return (
-              <Link
-                key={t}
-                href={href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex h-7 shrink-0 items-center rounded-md px-2.5 text-[13px] transition-colors",
-                  active ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {label}
-              </Link>
-            );
-          })}
-        </nav>
+        <SettingsTabs />
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="max-w-[1100px] px-4 py-6 sm:px-7">
