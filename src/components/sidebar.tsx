@@ -46,11 +46,10 @@ import { startInstall, useInstallState } from "@/components/install-prompt";
 import { accountPath, analyticsPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import { matchStatus, type Project, type Task } from "@/lib/types";
-import { ProTag } from "@/components/upgrade-note";
 
 /** Memoised: the shell re-rendering (search, new-task dialog, drawer) doesn't re-render the sidebar. */
 export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
-  const { org, orgs, counts, isAdmin, unread, billing } = useOrg();
+  const { org, orgs, counts, isAdmin, unread } = useOrg();
   const pathname = usePathname();
 
   return (
@@ -95,7 +94,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
 
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
         {isAdmin && (
-          <NavItem href={analyticsPath(org.slug)} active={pathname === analyticsPath(org.slug)} icon={<ChartNoAxesColumnIcon />} onNavigate={onNavigate} tag={billing.features.analytics ? undefined : <ProTag />}>
+          <NavItem href={analyticsPath(org.slug)} active={pathname === analyticsPath(org.slug)} icon={<ChartNoAxesColumnIcon />} onNavigate={onNavigate}>
             Analytics
           </NavItem>
         )}
@@ -362,7 +361,7 @@ function NavItem({
   targetRef?: React.Ref<HTMLAnchorElement>;
   /** A dragged task is over the row ("over"), or it's blinking before the project opens ("spring"). */
   dropState?: "over" | "spring";
-  /** Shown after the label in place of a count, e.g. the "Pro" tag on a feature the plan lacks (VEC-226). */
+  /** Shown after the label in place of a count, e.g. a project's public tag. */
   tag?: React.ReactNode;
 }) {
   return (

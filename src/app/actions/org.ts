@@ -19,7 +19,8 @@ import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
 import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
 import { deleteProjectForms, formsStatusDeleted, formsStatusStageChanged } from "@/lib/project-forms";
 import { publicProjectArchived, publicStatusDeleted, publicStatusStageChanged } from "@/lib/project-public";
-import { assertOrgActive } from "@/lib/billing";
+import { assertOrgActive, billingOn } from "@/lib/billing";
+import { requestOrigin } from "@/lib/request-origin";
 import { syncSeatsSoon } from "@/lib/seat-sync";
 
 function slugify(s: string) {
@@ -55,7 +56,8 @@ export async function createOrgAction(_: OnboardState, form: FormData): Promise<
   for (let i = 0; await c.orgs.findOne({ slug }); i++) slug = `${base}-${nanoid(4).toLowerCase()}`;
   const orgId = new ObjectId();
   const now = new Date();
-  await c.orgs.insertOne({ _id: orgId, name, slug, createdAt: now });
+  const orgDoc = { _id: orgId, name, slug, createdAt: now };
+  await c.orgs.insertOne(orgDoc);
   await c.memberships.insertOne({ _id: new ObjectId(), orgId, userId: user._id, role: "admin", createdAt: now });
   const projectId = new ObjectId();
   await c.projects.insertOne({
@@ -71,7 +73,19 @@ export async function createOrgAction(_: OnboardState, form: FormData): Promise<
   await seedProjectStatuses(orgId, projectId);
   // Every org starts with the default flow (VEC-174); projects inherit it.
   await seedOrgFlow(orgId);
-  redirect(orgPath(slug, "my"));
+  // Managed hosting has no free tier (VEC-264): the new admin goes straight to Stripe Checkout, which returns to the
+  // org (unlocked once the webhook lands). Cancelling, or Stripe being unreachable, leaves the org locked on the
+  // Subscribe to continue screen, which can start Checkout again.
+  let checkout: string | null = null;
+  if (await billingOn()) {
+    try {
+      const { createCheckoutSession } = await import("@/lib/stripe");
+      checkout = await createCheckoutSession(orgDoc, await requestOrigin(), "app");
+    } catch (e) {
+      console.error(`[onboarding] Checkout for new org ${slug} failed; it stays locked until an admin subscribes`, e);
+    }
+  }
+  redirect(checkout ?? orgPath(slug, "my"));
 }
 
 export async function renameOrg(slug: string, name: string): Promise<Result> {

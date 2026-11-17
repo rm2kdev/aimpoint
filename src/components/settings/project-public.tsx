@@ -24,7 +24,6 @@ import {
 import { setProjectPublicAccess } from "@/app/actions/project-public";
 import { STAGE_LABELS } from "@/lib/stages";
 import { publicProjectPath } from "@/lib/paths";
-import { UpgradeNote } from "@/components/upgrade-note";
 import { isFormDestinationStage, type ProjectPublicAccess, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -194,7 +193,6 @@ export function ProjectPublic({
             aria-label={enabled ? `Make ${projectName} private` : `Make ${projectName} public`}
           />
         </div>
-        {!enabled && locked && <UpgradeNote className="-mt-2" reason="Public projects need a Pro subscription." gain="public projects" />}
         {!enabled && archived && <p className="-mt-2 text-[12.5px] text-faint">Restore the project to make it public.</p>}
 
         {enabled && link}

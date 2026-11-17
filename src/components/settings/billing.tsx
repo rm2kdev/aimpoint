@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { countNoun, PLAN_LABEL, PRO_INCLUDES, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { countNoun, PLAN_LABEL, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
 import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -38,12 +38,12 @@ function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean
           text: `The last payment failed. Pro stays on${grace ? ` until ${grace}` : ""} while Stripe retries; update the card in Manage billing to keep it.`,
         };
       }
-      return { warn: true, text: "Payment is overdue, so the organisation is locked until it's paid. Update the card in Manage billing." };
+      return { warn: true, text: "Payment is overdue, so the organisation is locked until it's paid. Update the card in Manage billing; nothing has been deleted." };
     }
     case "unpaid":
-      return { warn: true, text: "The subscription is unpaid, so the organisation is locked. Pay the open invoice in Manage billing." };
+      return { warn: true, text: "The subscription is unpaid, so the organisation is locked. Pay the open invoice in Manage billing; nothing has been deleted." };
     case "paused":
-      return { warn: true, text: "The subscription is paused, so the organisation is locked. Resume it in Manage billing." };
+      return { warn: true, text: "The subscription is paused, so the organisation is locked. Resume it in Manage billing; nothing has been deleted." };
     case "incomplete":
       return { warn: true, text: "The first payment didn't go through, so the organisation is locked. Subscribe again to unlock it." };
     case "canceled": {
@@ -201,10 +201,15 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[15px] font-semibold">{PLAN_LABEL[b.plan]}</span>
                 {pro && b.cancelAtPeriodEnd && <Tag>Cancelling</Tag>}
-                {b.status === "past_due" && (
+                {b.locked && (
+                  <span className="rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive-ink" data-billing-locked>
+                    Locked
+                  </span>
+                )}
+                {b.status === "past_due" && pro && (
                   <span className="rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive-ink">Payment failed</span>
                 )}
-                <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{pro ? `${usd(proMonthlyCents(billedSeats))}/month` : "US$0"}</span>
+                {pro && <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{`${usd(proMonthlyCents(billedSeats))}/month`}</span>}
               </div>
               <p
                 data-billing-note={state.warn ? "warning" : "info"}
@@ -251,8 +256,19 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
           </ul>
         </SettingsRow>
 
-        <SettingsRow title="Plans" desc="Hosted Aimpoint has one plan, Pro, for the whole organisation. Self-hosting is free.">
-          <div className="grid max-w-2xl gap-3 sm:grid-cols-2">
+        <SettingsRow
+          title="Plans"
+          desc={
+            <>
+              Hosted Aimpoint has one plan, Pro, for the whole organisation, and no free tier. To run it for free,{" "}
+              <a href={SELF_HOST_URL} target="_blank" rel="noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                self-host it
+              </a>
+              .
+            </>
+          }
+        >
+          <div className="grid max-w-md gap-3">
             <PlanCard current={pro} />
           </div>
         </SettingsRow>

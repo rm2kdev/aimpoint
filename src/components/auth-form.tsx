@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/logo";
 import type { FormState } from "@/app/actions/auth";
+import { PRO_PRICE_LABEL, SELF_HOST_URL } from "@/lib/billing-view";
 
 type Mode = "login" | "signup";
 
@@ -16,6 +17,7 @@ export function AuthForm({
   next,
   email,
   notice,
+  pricing,
 }: {
   mode: Mode;
   action: (s: FormState, f: FormData) => Promise<FormState>;
@@ -23,6 +25,8 @@ export function AuthForm({
   email?: string;
   /** One-line message above the form, e.g. after deleting an account. */
   notice?: string;
+  /** Managed hosting (VEC-264): say what the hosted service costs and that self-hosting is the free option. */
+  pricing?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, undefined);
   const nextQs = next ? `?next=${encodeURIComponent(next)}` : "";
@@ -101,6 +105,15 @@ export function AuthForm({
             </>
           )}
         </p>
+        {pricing && mode === "signup" && (
+          <p className="mt-2 text-[12.5px] text-faint" data-signup-pricing>
+            Accounts are free. A hosted organisation is {PRO_PRICE_LABEL} with no free tier, or{" "}
+            <a href={SELF_HOST_URL} target="_blank" rel="noreferrer" className="text-muted-foreground underline underline-offset-4 hover:text-foreground">
+              self-host Aimpoint
+            </a>{" "}
+            for free.
+          </p>
+        )}
       </div>
     </main>
   );

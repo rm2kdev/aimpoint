@@ -59,6 +59,12 @@ export function stripe(): Stripe {
 const billingUrl = (origin: string, slug: string, query = "") =>
   `${origin.replace(/\/$/, "")}${orgPath(slug, "settings", "billing")}${query}`;
 
+/** Where Checkout returns: Settings > Billing, or the app itself (onboarding and the Subscribe to continue screen, VEC-264). */
+export type CheckoutReturn = "billing" | "app";
+
+const checkoutReturnUrl = (origin: string, slug: string, to: CheckoutReturn, query: string) =>
+  to === "app" ? `${origin.replace(/\/$/, "")}${orgPath(slug, "my")}${query}` : billingUrl(origin, slug, query);
+
 /** The org's Stripe customer, created on first use (idempotency key per org) and stored on the org. */
 export async function ensureCustomer(org: OrgDoc): Promise<string> {
   const { orgs } = await cols();
@@ -83,7 +89,7 @@ export async function ensureCustomer(org: OrgDoc): Promise<string> {
  * A subscription-mode Checkout session for Pro at US$4.95 per user per month (STRIPE_PRICE_ID is the per-seat
  * price), with quantity = the org's billable seats now (min 1, VEC-238). Refused while a subscription is live.
  */
-export async function createCheckoutSession(org: OrgDoc, origin: string): Promise<string> {
+export async function createCheckoutSession(org: OrgDoc, origin: string, returnTo: CheckoutReturn = "billing"): Promise<string> {
   if (hasLiveSubscription(org.billing))
     throw new UserError("This organisation already has a subscription. Manage it from the billing portal.");
   const { priceId } = stripeConfig();
@@ -98,8 +104,8 @@ export async function createCheckoutSession(org: OrgDoc, origin: string): Promis
     line_items: [{ price: priceId, quantity }],
     metadata: { orgId },
     subscription_data: { metadata: { orgId } },
-    success_url: billingUrl(origin, org.slug, "?checkout=success&session_id={CHECKOUT_SESSION_ID}"),
-    cancel_url: billingUrl(origin, org.slug, "?checkout=cancelled"),
+    success_url: checkoutReturnUrl(origin, org.slug, returnTo, "?checkout=success&session_id={CHECKOUT_SESSION_ID}"),
+    cancel_url: checkoutReturnUrl(origin, org.slug, returnTo, "?checkout=cancelled"),
   });
   if (!session.url) throw new Error("Stripe returned a Checkout session without a URL.");
   return session.url;

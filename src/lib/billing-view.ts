@@ -81,5 +81,8 @@ export const countNoun = (kind: CountKind, n: number) => (n === 1 ? NOUN[kind][0
 export const FEATURE_LABEL = { analytics: "Analytics", publicForms: "Public forms" } as const;
 export type FeatureKind = keyof typeof FEATURE_LABEL;
 
+/** Where self-hosting is documented: the free way to run Aimpoint, since hosted has no free tier (VEC-264). */
+export const SELF_HOST_URL = "https://github.com/rm2kdev/aimpoint#run-locally";
+
 /** What Pro includes, for the Billing page. Hosted Aimpoint has no other plan (self-hosted is free and unlimited). */
 export const PRO_INCLUDES: string[] = ["Unlimited people", "Unlimited bots", "Unlimited projects", "Bots work on several tasks at once", "Analytics", "Public forms"];

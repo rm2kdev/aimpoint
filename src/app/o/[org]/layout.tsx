@@ -9,6 +9,7 @@ import { loadClientFlows } from "@/lib/flow-view";
 import { loadBillingSummary } from "@/lib/billing-summary";
 import { OrgProvider } from "@/components/org-provider";
 import { AppShell } from "@/components/app-shell";
+import { SubscribeGate } from "@/components/subscribe-gate";
 
 export default async function OrgLayout({ children, params }: LayoutProps<"/o/[org]">) {
   const { org: slug } = await params;
@@ -48,7 +49,10 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
         cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER,
       }}
     >
-      <AppShell>{children}</AppShell>
+      {/* Unpaid org on managed hosting (VEC-264): a full-page Subscribe to continue screen instead of the app. */}
+      <SubscribeGate>
+        <AppShell>{children}</AppShell>
+      </SubscribeGate>
     </OrgProvider>
   );
 }

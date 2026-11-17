@@ -38,7 +38,7 @@ Deliberately small: the essentials of a team tracker (orgs, roles, assignment, r
 - Statuses are customisable per organisation (admins add, rename, reorder, remove).
 - Light and dark modes.
 - Real-time updates for task lists, task detail and comments.
-- Billing (managed hosting only): Free, or Pro at US$4.95 per user/month per organisation (VEC-237). Self-hosted has everything on.
+- Billing (managed hosting only): Pro at US$4.95 per user/month per organisation (VEC-237), no free tier: an org without a subscription is locked until an admin subscribes (VEC-261). Self-hosting is the free option and has everything on.
 - Undecided: notifications/email, integrations.
 
 ## Brand Commitments
