@@ -1,0 +1,384 @@
+import "server-only";
+import { ObjectId } from "mongodb";
+import { cols } from "@/lib/db";
+import { UserError } from "@/lib/result";
+import { loadStatuses } from "@/lib/statuses";
+import { hasFeature, requireFeatureById } from "@/lib/billing-limits";
+import { createTaskAs, FORM_DESCRIPTION_MAX, type Actor } from "@/lib/task-service";
+import { hit, waitText } from "@/lib/form-submit";
+import { prepareRichDescription, publicSanitize } from "@/lib/form-rich-core";
+import { loadDirectory, personName } from "@/lib/mcp/context";
+import {
+  PUBLIC_COMMENTS_MAX,
+  PUBLIC_RATE_LIMITS,
+  PUBLIC_TASKS_MAX,
+  PUBLIC_UNAVAILABLE,
+  PUBLIC_UPLOAD_FILE,
+  isPublicSubmitStage,
+  parsePublicRef,
+  pickSubmitStatus,
+  pruneSubmitStatuses,
+  resolveSubmitStatuses,
+  rewritePublicImages,
+  shapePublicComment,
+  shapePublicTask,
+} from "@/lib/project-public-core";
+import {
+  isTaskType,
+  type OrgDoc,
+  type ProjectDoc,
+  type ProjectPublicAccess,
+  type ProjectPublicAccessDoc,
+  type PublicComment,
+  type PublicProjectResult,
+  type PublicProjectView,
+  type PublicStatus,
+  type PublicTask,
+  type StatusCategory,
+  type StatusDoc,
+  type Task,
+  type TaskDoc,
+  type TaskType,
+  type UserDoc,
+} from "@/lib/types";
+
+/**
+ * Public projects (VEC-254/255). An admin makes a project public (`ProjectDoc.publicAccess`): anyone can then read a
+ * sanitised view of its non-archived tasks, and any signed-in Aimpoint account (membership not needed) can submit a
+ * ticket into the statuses the admin allows. Gated on the same plan feature as external forms (`publicForms`).
+ *
+ * Submissions are created through createTaskAs with the project's id as the creator (no person has that id, like a
+ * form's id for form tasks), so the submitter never gets creator edit rights, creator notifications or anything a
+ * membership gives; who submitted it is `source: {kind: "public", userId, userName}`. Pure rules live in
+ * lib/project-public-core.ts.
+ */
+
+/** Who manages a project's public settings: a signed-in member of its org. Only admins may. */
+export interface PublicSettingsActor {
+  orgId: ObjectId;
+  userId: ObjectId;
+  isAdmin: boolean;
+}
+
+export interface PublicAccessPatch {
+  enabled?: boolean;
+  submitStatusIds?: string[];
+  showComments?: boolean;
+}
+
+const oid = (id: string, what: string) => {
+  if (typeof id !== "string" || !ObjectId.isValid(id)) throw new UserError(`Unknown ${what}.`);
+  return new ObjectId(id);
+};
+
+const statusLike = (s: StatusDoc) => ({ id: s._id.toHexString(), name: s.name, category: s.category });
+const toPublicStatus = (s: StatusDoc): PublicStatus => ({ id: s._id.toHexString(), name: s.name, color: s.color, stage: s.category });
+
+export function toPublicAccess(projectId: ObjectId, a: ProjectPublicAccessDoc | null | undefined): ProjectPublicAccess {
+  return {
+    projectId: projectId.toHexString(),
+    enabled: !!a?.enabled,
+    submitStatusIds: (a?.submitStatusIds ?? []).map((id) => id.toHexString()),
+    showComments: !!a?.showComments,
+    updatedAt: a?.updatedAt ? a.updatedAt.toISOString() : null,
+    updatedBy: a?.updatedBy ? a.updatedBy.toHexString() : null,
+  };
+}
+
+function assertAdmin(actor: PublicSettingsActor) {
+  if (!actor.isAdmin) throw new UserError("Only admins can change whether a project is public.");
+}
+
+async function ownProject(orgId: ObjectId, projectId: string) {
+  const c = await cols();
+  const project = await c.projects.findOne({ _id: oid(projectId, "project"), orgId }, { projection: { name: 1, key: 1, archivedAt: 1, publicAccess: 1 } });
+  if (!project) throw new UserError("That project no longer exists.");
+  return project;
+}
+
+/** The project's public settings (admins only), with statuses that are no longer allowed left out. */
+export async function getProjectPublicAccess(actor: PublicSettingsActor, projectId: string): Promise<ProjectPublicAccess> {
+  assertAdmin(actor);
+  const project = await ownProject(actor.orgId, projectId);
+  const view = toPublicAccess(project._id, project.publicAccess);
+  view.submitStatusIds = pruneSubmitStatuses(view.submitStatusIds, (await loadStatuses(actor.orgId, project._id)).map(statusLike));
+  return view;
+}
+
+/**
+ * Changes the project's public settings (admins only). Fields left out keep their saved values. Turning it on needs
+ * the plan feature and an unarchived project; turning it off or editing a switched-off one always works.
+ */
+export async function setProjectPublicAccess(actor: PublicSettingsActor, projectId: string, patch: PublicAccessPatch): Promise<ProjectPublicAccess> {
+  assertAdmin(actor);
+  const project = await ownProject(actor.orgId, projectId);
+  const prev = project.publicAccess;
+  if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") throw new UserError("`enabled` is true or false.");
+  if (patch.showComments !== undefined && typeof patch.showComments !== "boolean") throw new UserError("`showComments` is true or false.");
+  const enabled = patch.enabled ?? !!prev?.enabled;
+  if (enabled && !prev?.enabled) {
+    if (project.archivedAt) throw new UserError(`${project.name} (${project.key}) is archived. Restore it before making it public.`);
+    await requireFeatureById(actor.orgId, "publicForms");
+  }
+  const statuses = (await loadStatuses(actor.orgId, project._id)).map(statusLike);
+  let submitStatusIds: string[];
+  if (patch.submitStatusIds !== undefined) {
+    const r = resolveSubmitStatuses(patch.submitStatusIds, statuses);
+    if (!r.ok) throw new UserError(r.error);
+    submitStatusIds = r.ids;
+  } else submitStatusIds = pruneSubmitStatuses((prev?.submitStatusIds ?? []).map((id) => id.toHexString()), statuses);
+  const doc: ProjectPublicAccessDoc = {
+    enabled,
+    submitStatusIds: submitStatusIds.map((id) => new ObjectId(id)),
+    showComments: patch.showComments ?? !!prev?.showComments,
+    updatedAt: new Date(),
+    updatedBy: actor.userId,
+  };
+  const c = await cols();
+  const r = await c.projects.updateOne({ _id: project._id, orgId: actor.orgId }, { $set: { publicAccess: doc } });
+  if (!r.matchedCount) throw new UserError("That project no longer exists.");
+  return toPublicAccess(project._id, doc);
+}
+
+/* ---------------- keeping the settings valid ---------------- */
+
+/** A status of the project was deleted: it can't be a submit destination any more. */
+export async function publicStatusDeleted(orgId: ObjectId, projectId: ObjectId, statusId: ObjectId): Promise<number> {
+  const c = await cols();
+  const r = await c.projects.updateOne({ _id: projectId, orgId, "publicAccess.submitStatusIds": statusId }, { $pull: { "publicAccess.submitStatusIds": statusId } });
+  return r.modifiedCount;
+}
+
+/** A status changed stage: when it left the submit stages it's dropped from the submit statuses. */
+export async function publicStatusStageChanged(orgId: ObjectId, projectId: ObjectId, statusId: ObjectId, to: StatusCategory): Promise<number> {
+  if (isPublicSubmitStage(to)) return 0;
+  return publicStatusDeleted(orgId, projectId, statusId);
+}
+
+/** The project was archived: it stops being public (restoring it doesn't turn it back on by itself). */
+export async function publicProjectArchived(orgId: ObjectId, projectId: ObjectId): Promise<number> {
+  const c = await cols();
+  const r = await c.projects.updateOne({ _id: projectId, orgId, "publicAccess.enabled": true }, { $set: { "publicAccess.enabled": false, "publicAccess.updatedAt": new Date() } });
+  return r.modifiedCount;
+}
+
+/* ---------------- public read side ---------------- */
+
+type PublicProjectDoc = Pick<ProjectDoc, "_id" | "orgId" | "name" | "key" | "color" | "archivedAt" | "publicAccess">;
+interface Found {
+  org: Pick<OrgDoc, "_id" | "name" | "slug">;
+  project: PublicProjectDoc;
+  available: boolean;
+}
+
+/**
+ * The org + project behind a public URL when the project is public (enabled, not archived), else null. `available`
+ * is false while the org's plan lacks the feature: callers then show nothing but an unavailable message.
+ */
+export async function findPublicProject(slugIn: unknown, keyIn: unknown): Promise<Found | null> {
+  const ref = parsePublicRef(slugIn, keyIn);
+  if (!ref) return null;
+  const c = await cols();
+  const org = await c.orgs.findOne({ slug: ref.slug }, { projection: { _id: 1, name: 1, slug: 1 } });
+  if (!org) return null;
+  const project = await c.projects.findOne(
+    { orgId: org._id, key: ref.key, "publicAccess.enabled": true, archivedAt: null },
+    { projection: { _id: 1, orgId: 1, name: 1, key: 1, color: 1, archivedAt: 1, publicAccess: 1 } },
+  );
+  if (!project) return null;
+  return { org, project, available: await hasFeature(org._id, "publicForms") };
+}
+
+/** Projection of the only task fields the public view reads. */
+const TASK_FIELDS = { _id: 1, number: 1, title: 1, type: 1, statusId: 1, priority: 1, description: 1, createdAt: 1, updatedAt: 1 } as const;
+type PublicTaskDoc = Pick<TaskDoc, "_id" | "number" | "title" | "type" | "statusId" | "priority" | "description" | "createdAt" | "updatedAt">;
+
+async function viewParts(f: Found) {
+  const statuses = await loadStatuses(f.project.orgId, f.project._id);
+  const byId = new Map(statuses.map((s) => [s._id.toHexString(), toPublicStatus(s)]));
+  const allowed = pruneSubmitStatuses((f.project.publicAccess?.submitStatusIds ?? []).map((id) => id.toHexString()), statuses.map(statusLike));
+  const ctx = { orgId: f.org._id.toHexString(), slug: f.org.slug, key: f.project.key };
+  const shape = (t: PublicTaskDoc) => shapePublicTask(t, f.project.key, byId, rewritePublicImages(publicSanitize(t.description ?? "", { allowImages: true }), ctx));
+  return { statuses, byId, allowed, shape };
+}
+
+/**
+ * The public view of a project: null unless it's public; `{available: false}` (and nothing else) while the plan lacks
+ * the feature. Otherwise its name/key/colour, statuses, the statuses open to submissions, and its non-archived tasks
+ * (newest activity first, at most PUBLIC_TASKS_MAX) in the allow-listed public shape. No member, bot, activity,
+ * flow, claim, project metadata or other project data is ever read into it.
+ */
+export async function loadPublicProject(slug: unknown, key: unknown): Promise<PublicProjectResult | null> {
+  const f = await findPublicProject(slug, key);
+  if (!f) return null;
+  if (!f.available) return { available: false };
+  const c = await cols();
+  const { statuses, byId, allowed, shape } = await viewParts(f);
+  const docs = await c.tasks
+    .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null }, { projection: TASK_FIELDS })
+    .sort({ updatedAt: -1 })
+    .limit(PUBLIC_TASKS_MAX + 1)
+    .toArray();
+  const view: PublicProjectView = {
+    org: { name: f.org.name, slug: f.org.slug },
+    project: { name: f.project.name, key: f.project.key, color: f.project.color },
+    statuses: statuses.map(toPublicStatus),
+    submitStatuses: allowed.map((id) => byId.get(id)!).filter(Boolean),
+    showComments: !!f.project.publicAccess?.showComments,
+    tasks: docs.slice(0, PUBLIC_TASKS_MAX).map(shape),
+    truncated: docs.length > PUBLIC_TASKS_MAX,
+  };
+  return { available: true, view };
+}
+
+export type PublicTaskResult = { available: true; task: PublicTask; comments: PublicComment[] | null } | { available: false };
+
+/**
+ * One task of a public project (`taskKey` like "VEC-12"): null unless the project is public and the task is one of
+ * its non-archived tasks (a task moved to another project is gone from here). `comments` is null unless the project
+ * shows comments; authors are display names only.
+ */
+export async function loadPublicTask(slug: unknown, key: unknown, taskKey: unknown): Promise<PublicTaskResult | null> {
+  const f = await findPublicProject(slug, key);
+  if (!f) return null;
+  if (!f.available) return { available: false };
+  const m = typeof taskKey === "string" ? /^([A-Za-z][A-Za-z0-9]{1,9})-(\d{1,9})$/.exec(taskKey.trim()) : null;
+  if (!m || m[1].toUpperCase() !== f.project.key) return null;
+  const c = await cols();
+  const doc = await c.tasks.findOne({ orgId: f.project.orgId, projectId: f.project._id, number: Number(m[2]), archivedAt: null }, { projection: TASK_FIELDS });
+  if (!doc) return null;
+  const { shape } = await viewParts(f);
+  let comments: PublicComment[] | null = null;
+  if (f.project.publicAccess?.showComments) {
+    const list = await c.comments.find({ orgId: f.project.orgId, taskId: doc._id }, { projection: { authorId: 1, body: 1, createdAt: 1 } }).sort({ createdAt: 1 }).limit(PUBLIC_COMMENTS_MAX).toArray();
+    const dir = list.length ? await loadDirectory(f.project.orgId) : null;
+    const nameOf = (id: string) => (dir ? personName(dir, id) : undefined);
+    comments = list.map((cm) => shapePublicComment(cm, nameOf));
+  }
+  return { available: true, task: shape(doc), comments };
+}
+
+/**
+ * The signed-in account's own submissions to a public project (non-archived, still in this project), newest first.
+ * Null when the project isn't public or is unavailable.
+ */
+export async function listMyPublicSubmissions(user: Pick<UserDoc, "_id">, slug: unknown, key: unknown): Promise<PublicTask[] | null> {
+  const f = await findPublicProject(slug, key);
+  if (!f || !f.available) return null;
+  const c = await cols();
+  const { shape } = await viewParts(f);
+  const docs = await c.tasks
+    .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null, "source.kind": "public", "source.userId": user._id }, { projection: TASK_FIELDS })
+    .sort({ createdAt: -1 })
+    .limit(PUBLIC_TASKS_MAX)
+    .toArray();
+  return docs.map(shape);
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The stored upload name the public image route may serve for `file` (the name without its org prefix, see
+ * publicImagePath), or null: the project is public and available, and a non-archived task of the project references
+ * `<orgId>-<file>` in its description. Only this org's task uploads can match (never an avatar or another org's).
+ */
+export async function publicImageName(slug: unknown, key: unknown, file: unknown): Promise<string | null> {
+  if (typeof file !== "string" || !PUBLIC_UPLOAD_FILE.test(file)) return null;
+  const f = await findPublicProject(slug, key);
+  if (!f || !f.available) return null;
+  const name = `${f.org._id.toHexString()}-${file}`;
+  const c = await cols();
+  const hitDoc = await c.tasks.findOne(
+    { orgId: f.project.orgId, projectId: f.project._id, archivedAt: null, description: { $regex: `src="/api/uploads/${escapeRe(name)}"` } },
+    { projection: { _id: 1 } },
+  );
+  return hitDoc ? name : null;
+}
+
+/* ---------------- submitting ---------------- */
+
+export const PUBLIC_TITLE_MAX = 300;
+export const PUBLIC_NAME_MAX = 100;
+
+/** A refusal because the account submitted too much; `retryAfter` in seconds. */
+export class PublicRateLimitError extends UserError {
+  constructor(readonly retryAfter: number) {
+    super(`You've submitted a lot of tickets here. Try again in ${waitText(retryAfter)}.`);
+    this.name = "PublicRateLimitError";
+  }
+}
+
+export interface PublicSubmission {
+  title: unknown;
+  /** The rich editor's HTML. Sanitised with the public allow-list; no images. */
+  description?: unknown;
+  type?: unknown;
+  /** One of the project's submit statuses; empty = the first one. */
+  statusId?: unknown;
+}
+
+/**
+ * A signed-in account (any, membership not needed) files a ticket into a public project. Re-reads the project (still
+ * public, unarchived, plan feature), checks the status is allowed, validates and sanitises before counting the
+ * submission against the per-account and per-project rate limits, then creates the task through createTaskAs, so the
+ * normal create path runs (task.upsert, flow owner wake-ups, a Triage destination reaches the triage bots). The
+ * creator is the project id and provenance is `source: {kind: "public", userId, userName}`. Throws UserError
+ * (an unavailable project says PUBLIC_UNAVAILABLE; PublicRateLimitError when over the limit).
+ */
+export async function createTaskFromPublicProject(user: Pick<UserDoc, "_id" | "name">, projectRef: Pick<ProjectDoc, "_id" | "orgId">, input: PublicSubmission): Promise<Task> {
+  if (!user?._id) throw new UserError("Sign in to submit a ticket.");
+  const c = await cols();
+  const project = await c.projects.findOne({ _id: projectRef._id, orgId: projectRef.orgId }, { projection: { _id: 1, orgId: 1, archivedAt: 1, publicAccess: 1 } });
+  if (!project || project.archivedAt || !project.publicAccess?.enabled) throw new UserError("This project isn't public.");
+  if (!(await hasFeature(project.orgId, "publicForms"))) throw new UserError(PUBLIC_UNAVAILABLE);
+  // Shape and size first: bad input never spends rate limit.
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  if (!title) throw new UserError("Give it a title.");
+  if (title.length > PUBLIC_TITLE_MAX) throw new UserError(`Keep the title under ${PUBLIC_TITLE_MAX} characters.`);
+  let type: TaskType = "issue";
+  if (input.type !== undefined && input.type !== null && input.type !== "") {
+    if (!isTaskType(input.type)) throw new UserError("Pick one of the listed types.");
+    type = input.type;
+  }
+  const raw = input.description ?? "";
+  if (typeof raw !== "string") throw new UserError("The description wasn't text. Reload the page and try again.");
+  const prep = prepareRichDescription(raw.replace(/\r\n?/g, "\n"), false, FORM_DESCRIPTION_MAX);
+  if (!prep.ok) throw new UserError(prep.error);
+  const description = publicSanitize(prep.html, { allowImages: false });
+  const statuses = await loadStatuses(project.orgId, project._id);
+  const allowed = pruneSubmitStatuses((project.publicAccess.submitStatusIds ?? []).map((id) => id.toHexString()), statuses.map(statusLike));
+  const pick = pickSubmitStatus(input.statusId, allowed);
+  if (!pick.ok) throw new UserError(pick.error);
+  const pid = project._id.toHexString();
+  const wait = (await hit(`public-user:${user._id.toHexString()}:${pid}`, PUBLIC_RATE_LIMITS.userProject)) ?? (await hit(`public-project:${pid}`, PUBLIC_RATE_LIMITS.project));
+  if (wait !== null) throw new PublicRateLimitError(wait);
+  const userName = String(user.name ?? "").trim().slice(0, PUBLIC_NAME_MAX) || "Aimpoint user";
+  const actor: Actor = { orgId: project.orgId, id: project._id, isAdmin: false, isBot: false, name: userName };
+  return createTaskAs(
+    actor,
+    { title, projectId: pid, type, statusId: pick.id, description },
+    { source: { kind: "public", userId: user._id, userName }, createdNote: { note: "public", to: userName } },
+  );
+}
+
+export type PublicSubmitResult = { ok: true; key: string } | { ok: false; status: 400 | 401 | 403 | 404 | 429; error: string; retryAfter?: number };
+
+/** createTaskFromPublicProject by org slug + project key, answering with the new key or a short error (pages, routes). */
+export async function submitPublicTicket(user: Pick<UserDoc, "_id" | "name"> | null, slug: unknown, key: unknown, input: PublicSubmission): Promise<PublicSubmitResult> {
+  if (!user) return { ok: false, status: 401, error: "Sign in to submit a ticket." };
+  const f = await findPublicProject(slug, key);
+  if (!f) return { ok: false, status: 404, error: "This project doesn't exist or isn't public." };
+  if (!f.available) return { ok: false, status: 403, error: PUBLIC_UNAVAILABLE };
+  try {
+    const task = await createTaskFromPublicProject(user, f.project, input);
+    return { ok: true, key: task.key };
+  } catch (err) {
+    if (err instanceof PublicRateLimitError) return { ok: false, status: 429, error: err.message, retryAfter: err.retryAfter };
+    if (err instanceof UserError) {
+      if (err.message === "This project isn't public.") return { ok: false, status: 404, error: "This project doesn't exist or isn't public." };
+      if (err.message === PUBLIC_UNAVAILABLE) return { ok: false, status: 403, error: err.message };
+      return { ok: false, status: 400, error: err.message };
+    }
+    throw err;
+  }
+}

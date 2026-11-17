@@ -10,17 +10,20 @@ import type { TaskSource } from "@/lib/types";
  * `creatorLabel` rather than a member lookup, which would read "Former member".
  */
 
-/** "Bug report form", for "Only X or an admin..." notes. */
-export const formLabel = (s: TaskSource) => `the ${s.formName} form`;
+/** "Bug report form", for "Only X or an admin..." notes. A public submission (VEC-255) reads "the public page". */
+export const formLabel = (s: TaskSource) => (s.kind === "public" ? "the public page" : `the ${s.formName} form`);
 
 /** Who submitted it, as one line: name, else email, else null (the form allows both to be blank). */
-export const submitterLabel = (s: TaskSource) => s.submitterName || s.submitterEmail || null;
+export const submitterLabel = (s: TaskSource) => (s.kind === "public" ? s.userName : s.submitterName || s.submitterEmail || null);
+
+/** Where it came in, short: the form's name, or "public page" (VEC-255; VEC-256 owns the final attribution UI). */
+const sourceName = (s: TaskSource) => (s.kind === "public" ? "public page" : s.formName);
 
 /** List row chip: "via Bug report". Nothing for tasks created normally. */
 export function FormSourceChip({ source, className }: { source: TaskSource | null | undefined; className?: string }) {
   if (!source) return null;
   const who = submitterLabel(source);
-  const label = `Submitted via the ${source.formName} form${who ? ` by ${who}` : ""}`;
+  const label = source.kind === "public" ? `Submitted on the public page by ${who}` : `Submitted via the ${source.formName} form${who ? ` by ${who}` : ""}`;
   return (
     <span
       title={label}
@@ -29,7 +32,7 @@ export function FormSourceChip({ source, className }: { source: TaskSource | nul
       className={cn("inline-flex h-5 max-w-[160px] items-center gap-1 rounded-[5px] bg-chip px-1.5 text-[12px] whitespace-nowrap text-muted-foreground", className)}
     >
       <FileInputIcon aria-hidden className="size-3 shrink-0" />
-      <span className="truncate">via {source.formName}</span>
+      <span className="truncate">via {sourceName(source)}</span>
     </span>
   );
 }
@@ -41,8 +44,8 @@ export function FormCreator({ source }: { source: TaskSource }) {
       <span aria-hidden className="grid size-4 shrink-0 place-items-center rounded-full bg-chip text-muted-foreground">
         <FileInputIcon className="size-2.5" />
       </span>
-      <span className="truncate" title={`Submitted through the ${source.formName} form`}>
-        {source.formName} form
+      <span className="truncate" title={source.kind === "public" ? "Submitted on the public page" : `Submitted through the ${source.formName} form`}>
+        {source.kind === "public" ? "Public page" : `${source.formName} form`}
       </span>
     </span>
   );
@@ -50,6 +53,7 @@ export function FormCreator({ source }: { source: TaskSource }) {
 
 /** Task pane "Submitted by" value: name and email (a mailto link), or a note that they left both blank. */
 export function FormSubmitter({ source }: { source: TaskSource }) {
+  if (source.kind === "public") return <span className="truncate text-foreground">{source.userName}</span>;
   const { submitterName: name, submitterEmail: email } = source;
   if (!name && !email) return <span className="text-faint">Anonymous (no name or email given)</span>;
   return (

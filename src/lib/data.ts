@@ -142,13 +142,16 @@ export function toTask(t: TaskDoc, projectKey: string, workingBotIds: string[] =
     updatedAt: t.updatedAt.toISOString(),
   };
 }
-export const toTaskSource = (s: TaskSourceDoc): TaskSource => ({
-  kind: s.kind,
-  formId: s.formId.toHexString(),
-  formName: s.formName,
-  submitterName: s.submitterName ?? null,
-  submitterEmail: s.submitterEmail ?? null,
-});
+export const toTaskSource = (s: TaskSourceDoc): TaskSource =>
+  s.kind === "public"
+    ? { kind: "public", userId: s.userId.toHexString(), userName: s.userName }
+    : {
+        kind: s.kind,
+        formId: s.formId.toHexString(),
+        formName: s.formName,
+        submitterName: s.submitterName ?? null,
+        submitterEmail: s.submitterEmail ?? null,
+      };
 export const toTaskDetail = (
   t: TaskDoc,
   projectKey: string,

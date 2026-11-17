@@ -193,8 +193,74 @@ export interface ProjectDoc {
   flowMode?: FlowMode;
   /** Project-level defaults (VEC-190). Absent fields inherit the org's (OrgDoc.defaults). */
   defaults?: ProjectDefaultsDoc;
+  /** Public project (VEC-254/255): absent = private. Managed by admins through lib/project-public.ts. */
+  publicAccess?: ProjectPublicAccessDoc | null;
   createdAt: Date;
 }
+/**
+ * Public project settings (VEC-255). `enabled`: anyone can read the project's non-archived tasks through the
+ * sanitised public view (lib/project-public.ts), and any signed-in Aimpoint account can submit a ticket into
+ * `submitStatusIds` (this project's own statuses, stage backlog / triage / unstarted, same rule as
+ * FORM_DESTINATION_STAGES; the first is the default destination; empty = read-only). `showComments` adds comments
+ * to the public view (author display names only). Kept valid by the status/project hooks in lib/project-public.ts.
+ */
+export interface ProjectPublicAccessDoc {
+  enabled: boolean;
+  submitStatusIds: ObjectId[];
+  showComments: boolean;
+  updatedAt: Date;
+  updatedBy: ObjectId;
+}
+/** Client-safe ProjectPublicAccessDoc (settings UI, server action results). A private project reads as the defaults. */
+export interface ProjectPublicAccess {
+  projectId: string;
+  enabled: boolean;
+  submitStatusIds: string[];
+  showComments: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+/** One status as the public sees it. */
+export interface PublicStatus {
+  id: string;
+  name: string;
+  color: string;
+  stage: StatusCategory;
+}
+/** One task as the public sees it (no ids, people, flow, claims, activity or agent context). */
+export interface PublicTask {
+  key: string;
+  title: string;
+  type: TaskType;
+  status: PublicStatus | null;
+  priority: Priority;
+  /** Sanitised HTML; local upload images point at the public image route. */
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+/** A comment in the public view (only when the project shows comments). Mentions read as @Name. */
+export interface PublicComment {
+  author: string;
+  body: string;
+  createdAt: string;
+}
+export interface PublicProjectView {
+  org: { name: string; slug: string };
+  project: { name: string; key: string; color: string };
+  statuses: PublicStatus[];
+  /** Statuses a signed-in account may submit into, in the admin's order (first = default). Empty = read-only. */
+  submitStatuses: PublicStatus[];
+  showComments: boolean;
+  tasks: PublicTask[];
+  /** More non-archived tasks exist than were returned. */
+  truncated: boolean;
+}
+/**
+ * What the public loader returns for a project that is public: the view, or `unavailable` while the org's plan
+ * lacks the feature (the page shows a short message; nothing about the project or plan is in it).
+ */
+export type PublicProjectResult = { available: true; view: PublicProjectView } | { available: false };
 /**
  * External forms (VEC-204/205): a public form hosted by a project. Each submission becomes a task in the form's
  * project, in `destinationStatusId` (one of that project's own statuses, stage backlog / triage / unstarted), with
@@ -276,8 +342,19 @@ export interface FormUploadDoc {
   claimedTaskId: ObjectId | null;
   expiresAt?: Date;
 }
-/** Where a task came from when not created in the app/API by a member or bot (VEC-205). */
-export interface TaskSourceDoc {
+/** Where a task came from when not created in the app/API by a member or bot (VEC-205, VEC-255). */
+export type TaskSourceDoc = FormTaskSourceDoc | PublicTaskSourceDoc;
+/**
+ * Submitted on a public project's page (VEC-255) by a signed-in Aimpoint account that need not be a member.
+ * `createdBy` is then the project's id (no person), so the submitter gets no edit rights or org access from it.
+ */
+export interface PublicTaskSourceDoc {
+  kind: "public";
+  userId: ObjectId;
+  /** The account's display name at submission time. Never its email. */
+  userName: string;
+}
+export interface FormTaskSourceDoc {
   kind: "form";
   formId: ObjectId;
   /** The form's name at submission time (the form may be renamed or deleted later). */
@@ -452,6 +529,8 @@ export type ActivityNote =
   | "triage"
   /** created (VEC-205): submitted through an external form; `to` holds the form's name at the time. */
   | "form"
+  /** created (VEC-255): submitted on the public project page; `to` holds the submitter's display name. */
+  | "public"
   /** status (VEC-215): a person stopped the bot's work, so it moved back to the first not-started status. */
   | "stopped_work";
 
@@ -864,7 +943,13 @@ export interface Task {
   updatedAt: string;
 }
 /** Client-safe TaskSourceDoc. */
-export interface TaskSource {
+export type TaskSource = FormTaskSource | PublicTaskSource;
+export interface PublicTaskSource {
+  kind: "public";
+  userId: string;
+  userName: string;
+}
+export interface FormTaskSource {
   kind: "form";
   formId: string;
   /** The form's name when the task was submitted. */

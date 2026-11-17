@@ -173,7 +173,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const st = (id?: string | null) => (id ? statusById.get(id)?.name ?? "a deleted status" : "none");
     const pr = (v?: string | null) => PRIORITY_LABEL[Number(v)] ?? v;
     switch (a.kind) {
-      case "created": return a.note === "form" ? `submitted it via the external form "${a.to ?? task.source?.formName ?? "?"}"` : "created the task";
+      case "created": return a.note === "form" ? `submitted it via the external form "${a.to ?? (task.source?.kind === "form" ? task.source.formName : "?")}"` : a.note === "public" ? "submitted it on the project's public page" : "created the task";
       case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : a.note === "stopped_work" ? " (stopped the bot's work)" : ""}`;
       case "assignee": return a.to ? `assigned it to ${name(a.to)}${a.note === "auto_owner" ? ` (nobody owned it and ${a.waiter ?? "a task it assigned to itself"} was waiting on it)` : ""}` : `unassigned ${name(a.from)}`;
       case "priority": return `changed priority from ${pr(a.from)} to ${pr(a.to)}`;
@@ -291,14 +291,24 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     /** The bot that broke this task down in Triage. It may close it out once nothing it depends on is open. */
     triagedBy: personRef(dir, task.triagedBy ?? null),
     /** For a form-submitted task (see `source`) this is the form itself, kind "form". */
-    createdBy: task.source ? { id: task.createdBy.toHexString(), name: `${task.source.formName} (external form)`, kind: "form" as const } : personRef(dir, task.createdBy),
+    createdBy:
+      task.source?.kind === "public"
+        ? { id: task.createdBy.toHexString(), name: `${task.source.userName} (public submission)`, kind: "public" as const }
+        : task.source
+          ? { id: task.createdBy.toHexString(), name: `${task.source.formName} (external form)`, kind: "form" as const }
+          : personRef(dir, task.createdBy),
     /**
      * Where the task came from when nobody in the org created it (VEC-208). null = created normally by a member or
      * bot. kind "form": submitted through one of the project's external forms by someone outside the org, so
      * `submitter` (name/email as they typed them, either may be null) is the reporter to credit or follow up with;
-     * they can't see this task or its comments.
+     * they can't see this task or its comments. kind "public" (VEC-255): filed on the project's public page by a
+     * signed-in Aimpoint account that may not be in the org; `submitter.name` is its display name (no email). They
+     * can read the project's public view but can't edit the task.
      */
-    source: task.source
+    source:
+      task.source?.kind === "public"
+        ? { kind: "public" as const, submitter: { name: task.source.userName } }
+        : task.source
       ? {
           kind: task.source.kind,
           form: { id: task.source.formId.toHexString(), name: task.source.formName },
@@ -319,7 +329,12 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       createdAt: cm.createdAt.toISOString(),
     })),
     activity: activity.map((a) => ({
-      actor: a.kind === "created" && a.note === "form" ? task.source?.submitterName || task.source?.submitterEmail || "Someone outside the org" : personRef(dir, a.actorId)?.name,
+      actor:
+        a.kind === "created" && a.note === "public" && task.source?.kind === "public"
+          ? task.source.userName
+          : a.kind === "created" && a.note === "form" && task.source?.kind === "form"
+            ? task.source.submitterName || task.source.submitterEmail || "Someone outside the org"
+            : personRef(dir, a.actorId)?.name,
       change: describe(a),
       at: a.createdAt.toISOString(),
     })),

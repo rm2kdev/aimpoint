@@ -139,6 +139,8 @@ async function ensureIndexes(db: Db) {
     db.collection("tasks").createIndex({ orgId: 1, "flow.stepId": 1 }),
     // External forms (VEC-205): many per project; the public id resolves a submission.
     db.collection("projectForms").createIndex({ publicId: 1 }, { unique: true }),
+    // Public projects (VEC-255): a signed-in account's own submissions to a project.
+    db.collection("tasks").createIndex({ "source.userId": 1, projectId: 1, createdAt: -1 }, { partialFilterExpression: { "source.kind": "public" }, name: "public_submissions" }),
     db.collection("projectForms").createIndex({ orgId: 1, projectId: 1, createdAt: 1 }),
     db.collection("projectForms").createIndex({ orgId: 1, destinationStatusId: 1 }),
     // Public form image uploads (VEC-233): looked up by URL on submit, swept when unclaimed, TTL backstop on expiresAt.

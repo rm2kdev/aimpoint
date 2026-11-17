@@ -18,6 +18,7 @@ import { removeMembership } from "@/lib/membership";
 import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
 import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
 import { deleteProjectForms, formsStatusDeleted, formsStatusStageChanged } from "@/lib/project-forms";
+import { publicProjectArchived, publicStatusDeleted, publicStatusStageChanged } from "@/lib/project-public";
 import { assertRoomForPerson, assertRoomForProject } from "@/lib/billing-limits";
 import { syncSeatsSoon } from "@/lib/seat-sync";
 
@@ -175,6 +176,8 @@ export async function setProjectArchived(slug: string, projectId: string, archiv
     }
     const r = await c.projects.updateOne({ _id: pid, orgId: org._id }, { $set: { archivedAt: archived ? new Date() : null } });
     if (!r.matchedCount) throw new UserError("This project no longer exists.");
+    // An archived project stops being public (VEC-255); restoring it leaves that off until an admin turns it on.
+    if (archived) await publicProjectArchived(org._id, pid);
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
   });
@@ -276,6 +279,8 @@ export async function saveStatus(
       if (!isDefaultStage(input.category)) await clearNewTaskStatusOverrides(org._id, [prev._id]);
       // External forms filing into it move to another status of its old stage, or are switched off (VEC-205).
       await formsStatusStageChanged(org._id, project._id, { _id: prev._id, name }, prev.category, input.category);
+      // A public project's submit statuses only keep backlog / triage / not-started ones (VEC-255).
+      await publicStatusStageChanged(org._id, project._id, prev._id, input.category);
     } else {
       const last = statuses[statuses.length - 1];
       await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId: project._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
@@ -321,6 +326,8 @@ export async function deleteStatus(slug: string, projectId: string, id: string, 
     await clearNewTaskStatusOverrides(org._id, [removed._id]);
     // External forms filing into it follow its tasks, or move within its stage, or are switched off (VEC-205).
     await formsStatusDeleted(org._id, project._id, removed, target);
+    // Nobody can submit a public ticket into it any more (VEC-255).
+    await publicStatusDeleted(org._id, project._id, removed._id);
     // Flow steps on the deleted status fall back to its stage/name and are flagged (VEC-174).
     await flowStatusDeleted(org._id, project._id, removed);
     if (isClosedCategory(removed.category) !== isClosedCategory(target.category)) {

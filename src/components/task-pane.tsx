@@ -729,7 +729,7 @@ function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null })
 
   /** A form submission's actor is the form id, which no member resolves: show who submitted it instead. */
   const actorName = (f: FeedItem, member: string | undefined) =>
-    member ?? (f.kind === "created" && f.note === "form" ? (source && submitterLabel(source)) || "Someone" : "Former member");
+    member ?? (f.kind === "created" && (f.note === "form" || f.note === "public") ? (source && submitterLabel(source)) || "Someone" : "Former member");
   const describe = (f: FeedItem) => {
     switch (f.kind) {
       case "created":
@@ -737,9 +737,10 @@ function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null })
         if (f.note === "form")
           return (
             <>
-              submitted this via the <b className="font-medium text-foreground">{f.to ?? source?.formName ?? "external"}</b> form
+              submitted this via the <b className="font-medium text-foreground">{f.to ?? (source?.kind === "form" ? source.formName : null) ?? "external"}</b> form
             </>
           );
+        if (f.note === "public") return "submitted this on the public page";
         return "created this task";
       case "status":
         return (
