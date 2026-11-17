@@ -16,11 +16,10 @@ import { orgPath, taskPath } from "@/lib/paths";
 
 export const SETTINGS_TABS = [
   ["general", "General"],
-  ["defaults", "Defaults"],
-  ["flows", "Flows"],
-  ["projects", "Projects"],
   ["members", "Members"],
   ["bots", "Bots"],
+  ["projects", "Projects"],
+  ["flows", "Flows"],
 ] as const;
 
 /** Header + tab bar shared by every settings page. Tabs are real routes, so detail pages keep their tab lit. */

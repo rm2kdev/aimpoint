@@ -179,7 +179,11 @@ export function ProjectDetail({
         title="Agent context"
         desc={
           <>
-            Key/value notes handed to a bot with every task in {project.name}: when it&rsquo;s assigned or @mentioned, and whenever it reads the task over MCP.
+            Key/value notes handed to a{" "}
+            <Link href={orgPath(org.slug, "settings", "bots")} className="underline underline-offset-2 hover:text-foreground">
+              bot
+            </Link>{" "}
+            with every task in {project.name}: when the flow above hands it a step, when it&rsquo;s assigned or @mentioned, and whenever it reads the task over MCP.
             Use it for repos, branches, environments, docs and conventions. Don&rsquo;t put secrets here; every bot and member can read it.
           </>
         }

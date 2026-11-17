@@ -28,6 +28,11 @@ export function orgPath(slug: string, ...segments: Segment[]): string {
 export const rolesPath = (slug: string) => `${orgPath(slug, "settings", "bots")}#roles`;
 export const rolePath = (slug: string, roleId: string) => orgPath(slug, "settings", "bots", "roles", roleId);
 
+/** Flows settings (VEC-187): the org default flow, its New tasks row (the old Defaults tab) and a project's own Flow row. */
+export const flowsPath = (slug: string) => `${orgPath(slug, "settings", "flows")}#default-flow`;
+export const newTasksPath = (slug: string) => `${orgPath(slug, "settings", "flows")}#new-tasks`;
+export const projectFlowPath = (slug: string, projectId: string) => `${orgPath(slug, "settings", "projects", projectId)}#flow`;
+
 /** `/o/<slug>/analytics` plus an optional `?range=...` query (see lib/analytics-range.ts `analyticsSearch`). Admins only. */
 export const analyticsPath = (slug: string, search = "") => `${orgPath(slug, "analytics")}${search}`;
 

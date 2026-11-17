@@ -196,6 +196,58 @@ export async function loadProjectFlowSummaries(orgId: ObjectId): Promise<Project
   });
 }
 
+/* ---------------- a bot's part in flows (VEC-187) ---------------- */
+
+/** One step a bot takes part in: it owns it, can resolve its wait, or picks it up as a triage bot. */
+export interface BotFlowStep {
+  id: string;
+  name: string;
+  as: ("owner" | "resolver" | "triage")[];
+}
+/** A flow the bot takes part in: the org default (with how many projects follow it) or a project's own flow. */
+export interface BotFlowPlace {
+  source: "org" | "project";
+  project: { id: string; key: string; name: string; color: string } | null;
+  /** Org default only: unarchived projects that follow it. */
+  followedBy: number;
+  steps: BotFlowStep[];
+}
+
+/**
+ * Where a bot works, for the read-only "Where it works" row on its settings page: every step of the org default and of
+ * each unarchived project's own flow that it owns or can resolve, plus triage steps when `triage` (its role has
+ * check_for_triage). Steps are still edited in the flows; this is the view from the bot's side.
+ */
+export async function loadBotFlowPlaces(orgId: ObjectId, botId: ObjectId, { triage }: { triage: boolean }): Promise<BotFlowPlace[]> {
+  const c = await cols();
+  const id = hex(botId);
+  const [orgFlow, projects] = await Promise.all([
+    loadOrgFlowDoc(orgId),
+    c.projects.find({ orgId, archivedAt: null }, { projection: { key: 1, name: 1, color: 1, flowMode: 1, createdAt: 1 } }).sort({ createdAt: 1 }).toArray(),
+  ]);
+  const custom = projects.filter((p) => p.flowMode === "custom");
+  const own = custom.length ? await c.flows.find({ orgId, projectId: { $in: custom.map((p) => p._id) } }).toArray() : [];
+  const stepsOf = (steps: FlowStep[]): BotFlowStep[] =>
+    steps.flatMap((s) => {
+      const as: BotFlowStep["as"] = [];
+      if (s.owner.kind === "bot" && s.owner.id === id) as.push("owner");
+      if (s.owner.kind === "triage" && triage) as.push("triage");
+      if (s.advance === "wait" && s.wait?.resolvers?.includes(id)) as.push("resolver");
+      return as.length ? [{ id: s.id, name: s.name, as }] : [];
+    });
+  const out: BotFlowPlace[] = [];
+  const followedBy = projects.filter((p) => (p.flowMode ?? "inherit") === "inherit").length;
+  const orgSteps = stepsOf(flowStepsFromDoc(orgFlow.steps));
+  if (orgSteps.length) out.push({ source: "org", project: null, followedBy, steps: orgSteps });
+  for (const p of custom) {
+    const doc = own.find((f) => f.projectId?.equals(p._id));
+    if (!doc) continue;
+    const steps = stepsOf(flowStepsFromDoc(doc.steps));
+    if (steps.length) out.push({ source: "project", project: { id: hex(p._id), key: p.key, name: p.name, color: p.color }, followedBy: 0, steps });
+  }
+  return out;
+}
+
 /* ---------------- writes (callers authorise and publish) ---------------- */
 
 function failValidation(errors: string[]): never {

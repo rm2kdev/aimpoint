@@ -1,7 +1,8 @@
-import { DefaultsSettings } from "@/components/settings/defaults-settings";
+import { redirect } from "next/navigation";
+import { newTasksPath } from "@/lib/paths";
 
-export const metadata = { title: "Defaults · Settings" };
-
-export default function DefaultsPage() {
-  return <DefaultsSettings />;
+/** Settings > Defaults was folded into Flows (VEC-187): old links land on its New tasks row. */
+export default async function DefaultsPage({ params }: PageProps<"/o/[org]/settings/defaults">) {
+  const { org } = await params;
+  redirect(newTasksPath(org));
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, Trash2Icon, WorkflowIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
 import { AnalyticsLink, DetailHeader, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
@@ -31,7 +31,9 @@ import { MCP_TOOLS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
 import { BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAvatar as BotAvatarData, BotRole, Task } from "@/lib/types";
-import { analyticsPath, orgPath, rolesPath } from "@/lib/paths";
+import { analyticsPath, flowsPath, orgPath, projectFlowPath, rolesPath } from "@/lib/paths";
+import { ProjectTile } from "@/components/settings/org-settings";
+import type { BotFlowPlace } from "@/lib/flows";
 import { analyticsSearchFor } from "@/lib/analytics-range";
 
 const Row = SettingsRow;
@@ -42,6 +44,7 @@ export function BotDetail({
   createdCount,
   roles,
   pickedUp,
+  flowPlaces,
 }: {
   bot: Bot;
   assigned: Task[];
@@ -49,6 +52,8 @@ export function BotDetail({
   roles: BotRole[];
   /** Ids of assigned tasks the bot has picked up over MCP. */
   pickedUp: string[];
+  /** Flow steps it owns, resolves or triages (VEC-187), edited in the flows. */
+  flowPlaces: BotFlowPlace[];
 }) {
   const { org, isAdmin, memberById } = useOrg();
   const router = useRouter();
@@ -245,6 +250,58 @@ export function BotDetail({
             </form>
             {isAdmin && maxDirty && !maxValid && (
               <p className="mt-1.5 text-[12.5px] text-destructive">Use a whole number from {BOT_MAX_TASKS_MIN} to {BOT_MAX_TASKS_MAX}.</p>
+            )}
+          </Row>
+
+          <Row
+            id="flows"
+            title="Where it works"
+            desc={
+              <>
+                The flow steps {bot.name} owns, can mark received, or picks up as a triage bot. Change them in the{" "}
+                <Link href={flowsPath(org.slug)} className="underline underline-offset-2 hover:text-foreground">
+                  default flow
+                </Link>{" "}
+                or on a project&rsquo;s Flow row. Each project&rsquo;s agent context goes to it with the task.
+              </>
+            }
+          >
+            {flowPlaces.length === 0 ? (
+              <div className="max-w-3xl rounded-[10px] border border-dashed border-input px-4 py-5 text-[13px] text-muted-foreground">
+                No flow step names {bot.name} yet. It works on tasks someone assigns or @mentions it on.
+              </div>
+            ) : (
+              <ul className="max-w-3xl divide-y divide-border rounded-[10px] border border-border" aria-label={`Flows ${bot.name} works in`}>
+                {flowPlaces.map((f) => (
+                  <li key={f.project?.id ?? "org"}>
+                    <Link
+                      href={f.project ? projectFlowPath(org.slug, f.project.id) : flowsPath(org.slug)}
+                      className="group flex items-center gap-3 px-3.5 py-2.5 transition-colors first:rounded-t-[10px] last:rounded-b-[10px] hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                    >
+                      {f.project ? (
+                        <ProjectTile color={f.project.color} size={22} />
+                      ) : (
+                        <span className="grid size-[22px] shrink-0 place-items-center rounded-md bg-chip text-muted-foreground" aria-hidden>
+                          <WorkflowIcon className="size-3.5" />
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1 leading-tight">
+                        <span className="flex items-center gap-1.5 text-[13.5px] font-medium">
+                          <span className="truncate">{f.project ? f.project.name : "Default flow"}</span>
+                          {f.project && <span className="font-mono text-[12px] font-normal text-faint">{f.project.key}</span>}
+                        </span>
+                        <span className="mt-0.5 block truncate text-[12.5px] text-muted-foreground">
+                          {f.steps.map((s) => `${s.name} (${s.as.map((a) => (a === "owner" ? "owner" : a === "triage" ? "as a triage bot" : "can mark received")).join(", ")})`).join(" · ")}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-[12px] text-faint">
+                        {f.project ? "Own flow" : `${f.followedBy} project${f.followedBy === 1 ? "" : "s"}`}
+                      </span>
+                      <ChevronRightIcon className="size-4 shrink-0 text-faint transition-transform group-hover:translate-x-0.5" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             )}
           </Row>
 

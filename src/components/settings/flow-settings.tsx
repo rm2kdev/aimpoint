@@ -23,7 +23,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { resetOrgFlow, resetProjectFlow, saveOrgFlow, saveProjectFlow, setProjectFlowMode } from "@/app/actions/flows";
-import { orgPath } from "@/lib/paths";
+import { flowsPath, orgPath, projectFlowPath } from "@/lib/paths";
 import type { FlowMode, FlowStep } from "@/lib/flow-model";
 import type { OrgFlowSettings as OrgFlowData, ProjectFlowSettings, ProjectFlowSummary } from "@/lib/flows";
 
@@ -88,8 +88,12 @@ export function OrgFlowSettings({ flow, projects, counts }: { flow: OrgFlowData;
         desc={
           <>
             The steps a task goes through and who owns each one. When a step is finished, Vector moves the task to the next step&rsquo;s status and hands it to
-            that step&rsquo;s owner, with its instructions. Steps name a stage, so every project uses its own status of that stage. Projects follow this flow unless
-            they have their own.
+            that step&rsquo;s owner, with its instructions. Owners can be people or{" "}
+            <Link href={orgPath(org.slug, "settings", "bots")} className="underline underline-offset-2 hover:text-foreground">
+              bots
+            </Link>
+            ; each bot&rsquo;s page lists the steps it owns. Steps name a stage, so every project uses its own status of that stage. Projects follow this flow
+            unless they have their own.
           </>
         }
       >
@@ -126,7 +130,7 @@ export function OrgFlowSettings({ flow, projects, counts }: { flow: OrgFlowData;
           {projects.map((p) => (
             <li key={p.id}>
               <Link
-                href={`${orgPath(org.slug, "settings", "projects", p.id)}#flow`}
+                href={projectFlowPath(org.slug, p.id)}
                 className="group flex items-center gap-3 px-3.5 py-2.5 transition-colors first:rounded-t-[10px] last:rounded-b-[10px] hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
               >
                 <ProjectTile color={p.color} size={22} />
@@ -206,7 +210,7 @@ export function ProjectFlow({ projectId, projectName, flow, counts }: { projectI
       router.refresh();
     });
   const defaultLink = (
-    <Link href={`${orgPath(org.slug, "settings", "flows")}#default-flow`} className="underline underline-offset-2 hover:text-foreground">
+    <Link href={flowsPath(org.slug)} className="underline underline-offset-2 hover:text-foreground">
       default flow
     </Link>
   );
@@ -217,7 +221,11 @@ export function ProjectFlow({ projectId, projectName, flow, counts }: { projectI
       title="Flow"
       desc={
         <>
-          The steps {projectName}&rsquo;s tasks go through and who owns each. Projects follow the organisation&rsquo;s {defaultLink} until you customise it; a custom
+          The steps {projectName}&rsquo;s tasks go through and who owns each (people or{" "}
+          <Link href={orgPath(org.slug, "settings", "bots")} className="underline underline-offset-2 hover:text-foreground">
+            bots
+          </Link>
+          ). Projects follow the organisation&rsquo;s {defaultLink} until you customise it; a custom
           flow uses {projectName}&rsquo;s own statuses. With flows off, tasks move only when someone moves them.
         </>
       }

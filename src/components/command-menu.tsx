@@ -18,7 +18,7 @@ import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
-import { accountPath, analyticsPath, orgPath, projectPath, rolesPath, taskPath, withTask } from "@/lib/paths";
+import { accountPath, analyticsPath, newTasksPath, orgPath, projectPath, rolesPath, taskPath, withTask } from "@/lib/paths";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { org, projects, isAdmin } = useOrg();
@@ -117,11 +117,11 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "general"))} className="gap-2.5">
                   <SettingsIcon /> Settings
                 </CommandItem>
-                <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "defaults"))} className="gap-2.5">
-                  <SlidersHorizontalIcon /> Defaults <span className="ml-auto text-[11px] text-faint">Settings</span>
-                </CommandItem>
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "flows"))} className="gap-2.5">
                   <WorkflowIcon /> Flows <span className="ml-auto text-[11px] text-faint">Settings</span>
+                </CommandItem>
+                <CommandItem onSelect={() => go(newTasksPath(org.slug))} className="gap-2.5">
+                  <SlidersHorizontalIcon /> New task defaults <span className="ml-auto text-[11px] text-faint">Flows</span>
                 </CommandItem>
                 <CommandItem onSelect={() => go(accountPath(org.slug))} className="gap-2.5">
                   <CircleUserIcon /> Account settings

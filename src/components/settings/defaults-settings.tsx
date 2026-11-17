@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
@@ -10,10 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { saveDefaults } from "@/app/actions/defaults";
 import { STAGE_LABELS, stageStatus } from "@/lib/stages";
 import { DEFAULT_STAGES, isDefaultStage, type DefaultStage } from "@/lib/types";
+import { rolesPath } from "@/lib/paths";
 
 const STAGE_RINGS = DEFAULT_STAGES.map(stageStatus);
 
-/** Settings > Defaults (VEC-127/129): org-wide presets. Admins edit; members see them read-only. */
+/** Settings > Flows > New tasks (VEC-127/129; the Defaults tab until VEC-187): where new tasks start. Admins edit; members see it read-only. */
 export function DefaultsSettings() {
   const { org, isAdmin, defaults } = useOrg();
   const router = useRouter();
@@ -36,11 +38,16 @@ export function DefaultsSettings() {
 
   return (
     <SettingsRow
-      title="Default status for new tasks"
+      id="new-tasks"
+      title="New tasks"
       desc={
         <>
           Where a task starts when someone creates it without picking a status. Each project uses its own status of this stage. Triage hands new
-          tasks to triage bots.
+          tasks to{" "}
+          <Link href={rolesPath(org.slug)} className="underline underline-offset-2 hover:text-foreground">
+            triage bots
+          </Link>
+          , which is the first step of the flow below.
         </>
       }
     >

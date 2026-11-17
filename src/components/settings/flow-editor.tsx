@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { ArrowDownIcon, ArrowUpIcon, ChevronDownIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import Link from "next/link";
+import { ArrowDownIcon, ArrowUpIcon, ArrowUpRightIcon, ChevronDownIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
@@ -14,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { STAGE_LABELS, stageStatus } from "@/lib/stages";
+import { orgPath } from "@/lib/paths";
 import { STATUS_STAGES, type Member, type Status, type StatusCategory } from "@/lib/types";
 import {
   FLOW_INSTRUCTIONS_MAX,
@@ -98,6 +100,12 @@ export function ownerLabel(o: FlowStepOwner, memberById: Map<string, Member>): s
   if (o.kind === "triage") return "Any triage bot";
   if (o.kind === "none") return o.removed ? `Nobody (${o.removed.name} was removed)` : "Unassigned";
   return (o.id && memberById.get(o.id)?.name) || (o.kind === "bot" ? "Removed bot" : "Former member");
+}
+
+/** Settings page of a bot or person who owns a step (VEC-187 cross-link), or null for the other owner kinds and removed owners. */
+export function ownerHref(slug: string, o: FlowStepOwner, memberById: Map<string, Member>): string | null {
+  if ((o.kind !== "bot" && o.kind !== "person") || !o.id || !memberById.has(o.id)) return null;
+  return orgPath(slug, "settings", o.kind === "bot" ? "bots" : "members", o.id);
 }
 
 export function OwnerIcon({ owner, memberById, size = 16 }: { owner: FlowStepOwner; memberById: Map<string, Member>; size?: number }) {
@@ -390,8 +398,10 @@ function StepCard({
   onConfirmRemove: () => void;
   onCancelRemove: () => void;
 }) {
+  const { org } = useOrg();
   const stage = r.status.stage;
   const ownerOptions = useOwnerOptions(stage);
+  const ownerPage = ownerHref(org.slug, r.owner, memberById);
   const isDone = stage === "done";
   const name = r.name.trim() || `Step ${i + 1}`;
   const projectStatus = level === "project" ? statuses?.find((s) => s.id === r.status.statusId) : undefined;
@@ -482,11 +492,19 @@ function StepCard({
             </Select>
           )}
           <Picker label={`Owner of ${name}`} value={ownerValue(r.owner)} options={ownerOptions} onChange={(v) => onChange({ owner: ownerFromValue(v) })} placeholder="Owner…" disabled={!canEdit}>
-            <button type="button" className={cn(control, "w-44 sm:w-48")}>
+            {/* Room for the owner link comes out of the picker, so the row keeps its width and doesn't wrap. */}
+            <button type="button" className={cn(control, ownerPage ? "w-36 sm:w-40" : "w-44 sm:w-48")}>
               <OwnerIcon owner={r.owner} memberById={memberById} />
               <span className="truncate">{ownerLabel(r.owner, memberById)}</span>
             </button>
           </Picker>
+          {ownerPage && (
+            <Button asChild variant="ghost" size="icon-sm" className="text-faint hover:text-foreground">
+              <Link href={ownerPage} aria-label={`Open ${ownerLabel(r.owner, memberById)}`} title={`Open ${ownerLabel(r.owner, memberById)}`}>
+                <ArrowUpRightIcon />
+              </Link>
+            </Button>
+          )}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <Button variant="ghost" size="icon-sm" aria-label={open ? `Hide details of ${name}` : `Show details of ${name}`} aria-expanded={open} onClick={onToggle}>
@@ -650,7 +668,7 @@ function WaitFields({
   memberById: Map<string, Member>;
   onChange: (patch: Partial<Row>) => void;
 }) {
-  const { members } = useOrg();
+  const { members, org } = useOrg();
   const wait = r.wait ?? { label: "", resolvers: [], remindAfterDays: null };
   const resolvers = wait.resolvers ?? [];
   const set = (patch: Partial<typeof wait>) => onChange({ wait: { ...wait, ...patch } });
@@ -698,7 +716,13 @@ function WaitFields({
             return (
               <span key={id} className="inline-flex h-7 items-center gap-1.5 rounded-md bg-background pr-1 pl-2 text-[12.5px] ring-1 ring-border">
                 {m && <BotAvatar avatar={m.avatar} name={m.name} size={14} />}
-                {m?.name ?? "Removed bot"}
+                {m ? (
+                  <Link href={orgPath(org.slug, "settings", "bots", id)} className="hover:underline hover:underline-offset-2">
+                    {m.name}
+                  </Link>
+                ) : (
+                  "Removed bot"
+                )}
                 {canEdit && (
                   <button type="button" aria-label={`Remove ${m?.name ?? "bot"} from ${name}'s resolvers`} className="grid size-5 place-items-center rounded text-faint hover:text-foreground" onClick={() => set({ resolvers: resolvers.filter((x) => x !== id) })}>
                     <XIcon className="size-3" />
@@ -725,7 +749,7 @@ function WaitFields({
 
 /** The flow a project runs, read-only (Using the org default). Adjusted steps carry their reason; skipped ones are listed. */
 export function FlowPreview({ flow, statuses, label }: { flow: ResolvedFlow; statuses: Status[]; label: string }) {
-  const { members } = useOrg();
+  const { members, org } = useOrg();
   const memberById = useMemo(() => new Map(members.map((m) => [m.id, m])), [members]);
   return (
     <div className="grid max-w-3xl grid-cols-1 gap-2">
@@ -745,7 +769,16 @@ export function FlowPreview({ flow, statuses, label }: { flow: ResolvedFlow; sta
                 </span>
                 <span className="inline-flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
                   <OwnerIcon owner={s.owner} memberById={memberById} />
-                  <span className="truncate">{ownerLabel(s.owner, memberById)}</span>
+                  {(() => {
+                    const href = ownerHref(org.slug, s.owner, memberById);
+                    return href ? (
+                      <Link href={href} className="truncate hover:text-foreground hover:underline hover:underline-offset-2">
+                        {ownerLabel(s.owner, memberById)}
+                      </Link>
+                    ) : (
+                      <span className="truncate">{ownerLabel(s.owner, memberById)}</span>
+                    );
+                  })()}
                 </span>
                 <span className="ml-auto text-[12px] text-faint">
                   {s.status.category === "done" ? "Ends the flow" : ADVANCE_SHORT[s.advance]}
