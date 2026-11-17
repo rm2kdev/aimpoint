@@ -13,6 +13,7 @@ import { BotStatusTray } from "@/components/bot-status-tray";
 import { NewTaskDialog, type NewTaskDefaults } from "@/components/new-task-dialog";
 import { cn } from "@/lib/utils";
 import { DragProvider } from "@/components/ui/drag-provider";
+import { InstallPrompt } from "@/components/install-prompt";
 import { orgPath, taskPath } from "@/lib/paths";
 
 interface ShellCtx {
@@ -76,7 +77,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <DragProvider>
       {/* Column: the app row fills what's left above the bot status tray, so every scroll area and the task pane end above it. */}
       <div className="flex h-dvh flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden">
           {/* desktop sidebar */}
           <aside className="hidden w-[248px] shrink-0 border-r border-sidebar-border lg:block">
             <Sidebar onSearch={openSearch} />
@@ -98,6 +99,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {drawerMounted && <Sidebar onSearch={openSearch} onNavigate={closeNav} />}
           </aside>
           <div className="flex min-w-0 flex-1">{children}</div>
+          {/* Add to Home Screen (VEC-157): floats over the content, above the bot tray, clear of the desktop sidebar. */}
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 z-30 flex justify-center sm:inset-x-auto sm:left-4 lg:left-[264px]">
+            <InstallPrompt />
+          </div>
         </div>
         <BotStatusTray />
       </div>

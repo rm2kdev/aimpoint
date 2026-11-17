@@ -11,6 +11,7 @@ import {
   CheckIcon,
   CircleUserIcon,
   ChevronsUpDownIcon,
+  DownloadIcon,
   InboxIcon,
   LayersIcon,
   LogOutIcon,
@@ -40,6 +41,7 @@ import { useDragStore } from "@/components/ui/drag-provider";
 import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
 import { moveTaskAction } from "@/app/actions/tasks";
+import { startInstall, useInstallState } from "@/components/install-prompt";
 import { accountPath, analyticsPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import { matchStatus, type Project, type Task } from "@/lib/types";
@@ -431,6 +433,7 @@ function OrgSwitcher() {
 function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
   const { org, me } = useOrg();
   const router = useRouter();
+  const install = useInstallState();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -458,6 +461,18 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
         >
           <CircleUserIcon className="size-4" /> Account settings
         </DropdownMenuItem>
+        {/* Find the install prompt again after dismissing it (VEC-157); absent once installed or where unsupported. */}
+        {install.mode && (
+          <DropdownMenuItem
+            onSelect={() => {
+              onNavigate?.();
+              startInstall();
+            }}
+            className="gap-2.5"
+          >
+            <DownloadIcon className="size-4" /> Install app
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={() => logoutAction()} className="gap-2.5">
           <LogOutIcon className="size-4" /> Sign out
         </DropdownMenuItem>
