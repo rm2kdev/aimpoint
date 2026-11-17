@@ -39,6 +39,16 @@ const nextConfig: NextConfig = {
         source: "/offline.html",
         headers: [{ key: "Cache-Control", value: "no-cache" }],
       },
+      {
+        // External forms (VEC-207): the public form page may be embedded in an iframe on any site. Only this
+        // route relaxes frame-ancestors; it is also kept out of search results.
+        source: "/f/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors *" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+        ],
+      },
     ];
   },
   async redirects() {
@@ -48,7 +58,7 @@ const nextConfig: NextConfig = {
         // links working (query strings like ?task=VEC-8 are passed through by Next).
         // Skips the real top-level routes, Next internals (_next, __nextjs_*), dotfiles
         // like .well-known, and static files (anything with a dot, e.g. favicon.ico).
-        source: "/:org((?!(?:o|api|login|signup|onboarding|invite|actions|account)(?:/|$))[^./_][^./]*)/:path*",
+        source: "/:org((?!(?:o|f|api|login|signup|onboarding|invite|actions|account)(?:/|$))[^./_][^./]*)/:path*",
         destination: "/o/:org/:path*",
         permanent: true,
       },
