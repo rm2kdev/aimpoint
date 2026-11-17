@@ -12,9 +12,10 @@ import { requireOrg, requireUser } from "@/lib/session";
 import { guard, UserError, deriveKey, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { detachDeleted, recomputeForStatuses } from "@/lib/dependencies";
-import { isClosedCategory, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
+import { isClosedCategory, isDefaultStage, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
+import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
 import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
 
 function slugify(s: string) {
@@ -266,6 +267,8 @@ export async function saveStatus(
       if (isClosedCategory(prev.category) !== isClosedCategory(input.category)) await recomputeForStatuses(org._id, by, [prev._id]);
       // The project's flow keeps the status's stage and name as its fallback (VEC-174).
       if (prev.category !== input.category || prev.name !== name) await flowStatusUpdated(org._id, project._id, { _id: prev._id, name, category: input.category });
+      // A new-task override can't point at a done/cancelled status: drop it so new tasks fall back to the org default (VEC-190).
+      if (!isDefaultStage(input.category)) await clearNewTaskStatusOverrides(org._id, [prev._id]);
     } else {
       const last = statuses[statuses.length - 1];
       await c.statuses.insertOne({ _id: new ObjectId(), orgId: org._id, projectId: project._id, name, color: input.color, category: input.category, order: (last?.order ?? -1) + 1 });
@@ -307,6 +310,8 @@ export async function deleteStatus(slug: string, projectId: string, id: string, 
     const c = await cols();
     await c.tasks.updateMany({ orgId: org._id, projectId: project._id, statusId: removed._id }, { $set: { statusId: target._id, updatedAt: new Date() } });
     await c.statuses.deleteOne({ _id: removed._id, orgId: org._id, projectId: project._id });
+    // A project overriding new tasks into it falls back to the org default (VEC-190), no dangling id.
+    await clearNewTaskStatusOverrides(org._id, [removed._id]);
     // Flow steps on the deleted status fall back to its stage/name and are flagged (VEC-174).
     await flowStatusDeleted(org._id, project._id, removed);
     if (isClosedCategory(removed.category) !== isClosedCategory(target.category)) {

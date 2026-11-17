@@ -117,6 +117,27 @@ export interface OrgDefaults {
   /** Stage a task created by a person without a status starts in (the project's first status of that stage). */
   newTaskStage: DefaultStage;
 }
+/** Where a new task's default status came from (VEC-190): the project's override, the org default stage, or the not-started fallback. */
+export type NewTaskStatusSource = "project" | "org" | "fallback";
+/**
+ * The status a person's new task with no explicit status starts in, within ONE project's statuses (VEC-190):
+ * the project's override (`overrideId`, if it is still one of `list` and in an open default stage), else the
+ * project's first status of the org default stage, else its first not-started one, else its first status.
+ * Client-safe so the new-task dialog derives exactly what the server will do. Bots don't use this (see task-service).
+ */
+export function newTaskStatusIn<S extends StatusLike>(
+  list: readonly S[],
+  overrideId: string | null | undefined,
+  orgStage: StatusCategory,
+  idOf: (s: S) => string,
+): { status: S | null; source: NewTaskStatusSource } {
+  const sorted = byOrder(list);
+  const own = overrideId ? sorted.find((s) => idOf(s) === overrideId && isDefaultStage(s.category)) : undefined;
+  if (own) return { status: own, source: "project" };
+  const ofStage = sorted.find((s) => s.category === orgStage);
+  if (ofStage) return { status: ofStage, source: "org" };
+  return { status: sorted.find((s) => s.category === "unstarted") ?? sorted[0] ?? null, source: "fallback" };
+}
 export interface MembershipDoc {
   _id: ObjectId;
   orgId: ObjectId;
@@ -141,7 +162,16 @@ export interface ProjectDoc {
   archivedAt?: Date | null;
   /** Project flow (VEC-174): absent = "inherit" the org default; "custom" = its own FlowDoc; "off" = no flow. */
   flowMode?: FlowMode;
+  /** Project-level defaults (VEC-190). Absent fields inherit the org's (OrgDoc.defaults). */
+  defaults?: ProjectDefaultsDoc;
   createdAt: Date;
+}
+export interface ProjectDefaultsDoc {
+  /**
+   * Status (one of THIS project's own, open stage) a person's new task without an explicit status starts in.
+   * Unset = inherit the org default stage. Cleared when that status is deleted or leaves the open stages.
+   */
+  newTaskStatusId?: ObjectId;
 }
 export interface ProjectMetaEntry {
   key: string;
@@ -603,6 +633,8 @@ export interface Project {
   key: string;
   color: string;
   archived: boolean;
+  /** The project's new-task status override (VEC-190), one of its own statuses; null = inherits the org default. */
+  newTaskStatusId: string | null;
 }
 export interface ProjectDetail extends Project {
   metadata: ProjectMetaEntry[];

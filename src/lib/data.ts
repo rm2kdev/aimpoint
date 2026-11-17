@@ -84,7 +84,14 @@ export const toBotRole = (r: BotRoleDoc): BotRole => ({
   updatedAt: r.updatedAt.toISOString(),
 });
 
-export const toProject = (p: ProjectDoc): Project => ({ id: p._id.toHexString(), name: p.name, key: p.key, color: p.color, archived: !!p.archivedAt });
+export const toProject = (p: ProjectDoc): Project => ({
+  id: p._id.toHexString(),
+  name: p.name,
+  key: p.key,
+  color: p.color,
+  archived: !!p.archivedAt,
+  newTaskStatusId: p.defaults?.newTaskStatusId?.toHexString() ?? null,
+});
 export const toProjectDetail = (p: ProjectDoc): ProjectDetail => ({
   ...toProject(p),
   metadata: p.metadata ?? [],

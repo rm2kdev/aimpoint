@@ -7,7 +7,7 @@ import { findTaskByKey, sanitizeDescription, toFeed, toTask, withWorkingBots } f
 import { rankBetween } from "@/lib/rank";
 import { loadStatuses, requireProjectStatus, statusFor, statusInProject } from "@/lib/statuses";
 import { publishWorking } from "@/lib/claims";
-import { loadOrgDefaults } from "@/lib/org-defaults";
+import { newTaskStatusFor } from "@/lib/project-defaults";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
@@ -343,11 +343,6 @@ async function missingProjectReason(projectId: ObjectId, orgId: ObjectId, fallba
   return p?.archivedAt ? `${p.name} (${p.key}) is archived and doesn't take new tasks. An admin can restore it in project settings.` : fallback;
 }
 
-/** The project's first status (workflow order) of `stage`, by stage only (a status merely named like it doesn't count). */
-async function firstOfStage(orgId: ObjectId, projectId: ObjectId, stage: StatusCategory) {
-  return (await loadStatuses(orgId, projectId)).find((st) => st.category === stage) ?? null;
-}
-
 export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<Task> {
   const title = (input.title ?? "").trim();
   if (!title) throw new UserError("Give the task a title.");
@@ -361,11 +356,12 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   );
   if (!project) throw new UserError(await missingProjectReason(projectId, actor.orgId, "Pick a project."));
   // A status of the new task's own project (VEC-115): the given one must be one of them (another project's is
-  // refused). Without one, a person's task starts in the project's first status of the org's default stage
-  // (VEC-128, preset Triage); bots/REST/MCP, or a project lacking that stage, get the first not-started one.
+  // refused). Without one, a person's task starts in the project's own override (VEC-190), else the project's
+  // first status of the org's default stage (VEC-128, preset Triage), else its first not-started one
+  // (lib/project-defaults newTaskStatusFor). Bots/REST/MCP without a status keep the first not-started one.
   const status = input.statusId
     ? await requireProjectStatus(actor.orgId, projectId, oid(input.statusId, "status").toHexString())
-    : ((!actor.isBot ? await firstOfStage(actor.orgId, projectId, (await loadOrgDefaults(actor.orgId)).newTaskStage) : null) ??
+    : ((!actor.isBot ? (await newTaskStatusFor(actor.orgId, projectId, project)).status : null) ??
       (await statusFor(actor.orgId, projectId, "unstarted")) ??
       (await c.statuses.find({ orgId: actor.orgId, projectId }).sort({ order: 1 }).limit(1).next()));
   if (!status) throw new UserError("Pick a status.");

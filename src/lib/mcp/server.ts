@@ -13,6 +13,7 @@ import { taskAccess } from "@/lib/access";
 import { advanceTarget, atWaitStep, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
 import { nextStepOf } from "@/lib/flow-engine-core";
 import { botOrgFlows } from "@/lib/flow-bot-view";
+import { botNewTaskViews, NEW_TASKS_NOTE } from "@/lib/project-defaults";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
 import { computeAnalytics } from "@/lib/analytics";
@@ -254,6 +255,7 @@ async function workspaceSummary(ctx: McpCtx) {
     botOrgFlows(ctx.org._id),
   ]);
   const byProject = groupStatusesByProject(statuses);
+  const newTasks = await botNewTaskViews(ctx.org._id, projects, byProject);
   return {
     organisation: { id: ctx.org._id.toHexString(), name: ctx.org.name, slug: ctx.org.slug },
     statusStages: STAGES_NOTE,
@@ -270,7 +272,13 @@ async function workspaceSummary(ctx: McpCtx) {
        * how it moves on). Null = flows are off for it. `active` false = no step names an owner or instructions.
        */
       flow: flows.get(p._id.toHexString()) ?? null,
+      /**
+       * Where a person's new task with no status lands in this project (VEC-190): `source` "project" = the project's
+       * own override, "org" = the org default stage, "fallback" = its first not-started status. Read-only here.
+       */
+      newTasks: newTasks.get(p._id.toHexString()) ?? null,
     })),
+    newTasks: NEW_TASKS_NOTE,
     flows: FLOWS_NOTE,
     people: [...dir.values()],
   };

@@ -5,6 +5,7 @@ import { readLocalImage, MAX_IMAGE_BYTES } from "@/lib/storage";
 import { projectContext, toTask, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
 import { botTaskFlow } from "@/lib/flow-bot-view";
+import { botNewTaskViews } from "@/lib/project-defaults";
 import { taskUrl as orgTaskUrl } from "@/lib/paths";
 import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
@@ -254,6 +255,8 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     loadTaskRefs(org._id, task),
   ]);
   const statusById = new Map(statuses.map((s) => [s._id.toHexString(), s]));
+  const ownStatuses = statuses.filter((s) => s.projectId.equals(project._id));
+  const newTasks = (await botNewTaskViews(org._id, [project], new Map([[project._id.toHexString(), ownStatuses]]))).get(project._id.toHexString()) ?? null;
   const projectKey = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
   const status = statusById.get(task.statusId.toHexString());
   const key = `${project.key}-${task.number}`;
@@ -356,7 +359,9 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
      * `context` is the project's admin-set key/value metadata: repos, environments, conventions and the like.
      * `statuses` is this project's own workflow in order (statuses are per project): the only names set_status,
      * update_task and complete_task accept for this task. `stage` is what Vector acts on: a done or cancelled
-     * stage releases the tasks waiting on it, started = being worked on, unstarted = planned.
+     * stage releases the tasks waiting on it, started = being worked on, unstarted = planned. `newTasks` (read-only,
+     * VEC-190) = where a person's new task with no status lands here: `source` "project" (this project's override),
+     * "org" (the org default stage) or "fallback"; tasks bots create without a status start in the first not-started one.
      */
     project: {
       id: project._id.toHexString(),
@@ -364,7 +369,8 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       name: project.name,
       archived: !!project.archivedAt,
       context: projectContext(project),
-      statuses: statuses.filter((s) => s.projectId.equals(project._id)).map((s) => ({ name: s.name, stage: s.category })),
+      statuses: ownStatuses.map((s) => ({ name: s.name, stage: s.category })),
+      newTasks,
     },
     organisation: { id: orgHex, name: org.name, slug: org.slug },
     assignee: personRef(dir, task.assigneeId),
