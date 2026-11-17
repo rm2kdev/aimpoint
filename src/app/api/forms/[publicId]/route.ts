@@ -5,7 +5,8 @@ import { clientIp, FORM_BODY_MAX, submitPublicForm, type RawSubmission } from "@
  * Public submission endpoint for external forms (VEC-207). No session: anyone with the form's link may post.
  * Takes JSON (the form page's fetch) or a plain urlencoded/multipart form post (no JavaScript, or someone's own
  * HTML form), caps the body at FORM_BODY_MAX, and answers with a short message only:
- *   200 {ok:true}  400 bad input  404 unknown/disabled form  413 too large  429 rate limited (Retry-After).
+ *   200 {ok:true}  400 bad input  403 unavailable (org on the Free plan, VEC-224)  404 unknown/disabled form  413 too large
+ *   429 rate limited (Retry-After).
  * A plain form post is redirected back to the page (303) with `?sent=1` or `?error=<message>`.
  */
 export const dynamic = "force-dynamic";
@@ -76,7 +77,7 @@ function reply(req: Request, publicId: string, plainPost: boolean, r: Awaited<Re
     const url = new URL(`/f/${encodeURIComponent(publicId)}`, req.url);
     if (r.ok) url.searchParams.set("sent", "1");
     // A code, not the message: the page maps it to its own text, so a crafted link can't put words on the page.
-    else url.searchParams.set("error", r.status === 429 ? "rate" : r.status === 413 ? "size" : "input");
+    else url.searchParams.set("error", r.status === 429 ? "rate" : r.status === 413 ? "size" : r.status === 403 ? "unavailable" : "input");
     return NextResponse.redirect(url, { status: 303, headers });
   }
   return NextResponse.json(r.ok ? { ok: true } : { ok: false, error: r.error }, { status: r.status, headers });

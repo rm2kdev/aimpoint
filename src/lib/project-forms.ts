@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { loadStatuses, requireProjectStatus } from "@/lib/statuses";
+import { requireFeatureById } from "@/lib/billing-limits";
 import {
   FORM_DESTINATION_STAGES,
   TASK_TYPES,
@@ -134,6 +135,8 @@ export async function listProjectForms(actor: FormActor, projectId: string): Pro
 
 export async function createProjectForm(actor: FormActor, projectId: string, input: FormInput): Promise<ProjectForm> {
   assertAdmin(actor);
+  // Free plan has no public forms (VEC-224). Existing forms are kept (and stay editable); their links say unavailable.
+  await requireFeatureById(actor.orgId, "publicForms");
   const project = await requireProject(actor.orgId, projectId);
   if (project.archivedAt) throw new UserError(`${project.name} (${project.key}) is archived. Restore it before adding forms.`);
   const status = await requireFormDestination(actor.orgId, project._id, input.destinationStatusId);

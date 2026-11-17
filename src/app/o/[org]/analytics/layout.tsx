@@ -1,13 +1,18 @@
 import { notFound } from "next/navigation";
 import { requireOrgPage } from "@/lib/session";
+import { featureLockMessage } from "@/lib/billing-limits";
+import { PlanLocked } from "@/components/plan-locked";
 
 /**
  * Admins only (VEC-134). The check sits in a layout, above loading.tsx, so a member gets a real 404 status
- * before anything streams; the page and loadAnalytics check again.
+ * before anything streams; the page and loadAnalytics check again. On the Free plan (VEC-224) admins get the
+ * upgrade message instead of the screen; computeAnalytics refuses too, so the CSV, REST and MCP paths match.
  */
 export default async function AnalyticsLayout({ params, children }: LayoutProps<"/o/[org]/analytics">) {
   const { org } = await params;
-  const { isAdmin } = await requireOrgPage(org);
+  const { isAdmin, org: doc } = await requireOrgPage(org);
   if (!isAdmin) notFound();
+  const locked = featureLockMessage(doc, "analytics");
+  if (locked) return <PlanLocked title="Analytics" message={locked} />;
   return children;
 }

@@ -9,6 +9,7 @@ import {
   FORM_SUBMITTER_NAME_MAX,
 } from "./task-service";
 import { UserError } from "./result";
+import { hasFeature } from "./billing-limits";
 
 /**
  * The public side of external forms (VEC-207): what `POST /api/forms/<publicId>` does with a submission.
@@ -29,9 +30,12 @@ export const RATE_LIMITS = {
   form: { max: 60, windowMs: 60 * 60_000 },
 } as const;
 
+/** What a public form says while its org is on the Free plan (VEC-224). Nothing about plans or the org leaks to the public. */
+export const FORM_UNAVAILABLE = "This form is unavailable right now. Please try again later or contact the team that shared it.";
+
 export type SubmitResult =
   | { ok: true; status: 200 }
-  | { ok: false; status: 400 | 404 | 413 | 429; error: string; retryAfter?: number };
+  | { ok: false; status: 400 | 403 | 404 | 413 | 429; error: string; retryAfter?: number };
 
 export interface RawSubmission {
   title?: unknown;
@@ -111,6 +115,8 @@ function waitText(seconds: number) {
 export async function submitPublicForm(publicId: string, raw: RawSubmission, ip: string): Promise<SubmitResult> {
   const form = await findOpenForm(publicId);
   if (!form) return { ok: false, status: 404, error: "This form doesn't exist or isn't taking submissions." };
+  // The org is on the Free plan (VEC-224): the form is kept but unavailable until it upgrades.
+  if (!(await hasFeature(form.orgId, "publicForms"))) return { ok: false, status: 403, error: FORM_UNAVAILABLE };
   const input = validate(raw);
   if (typeof input === "string") return { ok: false, status: 400, error: input };
   // A choose form's type is checked up front too, so a bad pick never spends rate limit. A fixed form ignores it.

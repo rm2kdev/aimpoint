@@ -3,6 +3,7 @@ import { ObjectId, type Document } from "mongodb";
 import { cols } from "@/lib/db";
 import { requireOrg } from "@/lib/session";
 import { UserError } from "@/lib/result";
+import { requireFeatureById } from "@/lib/billing-limits";
 import { toProject } from "@/lib/data";
 import { loadDirectory, personName } from "@/lib/mcp/context";
 import { bucketStarts, isTimeZone, nextBucketStart } from "@/lib/analytics-time";
@@ -222,6 +223,8 @@ function openAt(t: OpenStateRow, at: Date): boolean {
  * (loadAnalytics does `requireOrg(slug, {admin: true})`). Exported for the export endpoints and scripts.
  */
 export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): Promise<AnalyticsReport> {
+  // Free plan has no Analytics (VEC-224): every caller (screen, refresh, CSV, REST, MCP) goes through here.
+  await requireFeatureById(orgId, "analytics");
   const p = parseAnalyticsQuery(query);
   const c = await cols();
   const [statuses, dir, projectDocs] = await Promise.all([

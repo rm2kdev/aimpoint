@@ -3,6 +3,7 @@ import { analyticsCsvFiles, exportFileName, resolveAnalyticsExport } from "@/lib
 import { UserError } from "@/lib/result";
 import { AuthError, currentUser, requireOrg } from "@/lib/session";
 import { zip } from "@/lib/zip";
+import { PlanLimitError } from "@/lib/billing-limits";
 
 /**
  * GET /o/<slug>/analytics/export?from&to&granularity&project&person|bot&tz (VEC-136): the analytics report for that
@@ -42,6 +43,7 @@ export async function GET(req: Request, ctx: RouteContext<"/o/[org]/analytics/ex
       },
     });
   } catch (err) {
+    if (err instanceof PlanLimitError) return Response.json({ error: err.message, upgrade: true }, { status: 402 });
     if (err instanceof UserError) return Response.json({ error: err.message }, { status: 400 });
     throw err;
   }
