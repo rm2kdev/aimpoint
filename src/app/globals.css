@@ -156,8 +156,11 @@
     -webkit-font-smoothing: antialiased;
     /* no double-tap zoom (VEC-154); pinch is blocked by ZoomLock */
     touch-action: manipulation;
+    /* no rubber-band bounce of the whole shell (VEC-155); not inherited, so inner scrollers keep theirs */
+    overscroll-behavior: none;
   }
   body {
+    overscroll-behavior: none;
     @apply bg-background text-foreground;
     font-size: 14px;
   }

@@ -8,7 +8,7 @@ export const metadata = { title: "Page not found" };
  */
 export default function NotFound() {
   return (
-    <main className="flex min-h-full items-start justify-center">
+    <main className="flex min-h-full items-start justify-center pt-[env(safe-area-inset-top)]">
       <NotFoundMessage href="/" label="Go to Vector" />
     </main>
   );

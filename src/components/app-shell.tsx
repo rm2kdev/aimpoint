@@ -76,8 +76,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Drag sessions live above the page so a drag survives client-side navigation. */}
       <DragProvider>
       {/* Column: the app row fills what's left above the bot status tray, so every scroll area and the task pane end above it. */}
-      <div className="flex h-dvh flex-col overflow-hidden">
-        <div className="relative flex min-h-0 flex-1 overflow-hidden">
+      {/* Safe areas (VEC-155): top here, left/right on the app row, bottom in the bot status tray, so the
+          tray's background runs under the home indicator. env() is 0 outside notched phones. */}
+      <div className="flex h-dvh flex-col overflow-hidden pt-[env(safe-area-inset-top)]">
+        <div className="relative flex min-h-0 flex-1 overflow-hidden pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]">
           {/* desktop sidebar */}
           <aside className="hidden w-[248px] shrink-0 border-r border-sidebar-border lg:block">
             <Sidebar onSearch={openSearch} />
@@ -90,7 +92,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           />
           <aside
             className={cn(
-              "fixed inset-y-0 left-0 z-50 w-[272px] border-r border-sidebar-border shadow-xl transition-transform duration-200 ease-out lg:hidden",
+              "fixed inset-y-0 left-0 z-50 w-[calc(272px+env(safe-area-inset-left))] border-r border-sidebar-border bg-sidebar pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] shadow-xl transition-transform duration-200 ease-out lg:hidden",
               navOpen ? "translate-x-0" : "pointer-events-none -translate-x-full",
             )}
             aria-hidden={!navOpen}

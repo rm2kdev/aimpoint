@@ -17,7 +17,7 @@ export default async function InvitePage({ params }: PageProps<"/invite/[token]"
   const next = `/invite/${token}`;
 
   return (
-    <main className="grid min-h-full place-items-center bg-sidebar px-4 py-16">
+    <main className="grid min-h-full place-items-center bg-sidebar px-[calc(1rem+env(safe-area-inset-left))] py-[calc(4rem+env(safe-area-inset-top))]">
       <div className="w-full max-w-[380px]">
         <Logo className="mb-8" />
         {!valid || !org ? (

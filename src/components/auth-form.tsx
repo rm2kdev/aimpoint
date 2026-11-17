@@ -30,7 +30,7 @@ export function AuthForm({
     return <CodeStep state={state} formAction={formAction} pending={pending} next={next} />;
   }
   return (
-    <main className="grid min-h-full place-items-center bg-sidebar px-4 py-16">
+    <main className="grid min-h-full place-items-center bg-sidebar px-[calc(1rem+env(safe-area-inset-left))] py-[calc(4rem+env(safe-area-inset-top))]">
       <div className="w-full max-w-[360px]">
         <Logo className="mb-8" />
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">
@@ -122,7 +122,7 @@ function CodeStep({
   const email = state.fields?.email ?? "";
   const restart = `/login?${new URLSearchParams({ ...(email ? { email } : {}), ...(next ? { next } : {}) })}`;
   return (
-    <main className="grid min-h-full place-items-center bg-sidebar px-4 py-16">
+    <main className="grid min-h-full place-items-center bg-sidebar px-[calc(1rem+env(safe-area-inset-left))] py-[calc(4rem+env(safe-area-inset-top))]">
       <div className="w-full max-w-[360px]">
         <Logo className="mb-8" />
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Two-factor authentication</h1>

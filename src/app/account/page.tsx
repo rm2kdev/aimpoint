@@ -66,7 +66,7 @@ export default async function AccountPage({ searchParams }: PageProps<"/account"
   });
 
   return (
-    <main className="flex min-h-dvh flex-col">
+    <main className="flex min-h-dvh flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
         <Link
           href={back ? orgPath(back.slug, "my") : "/onboarding"}

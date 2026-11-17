@@ -28,12 +28,21 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  // Draw edge to edge on notched iPhones (VEC-155): the shell pads itself with env(safe-area-inset-*).
+  viewportFit: "cover",
   // Browser chrome / status bar tint per theme (VEC-153); matches --background in globals.css.
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
     { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
   ],
 };
+
+const SAFE_OFFSET = (gap: string) => ({
+  top: `calc(${gap} + env(safe-area-inset-top))`,
+  right: `calc(${gap} + env(safe-area-inset-right))`,
+  bottom: `calc(${gap} + env(safe-area-inset-bottom))`,
+  left: `calc(${gap} + env(safe-area-inset-left))`,
+});
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -43,7 +52,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ServiceWorker />
         <ThemeProvider>
           <TooltipProvider delayDuration={400}>{children}</TooltipProvider>
-          <Toaster position="bottom-right" />
+          {/* Offsets keep toasts clear of the notch / home indicator (VEC-155); env() is 0 on desktop. */}
+          <Toaster
+            position="bottom-right"
+            offset={SAFE_OFFSET("24px")}
+            mobileOffset={SAFE_OFFSET("16px")}
+          />
         </ThemeProvider>
       </body>
     </html>
