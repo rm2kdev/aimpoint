@@ -59,26 +59,28 @@ export async function POST(req: Request, ctx: RouteContext<"/api/forms/[publicId
       const fd = await req.formData().catch(() => null);
       raw = fd ? Object.fromEntries([...fd.entries()].map(([k, v]) => [k, typeof v === "string" ? v : null])) : null;
     }
-    if (raw === null) return reply(req, publicId, plainPost, { ok: false, status: 413, error: "That's too much to send in one go. Shorten the description and try again." });
+    if (raw === null) return reply(publicId, plainPost, { ok: false, status: 413, error: "That's too much to send in one go. Shorten the description and try again." });
   } else {
     const body = await readBody(req);
-    if (body === null) return reply(req, publicId, plainPost, { ok: false, status: 413, error: "That's too much to send in one go. Shorten the description and try again." });
+    if (body === null) return reply(publicId, plainPost, { ok: false, status: 413, error: "That's too much to send in one go. Shorten the description and try again." });
     raw = parse(type, body);
   }
-  if (!raw) return reply(req, publicId, plainPost, { ok: false, status: 400, error: "Send the form as JSON or a regular form post." });
+  if (!raw) return reply(publicId, plainPost, { ok: false, status: 400, error: "Send the form as JSON or a regular form post." });
   const result = await submitPublicForm(publicId, raw, clientIp(req.headers));
-  return reply(req, publicId, plainPost, result);
+  return reply(publicId, plainPost, result);
 }
 
-function reply(req: Request, publicId: string, plainPost: boolean, r: Awaited<ReturnType<typeof submitPublicForm>>) {
+function reply(publicId: string, plainPost: boolean, r: Awaited<ReturnType<typeof submitPublicForm>>) {
   const headers: Record<string, string> = { ...NO_STORE };
   if (!r.ok && r.retryAfter) headers["Retry-After"] = String(r.retryAfter);
   if (plainPost && r.status !== 404) {
-    const url = new URL(`/f/${encodeURIComponent(publicId)}`, req.url);
-    if (r.ok) url.searchParams.set("sent", "1");
+    const q = new URLSearchParams();
+    if (r.ok) q.set("sent", "1");
     // A code, not the message: the page maps it to its own text, so a crafted link can't put words on the page.
-    else url.searchParams.set("error", r.status === 429 ? "rate" : r.status === 413 ? "size" : r.status === 403 ? "unavailable" : "input");
-    return NextResponse.redirect(url, { status: 303, headers });
+    else q.set("error", r.status === 429 ? "rate" : r.status === 413 ? "size" : r.status === 403 ? "unavailable" : "input");
+    // Relative Location (VEC-242): the browser resolves it against the host the form was opened on. `req.url` under
+    // `next dev` (and behind proxies) carries the server's own host, e.g. localhost:3200, which other machines can't reach.
+    return new Response(null, { status: 303, headers: { ...headers, Location: `/f/${encodeURIComponent(publicId)}?${q}` } });
   }
   return NextResponse.json(r.ok ? { ok: true } : { ok: false, error: r.error }, { status: r.status, headers });
 }
