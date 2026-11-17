@@ -18,6 +18,8 @@ import { createBot } from "@/app/actions/bots";
 import { timeAgo } from "@/lib/format";
 import type { Bot, BotAvatar as BotAvatarData } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
+import { UpgradeNote } from "@/components/upgrade-note";
+import { atLimit, limitReason } from "@/lib/billing-view";
 
 export function BotsSettings({
   bots,
@@ -28,7 +30,8 @@ export function BotsSettings({
   stats: Record<string, { assigned: number; created: number }>;
   roleNames: Record<string, string>;
 }) {
-  const { org, isAdmin } = useOrg();
+  const { org, isAdmin, billing } = useOrg();
+  const botsFull = atLimit(billing, "bots");
   const [creating, setCreating] = useState(false);
 
   return (
@@ -99,9 +102,10 @@ export function BotsSettings({
       </SettingsRow>
       {isAdmin && (
         <SettingsRow title="Add a bot" desc="Each bot gets its own name, avatar and API key. Next you'll choose its backend: Claude, OpenAI or Hermes.">
-          <Button onClick={() => setCreating(true)} className="gap-2">
+          <Button onClick={() => setCreating(true)} className="gap-2" disabled={botsFull}>
             <PlusIcon className="size-3.5" /> New bot
           </Button>
+          {botsFull && <UpgradeNote reason={limitReason(billing, "bots")} className="mt-2" />}
         </SettingsRow>
       )}
       <NewBotDialog open={creating} onClose={() => setCreating(false)} />

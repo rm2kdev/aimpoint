@@ -20,6 +20,7 @@ export const SETTINGS_TABS = [
   ["bots", "Bots"],
   ["projects", "Projects"],
   ["flows", "Flows"],
+  ["billing", "Billing"],
 ] as const;
 
 /** Header + tab bar shared by every settings page. Tabs are real routes, so detail pages keep their tab lit. */
@@ -32,7 +33,7 @@ const TAB_FADE = 24;
  * and an edge fades out on each side that has more tabs.
  */
 function SettingsTabs() {
-  const { org } = useOrg();
+  const { org, billing } = useOrg();
   const pathname = usePathname();
   const navRef = useRef<HTMLElement>(null);
   const placed = useRef(false);
@@ -84,7 +85,7 @@ function SettingsTabs() {
       data-overflow-left={edges.left || undefined}
       data-overflow-right={edges.right || undefined}
     >
-      {SETTINGS_TABS.map(([t, label]) => {
+      {SETTINGS_TABS.filter(([t]) => t !== "billing" || billing.enabled).map(([t, label]) => {
         const href = orgPath(org.slug, "settings", t);
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (

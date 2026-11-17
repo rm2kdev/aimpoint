@@ -4,7 +4,8 @@ import { newTasksPath, orgPath, rolesPath } from "@/lib/paths";
 // Setup order (VEC-187): people and bots first, then projects, then the flow that hands work between them.
 // "statuses" is per project since VEC-117: old ?tab=statuses links land on Projects. Bot roles live on the Bots page since VEC-125.
 // Defaults is folded into Flows since VEC-187: old ?tab=defaults links land on its New tasks row.
-const TABS = ["general", "members", "bots", "projects", "flows"];
+// "billing" (VEC-226) 404s when billing is off, like its tab.
+const TABS = ["general", "members", "bots", "projects", "flows", "billing"];
 
 /** /settings (and old ?tab= links) land on a section. */
 export default async function SettingsIndex({ params, searchParams }: PageProps<"/o/[org]/settings">) {

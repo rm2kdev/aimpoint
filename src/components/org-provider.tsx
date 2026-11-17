@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useRouter } from "next/navigation";
 import type { BotWorkload, Counts, Member, OrgDefaults, Project, Status, WorkloadSnapshot } from "@/lib/types";
 import type { ResolvedFlow } from "@/lib/flow-model";
+import { UNLIMITED_SUMMARY, type BillingSummary } from "@/lib/billing-view";
 import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
@@ -61,6 +62,11 @@ interface Ctx {
   connected: boolean;
   /** Members who currently have this organisation open. */
   online: string[];
+  /**
+   * The org's plan, limits and usage (VEC-226), refreshed with the layout on org.changed (Stripe webhooks publish
+   * one). With billing off it is UNLIMITED_SUMMARY: no prompts anywhere.
+   */
+  billing: BillingSummary;
   /** Live per-bot active task counts (every bot in the org; see loadBotWorkload). */
   workload: BotWorkload[];
   /** Active task count by bot id; 0 for bots not in the map. */
@@ -74,7 +80,7 @@ interface Ctx {
  */
 export type OrgBase = Omit<
   Ctx,
-  "counts" | "unread" | "setUnread" | "connected" | "online" | "workload" | "activeByBot" | "projects" | "reorderProjects"
+  "counts" | "unread" | "setUnread" | "connected" | "online" | "workload" | "activeByBot" | "projects" | "reorderProjects" | "billing"
 >;
 
 const OrgCtx = createContext<Ctx | null>(null);
@@ -117,6 +123,7 @@ export function OrgProvider({
   statuses: serverStatuses,
   defaults: serverDefaults,
   flows: serverFlows,
+  billing: serverBilling,
   counts: initialCounts,
   unread: initialUnread,
   workload: initialWorkload,
@@ -134,6 +141,7 @@ export function OrgProvider({
   statuses: Status[];
   defaults: OrgDefaults;
   flows?: Record<string, ResolvedFlow>;
+  billing?: BillingSummary;
   counts: Counts;
   unread: number;
   workload: WorkloadSnapshot;
@@ -300,6 +308,11 @@ export function OrgProvider({
   const [stableFlows, setStableFlows] = useState({ sig: flowSig, flows: serverFlows ?? {} });
   if (stableFlows.sig !== flowSig) setStableFlows({ sig: flowSig, flows: serverFlows ?? {} });
   const flowByProject = useMemo(() => new Map(Object.entries(stableFlows.flows)), [stableFlows]);
+  // Value-keyed too, so an org.changed refresh that didn't change the plan or usage keeps the context value.
+  const billingSig = JSON.stringify(serverBilling ?? UNLIMITED_SUMMARY);
+  const [stableBilling, setStableBilling] = useState({ sig: billingSig, billing: serverBilling ?? UNLIMITED_SUMMARY });
+  if (stableBilling.sig !== billingSig) setStableBilling({ sig: billingSig, billing: serverBilling ?? UNLIMITED_SUMMARY });
+  const billing = stableBilling.billing;
   const base = useMemo<OrgBase>(
     () => ({
       org,
@@ -323,6 +336,7 @@ export function OrgProvider({
       ...base,
       projects,
       reorderProjects,
+      billing,
       counts,
       unread,
       setUnread,
@@ -331,7 +345,7 @@ export function OrgProvider({
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
     }),
-    [base, projects, reorderProjects, counts, unread, setUnread, connected, online, workloadSnap],
+    [base, projects, reorderProjects, billing, counts, unread, setUnread, connected, online, workloadSnap],
   );
   return (
     <OrgBaseCtx.Provider value={base}>

@@ -1,13 +1,22 @@
+import Link from "next/link";
+import { CreditCardIcon } from "lucide-react";
+
 /**
- * A feature the org's plan doesn't include (VEC-224): shown in place of the page, with the upgrade message from
- * lib/billing. Server component; the Billing page task styles the upgrade prompts further.
+ * A feature the org's plan doesn't include (VEC-224), shown in place of the page with the upgrade message from
+ * lib/billing and a link to Settings > Billing (VEC-226). Server component.
  */
-export function PlanLocked({ title, message }: { title: string; message: string }) {
+export function PlanLocked({ title, message, billingHref }: { title: string; message: string; billingHref: string }) {
   return (
-    <div className="mx-auto flex max-w-sm flex-col items-center px-6 py-[18vh] text-center" data-plan-locked>
+    <div className="mx-auto flex max-w-sm flex-col items-center px-6 py-[18vh] text-center" data-plan-locked data-upgrade-prompt>
       <p className="mb-3 font-mono text-[13px] text-faint">Free plan</p>
       <h1 className="text-[15px] font-semibold">{title} isn&apos;t included</h1>
       <p className="mt-1 text-[13.5px] text-muted-foreground">{message}</p>
+      <Link
+        href={billingHref}
+        className="mt-5 inline-flex h-8 items-center gap-2 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-opacity hover:opacity-90"
+      >
+        <CreditCardIcon className="size-3.5" /> See plans in Billing
+      </Link>
     </div>
   );
 }

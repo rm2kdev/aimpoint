@@ -6,6 +6,7 @@ import { unreadCount } from "@/lib/notifications";
 import { loadDeletedMembers } from "@/lib/deleted-users";
 import { loadOrgDefaults } from "@/lib/org-defaults";
 import { loadClientFlows } from "@/lib/flow-view";
+import { loadBillingSummary } from "@/lib/billing-summary";
 import { OrgProvider } from "@/components/org-provider";
 import { AppShell } from "@/components/app-shell";
 
@@ -13,7 +14,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
   const { org: slug } = await params;
   const { user, org, membership } = await requireOrgPage(slug);
   const c = await cols();
-  const [shell, myMemberships, unread, workload, deletedMembers, defaults, flows] = await Promise.all([
+  const [shell, myMemberships, unread, workload, deletedMembers, defaults, flows, billing] = await Promise.all([
     loadShell(org._id, user._id),
     c.memberships.find({ userId: user._id }).toArray(),
     unreadCount(org._id, user._id),
@@ -21,6 +22,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
     loadDeletedMembers(org._id),
     loadOrgDefaults(org._id),
     loadClientFlows(org._id),
+    loadBillingSummary(org),
   ]);
   const orgs = await c.orgs.find({ _id: { $in: myMemberships.map((m) => m.orgId) } }).sort({ name: 1 }).toArray();
 
@@ -36,6 +38,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
       statuses={shell.statuses}
       defaults={defaults}
       flows={flows}
+      billing={billing}
       counts={shell.counts}
       unread={unread}
       workload={workload}

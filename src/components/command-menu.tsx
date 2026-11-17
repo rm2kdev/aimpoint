@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArchiveIcon, BotIcon, ChartNoAxesColumnIcon, CircleUserIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, UserIcon, WorkflowIcon } from "lucide-react";
+import { ArchiveIcon, BotIcon, ChartNoAxesColumnIcon, CircleUserIcon, CreditCardIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, UserIcon, WorkflowIcon } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -18,10 +18,10 @@ import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
-import { accountPath, analyticsPath, newTasksPath, orgPath, projectPath, projectSettingsPath, rolesPath, taskPath, withTask } from "@/lib/paths";
+import { accountPath, analyticsPath, billingPath, newTasksPath, orgPath, projectPath, projectSettingsPath, rolesPath, taskPath, withTask } from "@/lib/paths";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
-  const { org, projects, isAdmin } = useOrg();
+  const { org, projects, isAdmin, billing } = useOrg();
   const { newTask } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -116,6 +116,7 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 {isAdmin && (
                   <CommandItem onSelect={() => go(analyticsPath(org.slug))} className="gap-2.5" data-nav="analytics">
                     <ChartNoAxesColumnIcon /> Analytics
+                    {!billing.features.analytics && <span className="ml-auto text-[11px] text-faint">Pro</span>}
                   </CommandItem>
                 )}
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "members"))} className="gap-2.5">
@@ -136,6 +137,11 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 <CommandItem onSelect={() => go(newTasksPath(org.slug))} className="gap-2.5">
                   <SlidersHorizontalIcon /> New task defaults <span className="ml-auto text-[11px] text-faint">Flows</span>
                 </CommandItem>
+                {billing.enabled && (
+                  <CommandItem onSelect={() => go(billingPath(org.slug))} className="gap-2.5" data-nav="billing">
+                    <CreditCardIcon /> Billing <span className="ml-auto text-[11px] text-faint">Settings</span>
+                  </CommandItem>
+                )}
                 <CommandItem onSelect={() => go(accountPath(org.slug))} className="gap-2.5">
                   <CircleUserIcon /> Account settings
                 </CommandItem>

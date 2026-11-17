@@ -40,6 +40,9 @@ export function projectSettingsPath(slug: string, projectId: string): string {
 }
 
 /** `/o/<slug>/analytics` plus an optional `?range=...` query (see lib/analytics-range.ts `analyticsSearch`). Admins only. */
+/** Settings > Billing (VEC-226); only routed when billing is on. */
+export const billingPath = (slug: string, search = "") => `${orgPath(slug, "settings", "billing")}${search}`;
+
 export const analyticsPath = (slug: string, search = "") => `${orgPath(slug, "analytics")}${search}`;
 
 /** `/o/<slug>/p/<key>` */

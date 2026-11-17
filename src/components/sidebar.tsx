@@ -45,10 +45,11 @@ import { startInstall, useInstallState } from "@/components/install-prompt";
 import { accountPath, analyticsPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import { matchStatus, type Project, type Task } from "@/lib/types";
+import { ProTag } from "@/components/upgrade-note";
 
 /** Memoised: the shell re-rendering (search, new-task dialog, drawer) doesn't re-render the sidebar. */
 export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearch: () => void; onNavigate?: () => void }) {
-  const { org, orgs, counts, isAdmin, unread } = useOrg();
+  const { org, orgs, counts, isAdmin, unread, billing } = useOrg();
   const pathname = usePathname();
 
   return (
@@ -93,7 +94,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
 
         <SectionLabel>{orgs.length > 1 ? org.name : "Organisation"}</SectionLabel>
         {isAdmin && (
-          <NavItem href={analyticsPath(org.slug)} active={pathname === analyticsPath(org.slug)} icon={<ChartNoAxesColumnIcon />} onNavigate={onNavigate}>
+          <NavItem href={analyticsPath(org.slug)} active={pathname === analyticsPath(org.slug)} icon={<ChartNoAxesColumnIcon />} onNavigate={onNavigate} tag={billing.features.analytics ? undefined : <ProTag />}>
             Analytics
           </NavItem>
         )}
@@ -105,7 +106,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
         </NavItem>
         <NavItem
           href={orgPath(org.slug, "settings", "general")}
-          active={["general", "projects", "statuses"].some((t) => pathname.startsWith(orgPath(org.slug, "settings", t)))}
+          active={["general", "projects", "statuses", "billing"].some((t) => pathname.startsWith(orgPath(org.slug, "settings", t)))}
           icon={<SettingsIcon />}
           onNavigate={onNavigate}
         >
@@ -328,6 +329,7 @@ function NavItem({
   dragging,
   targetRef,
   dropState,
+  tag,
 }: {
   href: string;
   active: boolean;
@@ -347,6 +349,8 @@ function NavItem({
   targetRef?: React.Ref<HTMLAnchorElement>;
   /** A dragged task is over the row ("over"), or it's blinking before the project opens ("spring"). */
   dropState?: "over" | "spring";
+  /** Shown after the label in place of a count, e.g. the "Pro" tag on a feature the plan lacks (VEC-226). */
+  tag?: React.ReactNode;
 }) {
   return (
     <Link
@@ -366,6 +370,7 @@ function NavItem({
     >
       <span className={cn("flex", active ? "text-selected-foreground" : "text-muted-foreground")}>{icon}</span>
       <span className="truncate">{children}</span>
+      {tag}
       {count !== undefined && count > 0 && badge ? (
         <span className="tabular ml-auto grid h-[18px] min-w-[18px] place-items-center rounded-full bg-brand px-1.5 font-mono text-[11px] font-medium text-white" aria-label={`${count} unread`}>
           {count > 99 ? "99+" : count}
