@@ -11,6 +11,7 @@ import { ColorDots, ProjectTile } from "@/components/settings/org-settings";
 import { ProjectStatuses } from "@/components/settings/project-statuses";
 import { ProjectFlow } from "@/components/settings/flow-settings";
 import { ProjectNewTasks } from "@/components/settings/project-new-tasks";
+import { ProjectForms } from "@/components/settings/project-forms";
 import type { ProjectFlowSettings } from "@/lib/flows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,7 +28,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { deleteProject, setProjectArchived, updateProject } from "@/app/actions/org";
-import type { ProjectDetail as ProjectDetailData, ProjectMetaEntry } from "@/lib/types";
+import type { ProjectDetail as ProjectDetailData, ProjectForm, ProjectMetaEntry } from "@/lib/types";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
 
@@ -46,12 +47,17 @@ export function ProjectDetail({
   archivedTaskCount,
   flow,
   flowCounts,
+  forms,
+  formCount,
 }: {
   project: ProjectDetailData;
   taskCount: number;
   archivedTaskCount: number;
   flow: ProjectFlowSettings;
   flowCounts: Record<string, number>;
+  /** External forms (VEC-206): admins get the list, members null. */
+  forms: ProjectForm[] | null;
+  formCount: number;
 }) {
   const { org, isAdmin, projects, counts } = useOrg();
   const router = useRouter();
@@ -177,6 +183,8 @@ export function ProjectDetail({
       <ProjectNewTasks projectId={project.id} projectName={project.name} />
 
       <ProjectFlow projectId={project.id} projectName={project.name} flow={flow} counts={flowCounts} />
+
+      <ProjectForms projectId={project.id} projectName={project.name} archived={project.archived} forms={forms} formCount={formCount} />
 
       <Row
         title="Agent context"
