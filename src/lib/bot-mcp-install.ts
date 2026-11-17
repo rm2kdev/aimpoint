@@ -6,12 +6,14 @@ import { cols } from "@/lib/db";
 import { unseal } from "@/lib/secrets";
 import { friendlyNetworkError, hermesBase, hermesProbe, httpError } from "@/lib/bot-dispatch";
 import type { BotDoc, BotMcpInstall, BotMcpInstallDoc, OrgDoc } from "@/lib/types";
+import { LEGACY_MCP_SERVER_NAME, MCP_SERVER_NAME, type McpServerName } from "@/lib/mcp-name";
 
 /**
  * "Install Vector's MCP server" for a Hermes connection (VEC-169, recipe from the VEC-168 spike).
  *
  * 1. Install run: POST /v1/runs with a prompt that saves the bot key to the profile's .env, runs
- *    `hermes mcp add vector` and `hermes mcp test vector`, and answers `VECTOR_MCP_INSTALL: ok|failed`.
+ *    `hermes mcp add aimpoint` and `hermes mcp test aimpoint` (then drops the pre-rename `vector` entry, VEC-198), and
+ *    answers `AIMPOINT_MCP_INSTALL: ok|failed`.
  * 2. Hermes never sees new MCP tools in the run that added them: the gateway picks the server up on its housekeeping
  *    reconcile, 40-80 s later. So Vector waits, then sends check runs that call get_workspace (CHECK_AT_MS).
  * 3. Installed = the bot called Vector (lastUsedAt moved) after the check run started. The run's text alone is model
@@ -49,30 +51,36 @@ export const mcpUrlFor = (vectorUrl: string) => `${vectorUrl.replace(/\/+$/, "")
 
 export function installPrompt(a: { vectorUrl: string; botName: string; key: string }) {
   const bot = a.botName.replace(/["\r\n\\]/g, "").trim() || "bot";
-  // Verbatim from the VEC-168 spike (tested end to end on fresh profiles). String.raw keeps the \n escapes for Python/printf.
-  return String.raw`Vector (the issue tracker at ${a.vectorUrl}) is connecting you as its bot "${bot}". Install Vector's MCP server into your own Hermes config so future Vector tasks reach you. Use your terminal tool for every step, run the commands exactly as written, and do not show the key in your reply.
+  // From the VEC-168 spike (tested end to end on fresh profiles), renamed for Aimpoint in VEC-198: the server is added as
+  // "aimpoint" (key in MCP_AIMPOINT_API_KEY, the env var Hermes derives from the name), and the old "vector" entry and
+  // its key are only removed once the new one tested fine, so a failed install leaves a working old setup in place.
+  // String.raw keeps the \n escapes for Python/printf.
+  return String.raw`Aimpoint (the issue tracker at ${a.vectorUrl}, formerly called Vector) is connecting you as its bot "${bot}". Install Aimpoint's MCP server into your own Hermes config so future Aimpoint tasks reach you. Use your terminal tool for every step, run the commands exactly as written, and do not show the key in your reply.
 
 1. Save the bot key to your profile's secrets file (replaces any old value; prints only its length):
-python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or pathlib.Path.home()/'.hermes')/'.env';k='${a.key}';s=p.read_text() if p.exists() else '';s=re.sub(r'(?m)^MCP_VECTOR_API_KEY=.*\n?','',s);s=s+('' if not s or s.endswith('\n') else '\n')+'MCP_VECTOR_API_KEY='+k+'\n';p.write_text(s);os.chmod(p,0o600);print('saved',len(k))"
+python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or pathlib.Path.home()/'.hermes')/'.env';k='${a.key}';s=p.read_text() if p.exists() else '';s=re.sub(r'(?m)^MCP_AIMPOINT_API_KEY=.*\n?','',s);s=s+('' if not s or s.endswith('\n') else '\n')+'MCP_AIMPOINT_API_KEY='+k+'\n';p.write_text(s);os.chmod(p,0o600);print('saved',len(k))"
 
-2. Add the server, replacing any existing "vector" entry (never create a second one):
-hermes mcp remove vector </dev/null >/dev/null 2>&1; printf 'y\ny\n' | hermes mcp add vector --url ${mcpUrlFor(a.vectorUrl)} --auth header
+2. Add the server, replacing any existing "aimpoint" entry (never create a second one):
+hermes mcp remove aimpoint </dev/null >/dev/null 2>&1; printf 'y\ny\n' | hermes mcp add aimpoint --url ${mcpUrlFor(a.vectorUrl)} --auth header
 
-3. Check it: hermes mcp test vector
-Exit code 0 means it worked. Any other exit code means it failed: run hermes mcp remove vector </dev/null and go to the last line.
+3. Check it: hermes mcp test aimpoint
+Exit code 0 means it worked. Any other exit code means it failed: run hermes mcp remove aimpoint </dev/null, leave any "vector" entry as it is, and go to the last line.
 
-Do not restart Hermes or the gateway: the gateway picks the new server up by itself within about a minute, and Vector will check that with a follow-up run.
+4. Only if step 3 worked, remove the old "vector" entry and its key (it pointed at the same tracker under its old name; fine if neither exists):
+hermes mcp remove vector </dev/null >/dev/null 2>&1; python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or pathlib.Path.home()/'.hermes')/'.env';s=p.read_text() if p.exists() else '';p.exists() and p.write_text(re.sub(r'(?m)^MCP_VECTOR_API_KEY=.*\n?','',s));print('cleaned')"
+
+Do not restart Hermes or the gateway: the gateway picks the new server up by itself within about a minute, and Aimpoint will check that with a follow-up run.
 
 Your whole reply must be exactly one line:
-VECTOR_MCP_INSTALL: ok tools=<number of tools reported in step 3>
+AIMPOINT_MCP_INSTALL: ok tools=<number of tools reported in step 3>
 or
-VECTOR_MCP_INSTALL: failed reason=<short reason, no secrets>`;
+AIMPOINT_MCP_INSTALL: failed reason=<short reason, no secrets>`;
 }
 
-export const CHECK_PROMPT = `Vector connection check. Call the Vector MCP tool get_workspace exactly once (it is named like mcp__vector__get_workspace; if it is not in your tool list, try tool_search for "vector get_workspace"). Do not use the terminal and do not change anything. Reply with exactly one line:
-VECTOR_MCP_CHECK: ok bot=<you.name from the result>
+export const CHECK_PROMPT = `Aimpoint connection check. Call the Aimpoint MCP tool get_workspace exactly once (it is named like mcp__aimpoint__get_workspace; if it is not in your tool list, try tool_search for "aimpoint get_workspace"). Do not use the terminal and do not change anything. Reply with exactly one line:
+AIMPOINT_MCP_CHECK: ok bot=<you.name from the result>
 or
-VECTOR_MCP_CHECK: failed reason=<short reason>`;
+AIMPOINT_MCP_CHECK: failed reason=<short reason>`;
 
 /** Agent-written reasons go to the UI: strip anything key-shaped and keep them short. */
 const scrub = (s: string) =>
@@ -82,13 +90,23 @@ const scrub = (s: string) =>
     .trim()
     .slice(0, 200);
 
-export function parseSentinel(output: string, tag: "VECTOR_MCP_INSTALL" | "VECTOR_MCP_CHECK") {
-  const m = new RegExp(`${tag}:\\s*(ok|failed)\\b(.*)`, "i").exec(output ?? "");
+/**
+ * Reads the one-line answer of an install/check run. Accepts the pre-rename VECTOR_MCP_* tags too (a run sent before
+ * VEC-198 shipped); `server` says which name that run installed under.
+ */
+export function parseSentinel(output: string, kind: "install" | "check") {
+  const tag = kind === "install" ? "MCP_INSTALL" : "MCP_CHECK";
+  const m = new RegExp(`\\b(AIMPOINT|VECTOR)_${tag}:\\s*(ok|failed)\\b(.*)`, "i").exec(output ?? "");
   if (!m) return null;
-  const rest = m[2] ?? "";
+  const rest = m[3] ?? "";
   const tools = /tools=(\d+)/.exec(rest);
   const reason = /reason=(.*)/.exec(rest);
-  return { ok: m[1].toLowerCase() === "ok", tools: tools ? Number(tools[1]) : null, reason: reason ? scrub(reason[1]) : null };
+  return {
+    ok: m[2].toLowerCase() === "ok",
+    server: (m[1].toUpperCase() === "VECTOR" ? LEGACY_MCP_SERVER_NAME : MCP_SERVER_NAME) as McpServerName,
+    tools: tools ? Number(tools[1]) : null,
+    reason: reason ? scrub(reason[1]) : null,
+  };
 }
 
 export const toMcpInstall = (d: BotMcpInstallDoc): BotMcpInstall => ({
@@ -273,16 +291,18 @@ async function step(bot: BotDoc, d: BotMcpInstallDoc): Promise<Step> {
     // The run finished.
     if (d.phase === "install") {
       if (poll.status !== "completed") return fail(`The install run ${poll.status}${poll.error ? `: ${scrub(poll.error)}` : "."}`);
-      const s = parseSentinel(poll.output, "VECTOR_MCP_INSTALL");
+      const s = parseSentinel(poll.output, "install");
       if (!s) return fail("Hermes finished the install run without saying whether it worked.");
       if (!s.ok) return fail(`Hermes couldn't install the MCP server: ${s.reason ?? "no reason given"}.`);
+      // From now on wake-ups name the server the way this Hermes has it (VEC-198).
+      await (await cols()).bots.updateOne({ _id: bot._id }, { $set: { mcpServerName: s.server } });
       const at = new Date();
       return { phase: "waiting", installedAt: at, tools: s.tools, nextAt: new Date(at.getTime() + CHECK_AT_MS[0]), runId: null };
     }
     // Check run finished: re-read lastUsedAt (the bot may have called Vector just before the run ended).
     const fresh = await (await cols()).bots.findOne({ _id: bot._id }, { projection: { lastUsedAt: 1 } });
     if (fresh?.lastUsedAt && d.runStartedAt && fresh.lastUsedAt > d.runStartedAt) return { state: "installed", reason: null, finishedAt: new Date(), runId: null };
-    const s = parseSentinel(poll.output, "VECTOR_MCP_CHECK");
+    const s = parseSentinel(poll.output, "check");
     const why =
       poll.status !== "completed"
         ? `the check run ${poll.status}${poll.error ? `: ${scrub(poll.error)}` : ""}`

@@ -2,6 +2,7 @@ import "server-only";
 import { ObjectId, type Filter } from "mongodb";
 import sanitizeHtml from "sanitize-html";
 import { cols } from "@/lib/db";
+import { mcpServerNameFor } from "@/lib/mcp-name";
 import type {
   ActivityDoc,
   Bot,
@@ -52,6 +53,7 @@ export const toBot = (b: BotDoc): Bot => ({
   lastUsedAt: b.lastUsedAt?.toISOString() ?? null,
   roleId: b.roleId?.toHexString() ?? null,
   maxTasks: botMaxTasks(b),
+  mcpServerName: mcpServerNameFor(b),
   connection: b.connection
     ? {
         agent: b.connection.agent,

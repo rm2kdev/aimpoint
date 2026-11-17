@@ -90,7 +90,7 @@ export function RichEditor({
     ],
     content: value,
     editorProps: {
-      attributes: { class: "prose-vector", "aria-label": "Description", role: "textbox", "aria-multiline": "true" },
+      attributes: { class: "prose-aimpoint", "aria-label": "Description", role: "textbox", "aria-multiline": "true" },
       // Handle paste and drop ourselves and return true so the browser/ProseMirror
       // default never inserts a second copy.
       handlePaste(view, event) {

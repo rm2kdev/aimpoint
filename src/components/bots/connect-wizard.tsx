@@ -528,7 +528,7 @@ function Settings({
             />
             {generated && secret === generated && (
               <p className="text-[12px] text-faint">
-                {b.method === "hermes-api" ? "Put this in Hermes's .env as API_SERVER_KEY and restart the gateway:" : "Use this secret to check X-Vector-Signature:"}
+                {b.method === "hermes-api" ? "Put this in Hermes's .env as API_SERVER_KEY and restart the gateway:" : "Use this secret to check X-Aimpoint-Signature (X-Vector-Signature carries the same value):"}
               </p>
             )}
             {generated && secret === generated && b.method === "hermes-api" && <CopyBlock text={`API_SERVER_ENABLED=true\nAPI_SERVER_KEY=${generated}`} />}
@@ -573,11 +573,11 @@ function McpBox({ bot, setBot, apiKey, setApiKey, hermes }: { bot: Bot; setBot: 
       <p className="text-[13px] font-medium">{hermes ? "Install Aimpoint's MCP server in Hermes yourself" : "Aimpoint's MCP server"}</p>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
         {hermes
-          ? `Add it to Hermes under the name “vector”, with ${bot.name}'s key as a Bearer token, then come back and send a test.`
+          ? `Add it to Hermes under the name “${bot.mcpServerName}”, with ${bot.name}'s key as a Bearer token, then come back and send a test.`
           : `Your agent acts on tickets through this server (or the REST API at ${origin}/api/v1) with ${bot.name}'s key as a Bearer token.`}
       </p>
       <div className="mt-3 grid gap-2">
-        {hermes && <CopyField label="Name" value="vector" />}
+        {hermes && <CopyField label="Name" value={bot.mcpServerName} />}
         <CopyField label="URL" value={`${origin}/api/mcp`} />
         <KeyField bot={bot} setBot={setBot} apiKey={apiKey} setApiKey={setApiKey} />
       </div>
@@ -708,7 +708,7 @@ function Install({
         Install Aimpoint&rsquo;s tools in Hermes
       </h3>
       <p className="mt-1 max-w-[68ch] text-[13px] text-muted-foreground">
-        Saved. Hermes works on tickets through Aimpoint&rsquo;s MCP server, so Aimpoint asks Hermes to add it under the name &ldquo;vector&rdquo; with {bot.name}&rsquo;s key, then
+        Saved. Hermes works on tickets through Aimpoint&rsquo;s MCP server, so Aimpoint asks Hermes to add it under the name &ldquo;aimpoint&rdquo; with {bot.name}&rsquo;s key, then
         checks that Hermes can use it.
       </p>
 

@@ -75,14 +75,14 @@ Each bot's page has a **Backend** row: pick what runs the bot, fill in its setti
 | Claude | Anthropic API key, model | Messages API with the MCP connector pointed at `/api/mcp` |
 | OpenAI | OpenAI API key, model | Responses API with a remote MCP tool pointed at `/api/mcp` |
 | Hermes | Hermes API URL, `API_SERVER_KEY` | `POST <url>/v1/runs`; Hermes needs Vector's MCP server installed with the bot's key |
-| Webhook | URL, signing secret | signed POST (`X-Vector-Signature: sha256=HMAC(secret, "<ts>.<body>")`) |
+| Webhook | URL, signing secret | signed POST (`X-Aimpoint-Signature: sha256=HMAC(secret, "<ts>.<body>")`, also sent as `X-Vector-Signature`) |
 | MCP only | none | nothing; the agent calls `check_for_work` itself |
 
-Vector sends the task, its description and the whole thread (the same JSON the MCP tools return) with instructions to act through the `vector` MCP tools (`src/lib/bot-dispatch.ts`, run with `after()`). A successful delivery marks the assignment picked up or the mention delivered, so `check_for_work` doesn't hand it out again. Self-assignments and self-mentions don't trigger a run. Hermes runs use one session per bot and task, so follow-up mentions continue the conversation.
+Vector sends the task, its description and the whole thread (the same JSON the MCP tools return) with instructions to act through the `aimpoint` MCP tools (`vector` for bots set up before the rename, until they reinstall) (`src/lib/bot-dispatch.ts`, run with `after()`). A successful delivery marks the assignment picked up or the mention delivered, so `check_for_work` doesn't hand it out again. Self-assignments and self-mentions don't trigger a run. Hermes runs use one session per bot and task, so follow-up mentions continue the conversation.
 
-Webhook events (`X-Vector-Event` and the body's `type`): `ping` (test), `task.assigned`, `task.mentioned`, `task.ready` (an assigned task's last dependency is closed), `task.triage` (a task landed in Triage for this bot) and `task.closeout` (a task this bot triaged is ready to close out). Every task event carries the full task context and the prompt.
+Webhook events (`X-Aimpoint-Event`, also sent as `X-Vector-Event`, and the body's `type`): `ping` (test), `task.assigned`, `task.mentioned`, `task.ready` (an assigned task's last dependency is closed), `task.triage` (a task landed in Triage for this bot) and `task.closeout` (a task this bot triaged is ready to close out). Every task event carries the full task context and the prompt.
 
-Task wake-ups that fail (agent down, timeout, network) are queued in `botWakes` and retried after 30 s, 2 min, 10 min, 30 min, 1 h and 2 h; every attempt of one wake-up carries the same `X-Vector-Delivery` id (Hermes: the same `Idempotency-Key`), so a receiver can drop a repeat. Before a retry Vector checks the task is still owed and whether the bot already acted on it; a sweep also re-sends ready/assigned hand-offs and close-outs that never got that far. If the last attempt fails the task shows as Stalled and its creator (or the org admins) is notified. The bot keeps its last 20 deliveries in `connection.deliveries`. See `src/lib/wake-queue.ts`.
+Task wake-ups that fail (agent down, timeout, network) are queued in `botWakes` and retried after 30 s, 2 min, 10 min, 30 min, 1 h and 2 h; every attempt of one wake-up carries the same `X-Aimpoint-Delivery` id (also sent as `X-Vector-Delivery`) (Hermes: the same `Idempotency-Key`), so a receiver can drop a repeat. Before a retry Vector checks the task is still owed and whether the bot already acted on it; a sweep also re-sends ready/assigned hand-offs and close-outs that never got that far. If the last attempt fails the task shows as Stalled and its creator (or the org admins) is notified. The bot keeps its last 20 deliveries in `connection.deliveries`. See `src/lib/wake-queue.ts`.
 
 Credentials (provider keys, `API_SERVER_KEY`, webhook secret, and a copy of the bot key that Claude/OpenAI use to call back) are sealed with AES-256-GCM keyed from `AUTH_SECRET`. Saving checks them first: Hermes `/v1/capabilities`, or the provider's model endpoint. Claude and OpenAI need Vector on public HTTPS and run the whole agent turn inside the request (up to 4 minutes), so on Vercel the function's `maxDuration` caps them.
 
@@ -91,7 +91,7 @@ Credentials (provider keys, `API_SERVER_KEY`, webhook secret, and a copy of the 
 `POST /api/mcp` is a stateless [Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) MCP server. Authenticate with the bot's key as `Authorization: Bearer <key>`; the bot's Backend row (MCP only) shows the URL and key.
 
 ```json
-{ "mcpServers": { "vector": { "type": "http", "url": "https://<host>/api/mcp", "headers": { "Authorization": "Bearer <key>" } } } }
+{ "mcpServers": { "aimpoint": { "type": "http", "url": "https://<host>/api/mcp", "headers": { "Authorization": "Bearer <key>" } } } }
 ```
 
 An agent's cron loop calls `check_for_work` until it returns `kind: "idle"`. Each call returns one item, most urgent first:

@@ -16,6 +16,7 @@ import { BOT_MAX_TASKS_DEFAULT, BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/l
 import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMcpInstall, BotMethod } from "@/lib/types";
 import { advanceMcpInstall, installRunning, preflightHermes, recordFailedInstall, startMcpInstall, toMcpInstall } from "@/lib/bot-mcp-install";
 import { orgPath } from "@/lib/paths";
+import { MCP_SERVER_NAME } from "@/lib/mcp-name";
 import { flowOwnerRemoved } from "@/lib/flows";
 
 export interface BotInput {
@@ -44,7 +45,7 @@ export async function createBot(slug: string, input: BotInput): Promise<Result<{
     const data = clean(input, org._id.toHexString());
     const { key, hash, hint } = generateKey();
     const now = new Date();
-    const doc = { _id: new ObjectId(), orgId: org._id, ...data, maxTasks: BOT_MAX_TASKS_DEFAULT, keyHash: hash, keyHint: hint, keyRotatedAt: now, createdBy: user._id, createdAt: now };
+    const doc = { _id: new ObjectId(), orgId: org._id, ...data, maxTasks: BOT_MAX_TASKS_DEFAULT, mcpServerName: MCP_SERVER_NAME, keyHash: hash, keyHint: hint, keyRotatedAt: now, createdBy: user._id, createdAt: now };
     const c = await cols();
     await c.bots.insertOne(doc);
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });

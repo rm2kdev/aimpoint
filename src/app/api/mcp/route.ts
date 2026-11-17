@@ -1,4 +1,5 @@
 import { authenticateBot } from "@/lib/bots";
+import { MCP_SERVER_NAME } from "@/lib/mcp-name";
 import { callTool, listTools, SERVER_INSTRUCTIONS, UnknownToolError, type McpCtx } from "@/lib/mcp/server";
 
 /**
@@ -29,7 +30,7 @@ async function handle(msg: RpcMessage, ctx: McpCtx) {
       return rpcResult(id, {
         protocolVersion: SUPPORTED_VERSIONS.includes(asked) ? asked : SUPPORTED_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "vector", title: `Vector · ${ctx.org.name}`, version: "0.1.0" },
+        serverInfo: { name: MCP_SERVER_NAME, title: `Aimpoint · ${ctx.org.name}`, version: "0.1.0" },
         instructions: `${SERVER_INSTRUCTIONS}\nYou are ${ctx.bot.name}${ctx.bot.description ? ` (${ctx.bot.description})` : ""} in ${ctx.org.name}.`,
       });
     }
@@ -63,7 +64,7 @@ export async function POST(req: Request) {
   if (!auth) {
     return Response.json(rpcError(null, -32001, "Missing or invalid API key. Send the bot's key as `Authorization: Bearer <key>`."), {
       status: 401,
-      headers: { "WWW-Authenticate": 'Bearer realm="vector"' },
+      headers: { "WWW-Authenticate": `Bearer realm="${MCP_SERVER_NAME}"` },
     });
   }
   let body: unknown;

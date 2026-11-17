@@ -377,6 +377,8 @@ export interface BotDoc {
   maxTasks?: number;
   /** The latest "install Vector's MCP server" run sent to a Hermes connection (VEC-169, lib/bot-mcp-install.ts). */
   mcpInstall?: BotMcpInstallDoc | null;
+  /** Name the bot's MCP client has Aimpoint's server under (lib/mcp-name.ts, VEC-198). Unset = set up before the rename ("vector"). */
+  mcpServerName?: string;
   createdBy: ObjectId;
   createdAt: Date;
 }
@@ -607,6 +609,8 @@ export interface Bot {
   roleId: string | null;
   connection: BotConnection | null;
   maxTasks: number;
+  /** The MCP server name to tell this bot's client: "aimpoint", or "vector" for bots set up before the rename. */
+  mcpServerName: string;
   createdBy: string;
   createdAt: string;
 }

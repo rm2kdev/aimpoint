@@ -11,6 +11,7 @@ import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/tas
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
 import { atWaitStep, flowBriefing, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
+import { MCP_SERVER_NAME, legacyMcpNote, mcpServerNameFor } from "@/lib/mcp-name";
 import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
 /**
@@ -305,14 +306,14 @@ const RESUMED_NOTE = (w: StatusWords, current: string) =>
       : `it's picked up by you again and stays in ${current}, since this project has no started status (the task below may still show Stalled)`
   }. Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
 
-const TOOLS_HINT = (w: StatusWords) =>
-  `Act on the ticket with the \`vector\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people.`;
+const TOOLS_HINT = (w: StatusWords, mcp: string) =>
+  `Act on the ticket with the \`${mcp}\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people.`;
 
 /** What the backend receives: who did what, the full task and thread, and how to act on it. */
 async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason): Promise<WakeMessage> {
   if (reason.kind === "test") {
     return {
-      prompt: `This is a test from Vector (${org.name}) to check that ${bot.name} is connected. Call get_workspace on the \`vector\` MCP server, then reply with one line naming the organisation it returns. Don't change anything.`,
+      prompt: `This is a test from Vector (${org.name}) to check that ${bot.name} is connected. Call get_workspace on the \`${mcpServerNameFor(bot)}\` MCP server, then reply with one line naming the organisation it returns. Don't change anything.`,
       task: null,
     };
   }
@@ -356,14 +357,14 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
     ? `\n\nProject context for ${project!.key} (${project!.name}), set by the team. Follow it while you work:\n${meta.map((m) => `- ${m.key}: ${m.value.replace(/\n/g, "\n  ")}`).join("\n")}`
     : "";
   return {
-    prompt: `${head}${projectBlock}\n\n${TOOLS_HINT(w)}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
+    prompt: `${head}${projectBlock}\n\n${TOOLS_HINT(w, mcpServerNameFor(bot))}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
     task: context,
     flow: flow ? { ...flow.payload, handoff: handoff ?? null } : null,
   };
 }
 
 export function wakeInstructions(bot: BotDoc, org: OrgDoc) {
-  return `You are ${bot.name}, a bot in the Vector issue tracker for ${org.name}.${bot.description ? ` Your job: ${bot.description}` : ""} Vector messages you with the full task whenever you're assigned a task that's ready to work on (nothing it depends on is still open), when a task of yours becomes ready, when you're @mentioned, or (if you're a triage bot) when a task lands in Triage for you to break down and again when the tasks you broke it into are done, to close it out. Act on it through the \`vector\` MCP tools; people only see what you post there.`;
+  return `You are ${bot.name}, a bot in the Vector issue tracker for ${org.name}.${bot.description ? ` Your job: ${bot.description}` : ""} Vector messages you with the full task whenever you're assigned a task that's ready to work on (nothing it depends on is still open), when a task of yours becomes ready, when you're @mentioned, or (if you're a triage bot) when a task lands in Triage for you to break down and again when the tasks you broke it into are done, to close it out. Act on it through the \`${mcpServerNameFor(bot)}\` MCP tools${legacyMcpNote(bot)}; people only see what you post there.`;
 }
 
 /* ---------------- Hermes Agent API ---------------- */
@@ -441,8 +442,8 @@ async function claudeApi(a: ApiArgs): Promise<SendResult> {
         max_tokens: 4096,
         system: wakeInstructions(a.bot, a.org),
         messages,
-        mcp_servers: [{ type: "url", url: a.mcpUrl, name: "vector", authorization_token: a.vectorKey }],
-        tools: [{ type: "mcp_toolset", mcp_server_name: "vector" }],
+        mcp_servers: [{ type: "url", url: a.mcpUrl, name: MCP_SERVER_NAME, authorization_token: a.vectorKey }],
+        tools: [{ type: "mcp_toolset", mcp_server_name: MCP_SERVER_NAME }],
       }),
       signal: deadline,
     });
@@ -463,7 +464,7 @@ async function openaiApi(a: ApiArgs): Promise<SendResult> {
       model: a.model,
       instructions: wakeInstructions(a.bot, a.org),
       input: a.prompt,
-      tools: [{ type: "mcp", server_label: "vector", server_url: a.mcpUrl, authorization: a.vectorKey, require_approval: "never" }],
+      tools: [{ type: "mcp", server_label: MCP_SERVER_NAME, server_url: a.mcpUrl, authorization: a.vectorKey, require_approval: "never" }],
       store: false,
     }),
     signal: AbortSignal.timeout(AGENT_TURN_MS),
@@ -521,7 +522,12 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "User-Agent": "Vector-Webhooks/1",
+      // VEC-198: X-Aimpoint-* plus the pre-rename X-Vector-* copies, so receivers checking either keep working.
+      "User-Agent": "Aimpoint-Webhooks/1 Vector-Webhooks/1",
+      "X-Aimpoint-Event": event,
+      "X-Aimpoint-Delivery": id,
+      "X-Aimpoint-Timestamp": ts,
+      "X-Aimpoint-Signature": `sha256=${sig}`,
       "X-Vector-Event": event,
       "X-Vector-Delivery": id,
       "X-Vector-Timestamp": ts,
