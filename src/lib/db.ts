@@ -136,6 +136,10 @@ async function ensureIndexes(db: Db) {
     db.collection("projectForms").createIndex({ publicId: 1 }, { unique: true }),
     db.collection("projectForms").createIndex({ orgId: 1, projectId: 1, createdAt: 1 }),
     db.collection("projectForms").createIndex({ orgId: 1, destinationStatusId: 1 }),
+    // Stripe billing (VEC-223): webhook lookups by customer/subscription; processed event ids kept 30 days.
+    db.collection("orgs").createIndex({ "billing.stripeCustomerId": 1 }, { sparse: true }),
+    db.collection("orgs").createIndex({ "billing.subscriptionId": 1 }, { sparse: true }),
+    db.collection("stripeEvents").createIndex({ receivedAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 }),
   ]);
   await migrate(db);
 }

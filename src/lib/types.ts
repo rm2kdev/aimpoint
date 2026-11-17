@@ -125,6 +125,8 @@ export interface OrgBilling {
   cancelAtPeriodEnd?: boolean;
   /** When the subscription went past_due; the Pro grace period counts from here (else from currentPeriodEnd). */
   pastDueSince?: Date | null;
+  /** `created` time of the newest Stripe webhook event applied (VEC-223); older late arrivals are skipped. */
+  lastEventAt?: Date | null;
   updatedAt?: Date;
 }
 /**
