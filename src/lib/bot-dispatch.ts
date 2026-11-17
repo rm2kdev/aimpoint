@@ -256,7 +256,7 @@ export const TRIAGE_STEPS = (key: string, w: StatusWords = DEFAULT_STATUS_WORDS)
     `2. Work out the concrete tasks needed to deliver it, each small enough for one person or bot. If it's already that small, skip to step 4 and just route it.`,
     `3. create_task for each, in order, so earlier keys exist when later tasks name them in \`depends_on\`. Give each a clear title, a Markdown description with acceptance criteria, a priority and an assignee where the owner is clear. Tasks with nothing to wait for can run in parallel; an assignee is only handed a task once everything it depends on is done.`,
     `4. Turn ${key} into the umbrella: update_task with \`depends_on\` set to the new tasks (at least the last ones in each chain) and a description summarising the plan, so it becomes ready, and its assignee hears about it, when the work is finished.`,
-    `5. complete_task on ${key} with a short comment listing the tasks you created and a \`status\` of ${key}'s project to move it out of ${w.triage} (e.g. ${w.unstarted}). That ends your triage of it. You stay its triager: when the last task it depends on is closed (done or cancelled), Vector calls you back (a close-out wake-up, or kind "closeout" on check_for_work) to summarise what was delivered and close ${key} out.`,
+    `5. complete_task on ${key} with a short comment listing the tasks you created and a \`status\` of ${key}'s project to move it out of ${w.triage} (e.g. ${w.unstarted}). That ends your triage of it. You stay its triager: when the last task it depends on is closed (done or cancelled), Aimpoint calls you back (a close-out wake-up, or kind "closeout" on check_for_work) to summarise what was delivered and close ${key} out.`,
     `Until you call complete_task (or release_task to hand it back) you may edit ${key} like its creator: title, description, project, dependencies, status, assignee, priority, type and due date. Don't create new tasks in a triage-stage status. Statuses are per project: a task only takes its own project's status names.`,
   ].join("\n");
 
@@ -278,11 +278,11 @@ export const PROGRESS_HINT =
 
 /** A bot that parks its own task behind blockers it filed must give them owners (VEC-107 enforces it, VEC-109 says so). */
 export const BLOCKER_NOTE =
-  "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
+  "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Aimpoint assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
 
 /** A retried hand-off (VEC-159): the earlier run stopped part way (or never started), so carry on rather than redo. */
 const RETRY_NOTE = (by: string) =>
-  `${by} asked Vector to hand this to you again: your last run on it stopped before it finished (or never started). Read the task's comments, yours included, to see how far it got, check any work already in progress (files, branches, tasks you created), and carry on from there rather than starting over. Post a short comment saying where you're picking up.\n\n`;
+  `${by} asked Aimpoint to hand this to you again: your last run on it stopped before it finished (or never started). Read the task's comments, yours included, to see how far it got, check any work already in progress (files, branches, tasks you created), and carry on from there rather than starting over. Post a short comment saying where you're picking up.\n\n`;
 
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
 const STARTED_NOTE = (w: StatusWords, current: string, flow?: FlowBriefing | null) =>
@@ -290,7 +290,7 @@ const STARTED_NOTE = (w: StatusWords, current: string, flow?: FlowBriefing | nul
     flow?.stays
       ? `It stays in ${flow.stays} while you work on this step (nothing to set for that)`
       : w.started
-        ? `Vector moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
+        ? `Aimpoint moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
         : `This project has no started status, so the task stays in ${current} while you work (nothing to set for that)`
   }; ${flow ? flow.finish.charAt(0).toLowerCase() + flow.finish.slice(1) : `finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something.`} ${BLOCKER_NOTE}`;
 
@@ -302,7 +302,7 @@ const FLOW_NOTE = (flow: FlowBriefing | null | undefined, handoff: { fromStep: s
 const RESUMED_NOTE = (w: StatusWords, current: string) =>
   `You're its assignee, so this hands the work back to you: ${
     w.started
-      ? `Vector moves it back to ${w.started} as this is delivered (the task below may still show its earlier status and Stalled)`
+      ? `Aimpoint moves it back to ${w.started} as this is delivered (the task below may still show its earlier status and Stalled)`
       : `it's picked up by you again and stays in ${current}, since this project has no started status (the task below may still show Stalled)`
   }. Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
 
@@ -313,7 +313,7 @@ const TOOLS_HINT = (w: StatusWords, mcp: string) =>
 async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason): Promise<WakeMessage> {
   if (reason.kind === "test") {
     return {
-      prompt: `This is a test from Vector (${org.name}) to check that ${bot.name} is connected. Call get_workspace on the \`${mcpServerNameFor(bot)}\` MCP server, then reply with one line naming the organisation it returns. Don't change anything.`,
+      prompt: `This is a test from Aimpoint (${org.name}) to check that ${bot.name} is connected. Call get_workspace on the \`${mcpServerNameFor(bot)}\` MCP server, then reply with one line naming the organisation it returns. Don't change anything.`,
       task: null,
     };
   }
@@ -340,16 +340,16 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const handoff = reason.kind === "assigned" ? reason.handoff : undefined;
   const head =
     reason.kind === "triage"
-      ? `${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Vector (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
+      ? `${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Aimpoint (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
       : reason.kind === "closeout"
-      ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
+      ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
       : reason.kind === "assigned"
       ? retried
-        ? `${RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
-        : `${handoff ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) was handed to you by its flow (${reason.by} finished the step before).` : `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}).`} Do the work it asks for. ${FLOW_NOTE(flow, handoff)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
+        ? `${RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
+        : `${handoff ? `${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) was handed to you by its flow (${reason.by} finished the step before).` : `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}).`} Do the work it asks for. ${FLOW_NOTE(flow, handoff)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
-        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
-        : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
+        ? `${reason.taskKey} "${reason.title}", assigned to you in Aimpoint (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
+        : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}). The comment marked "new": true is the one that mentioned you. ${
             (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE(w, current)}\n\n${PROGRESS_HINT}` : "Reply to it."
           }`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
@@ -364,7 +364,7 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
 }
 
 export function wakeInstructions(bot: BotDoc, org: OrgDoc) {
-  return `You are ${bot.name}, a bot in the Vector issue tracker for ${org.name}.${bot.description ? ` Your job: ${bot.description}` : ""} Vector messages you with the full task whenever you're assigned a task that's ready to work on (nothing it depends on is still open), when a task of yours becomes ready, when you're @mentioned, or (if you're a triage bot) when a task lands in Triage for you to break down and again when the tasks you broke it into are done, to close it out. Act on it through the \`${mcpServerNameFor(bot)}\` MCP tools${legacyMcpNote(bot)}; people only see what you post there.`;
+  return `You are ${bot.name}, a bot in the Aimpoint issue tracker for ${org.name}.${bot.description ? ` Your job: ${bot.description}` : ""} Aimpoint messages you with the full task whenever you're assigned a task that's ready to work on (nothing it depends on is still open), when a task of yours becomes ready, when you're @mentioned, or (if you're a triage bot) when a task lands in Triage for you to break down and again when the tasks you broke it into are done, to close it out. Act on it through the \`${mcpServerNameFor(bot)}\` MCP tools${legacyMcpNote(bot)}; people only see what you post there.`;
 }
 
 /* ---------------- Hermes Agent API ---------------- */
