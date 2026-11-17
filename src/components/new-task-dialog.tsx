@@ -20,7 +20,7 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { CalendarIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
-import { matchStatus, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
+import { matchStatus, newTaskStatusIn, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
 
 export interface NewTaskDefaults {
@@ -89,16 +89,18 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   // The picker lists only the chosen project's statuses and follows a project change (VEC-117).
   const projectStatuses = statusesByProject.get(projectId) ?? [];
   const picked = statusById.get(statusId);
-  // With no explicit status, preselect the project's first status of the stage (VEC-129): live, so a project
-  // change or a teammate's change to the org default (org.changed) re-picks it until the person picks one.
+  // With no explicit status, preselect the caller's stage (a stage group), else the project's own new-task status
+  // (VEC-191), else its first status of the org default stage (VEC-129), the same rule the server applies. Derived
+  // at render, so a project change or a teammate's change to either setting (org.changed) re-picks it live until
+  // the person picks one.
   const byStage = (c: StatusCategory): Status | undefined => projectStatuses.find((s) => s.category === c);
   const status =
     picked?.projectId === projectId
       ? picked
       : ((picked && matchStatus(projectStatuses, picked)) ??
-        byStage(stage ?? orgDefaults.newTaskStage) ??
-        byStage("unstarted") ??
-        projectStatuses[0]);
+        (stage ? byStage(stage) : undefined) ??
+        newTaskStatusIn(projectStatuses, project?.newTaskStatusId, orgDefaults.newTaskStage, (s) => s.id).status ??
+        undefined);
   const assignee = assigneeId ? memberById.get(assigneeId) : undefined;
 
   const submit = () => {

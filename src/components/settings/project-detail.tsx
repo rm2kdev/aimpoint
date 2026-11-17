@@ -10,6 +10,7 @@ import { AnalyticsLink, DetailHeader, SettingsRow, Tag } from "@/components/sett
 import { ColorDots, ProjectTile } from "@/components/settings/org-settings";
 import { ProjectStatuses } from "@/components/settings/project-statuses";
 import { ProjectFlow } from "@/components/settings/flow-settings";
+import { ProjectNewTasks } from "@/components/settings/project-new-tasks";
 import type { ProjectFlowSettings } from "@/lib/flows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -172,6 +173,8 @@ export function ProjectDetail({
       </Row>
 
       <ProjectStatuses projectId={project.id} projectName={project.name} />
+
+      <ProjectNewTasks projectId={project.id} projectName={project.name} />
 
       <ProjectFlow projectId={project.id} projectName={project.name} flow={flow} counts={flowCounts} />
 

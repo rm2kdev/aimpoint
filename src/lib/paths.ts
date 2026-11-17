@@ -32,6 +32,7 @@ export const rolePath = (slug: string, roleId: string) => orgPath(slug, "setting
 export const flowsPath = (slug: string) => `${orgPath(slug, "settings", "flows")}#default-flow`;
 export const newTasksPath = (slug: string) => `${orgPath(slug, "settings", "flows")}#new-tasks`;
 export const projectFlowPath = (slug: string, projectId: string) => `${orgPath(slug, "settings", "projects", projectId)}#flow`;
+export const projectNewTasksPath = (slug: string, projectId: string) => `${orgPath(slug, "settings", "projects", projectId)}#new-tasks`;
 
 /** `/o/<slug>/analytics` plus an optional `?range=...` query (see lib/analytics-range.ts `analyticsSearch`). Admins only. */
 export const analyticsPath = (slug: string, search = "") => `${orgPath(slug, "analytics")}${search}`;
