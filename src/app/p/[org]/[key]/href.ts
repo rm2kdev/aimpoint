@@ -20,6 +20,6 @@ export function publicPageHref(slug: string, key: string, q: PublicPageQuery = {
   return s ? `${base}?${s}` : base;
 }
 
-/** Sign-in link that comes back to `next` (same-origin paths only, see safeNext in actions/auth.ts). */
+/** Sign-in link that comes back to `next` (same-origin paths only, see safeNext in lib/safe-next.ts). */
 export const loginHref = (next: string) => `/login?next=${encodeURIComponent(next)}`;
 export const signupHref = (next: string) => `/signup?next=${encodeURIComponent(next)}`;

@@ -2,12 +2,13 @@ import { redirect } from "next/navigation";
 import { AuthForm } from "@/components/auth-form";
 import { loginAction } from "@/app/actions/auth";
 import { currentUser } from "@/lib/session";
+import { safeNext } from "@/lib/safe-next";
 
 export const metadata = { title: "Sign in" };
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const { next, email, deleted } = await searchParams;
-  if (await currentUser()) redirect(typeof next === "string" ? next : "/");
+  if (await currentUser()) redirect(safeNext(typeof next === "string" ? next : null));
   return (
     <AuthForm
       mode="login"

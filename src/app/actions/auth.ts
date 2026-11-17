@@ -8,6 +8,7 @@ import { signIn, signOut, TwoFactorFailed, TwoFactorRequired } from "@/auth";
 import { createLoginChallenge } from "@/lib/two-factor";
 import { cols } from "@/lib/db";
 import { PASSWORD_HASH_COST, passwordSchema } from "@/lib/password";
+import { safeNext } from "@/lib/safe-next";
 
 export type FormState =
   | {
@@ -24,10 +25,6 @@ const signupSchema = z.object({
   password: passwordSchema,
   next: z.string().optional(),
 });
-
-function safeNext(next: string | undefined | null) {
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
-}
 
 export async function signupAction(_: FormState, form: FormData): Promise<FormState> {
   const raw = Object.fromEntries(form) as Record<string, string>;
