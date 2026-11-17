@@ -19,7 +19,7 @@ import { timeAgo } from "@/lib/format";
 import type { Bot, BotAvatar as BotAvatarData } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { UpgradeNote } from "@/components/upgrade-note";
-import { atLimit, limitReason } from "@/lib/billing-view";
+import { atLimit, countNoun, limitReason } from "@/lib/billing-view";
 
 export function BotsSettings({
   bots,
@@ -105,7 +105,7 @@ export function BotsSettings({
           <Button onClick={() => setCreating(true)} className="gap-2" disabled={botsFull}>
             <PlusIcon className="size-3.5" /> New bot
           </Button>
-          {botsFull && <UpgradeNote reason={limitReason(billing, "bots")} className="mt-2" />}
+          {botsFull && <UpgradeNote reason={limitReason(billing, "bots")} gain={`unlimited ${countNoun("bots", 2)}`} className="mt-2" />}
         </SettingsRow>
       )}
       <NewBotDialog open={creating} onClose={() => setCreating(false)} />

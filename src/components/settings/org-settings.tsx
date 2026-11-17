@@ -18,7 +18,7 @@ import {
 import type { Role } from "@/lib/types";
 import { orgPath, projectSettingsPath } from "@/lib/paths";
 import { UpgradeNote } from "@/components/upgrade-note";
-import { atLimit, limitReason } from "@/lib/billing-view";
+import { atLimit, countNoun, limitReason } from "@/lib/billing-view";
 
 export interface InviteRow {
   id: string;
@@ -151,7 +151,7 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
                 Create project
               </Button>
               {projectsFull && (
-                <UpgradeNote reason={`${limitReason(billing, "projects")}${billing.usage.archivedProjects ? " Archived projects count." : ""}`} />
+                <UpgradeNote reason={`${limitReason(billing, "projects")}${billing.usage.archivedProjects ? " Archived projects count." : ""}`} gain={`unlimited ${countNoun("projects", 2)}`} />
               )}
             </div>
           </form>

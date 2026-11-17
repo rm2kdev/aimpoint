@@ -10,8 +10,8 @@ import { cn } from "@/lib/utils";
  * link to Settings > Billing. Admins are told to upgrade; members to ask an admin. Render it only when the
  * limit applies (`atLimit` / `billing.features`), which is never with billing off.
  */
-/** `gain` ends the sentence: "Upgrade to Pro for <gain>." */
-export function UpgradeNote({ reason, gain = "unlimited", className }: { reason: string; gain?: string; className?: string }) {
+/** `gain` ends the sentence: "Upgrade to Pro for <gain>.", e.g. `unlimited ${countNoun(kind, 2)}` or "Public forms". */
+export function UpgradeNote({ reason, gain, className }: { reason: string; gain: string; className?: string }) {
   const { org, isAdmin } = useOrg();
   const link = (text: string) => (
     <Link href={billingPath(org.slug)} className="font-medium text-foreground underline underline-offset-2 hover:decoration-2">

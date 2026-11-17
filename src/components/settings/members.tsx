@@ -27,7 +27,7 @@ import type { InviteRow } from "@/components/settings/org-settings";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
 import { UpgradeNote } from "@/components/upgrade-note";
-import { atLimit, limitReason } from "@/lib/billing-view";
+import { atLimit, countNoun, limitReason } from "@/lib/billing-view";
 
 export interface MemberStats {
   assigned: number;
@@ -130,6 +130,7 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
       {full && (
         <UpgradeNote
           reason={`${limitReason(billing, "members")}${billing.usage.pendingInvites ? " Pending invites count." : ""}`}
+          gain={`unlimited ${countNoun("members", 2)}`}
           className="mt-2 max-w-lg"
         />
       )}
