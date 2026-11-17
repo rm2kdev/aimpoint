@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Area, AreaChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, Line, LineChart, ReferenceLine, XAxis, YAxis } from "recharts"
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
 import {
   AXIS_TICK,
@@ -10,10 +10,12 @@ import {
   KitTooltip,
   SeriesLegend,
   chartColor,
+  maxPlotted,
   seriesConfig,
   seriesVar,
   SERIES_STROKE,
   valueAxisWidth,
+  valueDomain,
   type Series,
   type ValueFormatter,
 } from "./chart-frame"
@@ -72,14 +74,10 @@ export function TimeSeriesChart({
   const dots = data.length <= 2 ? { r: 3, strokeWidth: 0, fill: undefined } : false
 
   const text = summary ?? describe(title, data, series, granularity, valueFormatter, stacked)
-  const yWidth = React.useMemo(() => {
-    let max = 0
-    for (const d of data) {
-      const vals = series.map((s) => num(d[s.key]))
-      max = Math.max(max, stacked ? vals.reduce((a, b) => a + b, 0) : Math.max(0, ...vals))
-    }
-    return valueAxisWidth(max, formatCompact)
-  }, [data, series, stacked])
+  const max = React.useMemo(() => maxPlotted(data, series, stacked), [data, series, stacked])
+  // All zero still draws a 0-based axis with the series flat on 0 (VEC-164).
+  const domain = valueDomain(max)
+  const yWidth = valueAxisWidth(domain ? domain[1] : max, formatCompact)
 
   const table = () => (
     <DataTable
@@ -113,11 +111,13 @@ export function TimeSeriesChart({
         tickLine={false}
         axisLine={false}
         width={yWidth}
+        domain={domain}
         tickMargin={4}
         allowDecimals={false}
         tick={AXIS_TICK}
         tickFormatter={(v: number) => formatCompact(v)}
       />
+      {domain && <ReferenceLine y={0} stroke="none" ifOverflow="extendDomain" />}
       <ChartTooltip
         isAnimationActive={false}
         cursor={{ stroke: "var(--input)" }}

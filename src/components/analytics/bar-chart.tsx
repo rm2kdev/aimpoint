@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Bar, CartesianGrid, BarChart as RBarChart, XAxis, YAxis } from "recharts"
+import { Bar, CartesianGrid, BarChart as RBarChart, ReferenceLine, XAxis, YAxis } from "recharts"
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
 import {
   AXIS_TICK,
@@ -15,6 +15,8 @@ import {
   seriesConfig,
   seriesVar,
   valueAxisWidth,
+  valueDomain,
+  maxPlotted,
   type Series,
   type ValueFormatter,
 } from "./chart-frame"
@@ -158,14 +160,10 @@ export function BarChart({
     const c = colors.get(String(v ?? ""))
     return typeof c === "string" && c ? c : undefined
   }
-  const valueWidth = React.useMemo(() => {
-    let max = 0
-    for (const d of data) {
-      const vals = series.map((s) => num(d[s.key]))
-      max = Math.max(max, stacked ? vals.reduce((a, b) => a + b, 0) : Math.max(0, ...vals))
-    }
-    return valueAxisWidth(max, formatCompact)
-  }, [data, series, stacked])
+  const max = React.useMemo(() => maxPlotted(data, series, stacked), [data, series, stacked])
+  // All zero still draws a 0-based value axis with ticks (VEC-164).
+  const domain = valueDomain(max)
+  const valueWidth = valueAxisWidth(domain ? domain[1] : max, formatCompact)
 
   const table = () => (
     <DataTable
@@ -194,6 +192,7 @@ export function BarChart({
     tickLine: false,
     axisLine: false,
     allowDecimals: false,
+    domain,
     tick: AXIS_TICK,
     tickFormatter: (v: number) => formatCompact(v),
   }
@@ -226,6 +225,7 @@ export function BarChart({
           maxBarSize={horizontal ? 22 : 48}
         >
           <CartesianGrid vertical={horizontal} horizontal={!horizontal} stroke="var(--border)" />
+          {domain && (horizontal ? <ReferenceLine x={0} stroke="none" ifOverflow="extendDomain" /> : <ReferenceLine y={0} stroke="none" ifOverflow="extendDomain" />)}
           {horizontal ? (
             <>
               <XAxis {...valueAxis} tickMargin={6} />

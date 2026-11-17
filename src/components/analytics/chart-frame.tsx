@@ -93,6 +93,8 @@ export const KIT = {
   metricSmall: "text-[20px] leading-[1.3] font-semibold tracking-[-0.02em] tabular-nums",
   /** Swatch used by legends and tooltips alike. */
   swatch: "size-2 shrink-0 rounded-[2px]",
+  /** Faint Ink boundary added to the swatch of a quiet tint under 3:1 on the card (colour-map.ts `edge`). */
+  swatchEdge: "shadow-[inset_0_0_0_1px_var(--faint)]",
   /** Static skeleton block (no pulse). */
   skeleton: "rounded-sm bg-muted",
 } as const
@@ -448,16 +450,19 @@ export function TooltipRow({
   label,
   value,
   color,
+  edge,
   divider,
 }: {
   label: React.ReactNode
   value: React.ReactNode
   color?: string
+  /** The colour is a quiet tint: draw the swatch's Faint Ink boundary. */
+  edge?: boolean
   divider?: boolean
 }) {
   return (
     <div className={cn("flex items-center gap-2", divider && "mt-0.5 border-t border-border pt-1")}>
-      {color ? <span aria-hidden className={KIT.swatch} style={{ background: color }} /> : null}
+      {color ? <span aria-hidden className={cn(KIT.swatch, edge && KIT.swatchEdge)} style={{ background: color }} /> : null}
       <span className="flex-1 text-muted-foreground">{label}</span>
       <span className="font-mono font-medium text-foreground tabular-nums">{value}</span>
     </div>
@@ -501,6 +506,8 @@ export interface LegendItem {
   label: string
   color: string
   value?: string
+  /** The colour is a quiet tint: draw the swatch's Faint Ink boundary. */
+  edge?: boolean
 }
 
 /**
@@ -515,7 +522,7 @@ export function SeriesLegend({ items, variant = "row" }: { items: LegendItem[]; 
       <ul className={cn("grid grid-cols-1 gap-x-4 px-2 text-muted-foreground", LEGEND_TWO_COLUMNS, KIT.label, "font-normal")}>
         {items.map((it) => (
           <li key={it.label} className="flex min-w-0 items-center gap-1.5" style={{ height: LEGEND_ROW }}>
-            <span aria-hidden className={KIT.swatch} style={{ background: it.color }} />
+            <span aria-hidden className={cn(KIT.swatch, it.edge && KIT.swatchEdge)} style={{ background: it.color }} />
             <span className="min-w-0 flex-1 truncate">{it.label}</span>
             {it.value ? <span className="font-mono text-foreground tabular-nums">{it.value}</span> : null}
           </li>
@@ -527,7 +534,7 @@ export function SeriesLegend({ items, variant = "row" }: { items: LegendItem[]; 
     <ul className={cn("flex flex-wrap items-center gap-x-4 px-2 text-muted-foreground", KIT.label, "font-normal")}>
       {items.map((it) => (
         <li key={it.label} className="flex items-center gap-1.5" style={{ height: LEGEND_ROW }}>
-          <span aria-hidden className={KIT.swatch} style={{ background: it.color }} />
+          <span aria-hidden className={cn(KIT.swatch, it.edge && KIT.swatchEdge)} style={{ background: it.color }} />
           {it.label}
           {it.value ? <span className="font-mono text-foreground tabular-nums">{it.value}</span> : null}
         </li>
@@ -549,6 +556,29 @@ export function valueAxisWidth(max: number, format: (v: number) => string): numb
   const nice = Math.ceil(m / mag) * mag
   // Tabular digits at 11.5px Geist are ~7px wide; 10px covers the tick margin.
   return Math.max(24, Math.ceil(format(nice).length * 7) + 10)
+}
+
+/**
+ * Value-axis domain for a chart whose largest value (stacked total or single series) is `max`.
+ * When everything is zero, recharts 3 drops a stacked group's [0, 0] domain and, with no data domain
+ * left, ignores a user domain too, so the axis draws no ticks and the series vanish. So pin the 0-4
+ * scale it gives an all-zero line chart AND draw an invisible `ReferenceLine` at 0 with
+ * `ifOverflow="extendDomain"` (the data domain recharts needs). Not `allowDataOverflow`: that clips the
+ * series to the plot, which halves a 2px line lying on the zero edge. Otherwise keep the default.
+ */
+export const ZERO_VALUE_DOMAIN: [number, number] = [0, 4]
+export function valueDomain(max: number): [number, number] | undefined {
+  return max > 0 ? undefined : ZERO_VALUE_DOMAIN
+}
+
+/** Largest plotted value: the per-datum total when stacked, else the largest single value (min 0). */
+export function maxPlotted(data: Record<string, unknown>[], series: Series[], stacked: boolean): number {
+  let max = 0
+  for (const d of data) {
+    const vals = series.map((s) => (typeof d[s.key] === "number" && Number.isFinite(d[s.key]) ? (d[s.key] as number) : 0))
+    max = Math.max(max, stacked ? vals.reduce((a, b) => a + b, 0) : Math.max(0, ...vals))
+  }
+  return max
 }
 
 /** Text width measurement for axis labels (canvas, so it matches the rendered font). */
