@@ -1,10 +1,12 @@
 import { timingSafeEqual } from "node:crypto";
 import { sweepWakes } from "@/lib/wake-queue";
+import { sweepSeatSyncs } from "@/lib/seat-sync";
 
 /**
  * Runs one wake-up sweep (lib/wake-queue.ts): retries push wake-ups that are due and re-sends lost hand-offs.
  * The local server sweeps on a timer; on Vercel, schedule this as a Cron Job (`Authorization: Bearer $CRON_SECRET`,
- * which Vercel sends when CRON_SECRET is set). Without CRON_SECRET the route is off.
+ * which Vercel sends when CRON_SECRET is set). Without CRON_SECRET the route is off. It also retries pending
+ * per-seat subscription quantity syncs (lib/seat-sync.ts, VEC-238; a no-op with billing off).
  */
 export const dynamic = "force-dynamic";
 
@@ -14,5 +16,6 @@ export async function GET(req: Request) {
   const got = Buffer.from(req.headers.get("authorization") ?? "");
   const want = Buffer.from(`Bearer ${secret}`);
   if (got.length !== want.length || !timingSafeEqual(got, want)) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  return Response.json(await sweepWakes());
+  const wakes = await sweepWakes();
+  return Response.json({ ...wakes, seats: await sweepSeatSyncs() });
 }

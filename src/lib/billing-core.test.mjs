@@ -11,6 +11,13 @@ import {
   featureMessage,
   limitOf,
   PAST_DUE_GRACE_DAYS,
+  PRO_PRICE_LABEL,
+  PRO_SEAT_PRICE_CENTS,
+  billableSeats,
+  seatQuantity,
+  proMonthlyCents,
+  seatTotalLabel,
+  usd,
 } from "./billing-core.ts";
 
 const NOW = new Date("2026-11-18T12:00:00Z");
@@ -85,7 +92,7 @@ test("Stripe env: required only when billing is on, missing vars named", () => {
 
 test("limit messages: Free blocks the second one, Pro and unlimited never block", () => {
   assert.equal(limitMessage("free", "projects", 0), null);
-  assert.match(limitMessage("free", "projects", 1), /Free plan includes 1 project\..*upgrade to Pro \(US\$5\/month\).*unlimited projects/);
+  assert.match(limitMessage("free", "projects", 1), /Free plan includes 1 project\..*upgrade to Pro \(US\$4\.95 per user\/month\).*unlimited projects/);
   assert.match(limitMessage("free", "members", 1), /1 person/);
   assert.match(limitMessage("free", "bots", 3), /1 bot\b/);
   assert.match(limitMessage("free", "concurrentBotTasks", 1), /a bot works on 1 task at a time/);
@@ -101,4 +108,42 @@ test("feature messages: Free lacks Analytics and Public forms", () => {
   assert.match(featureMessage("free", "publicForms"), /Public forms isn't included/);
   assert.equal(featureMessage("pro", "analytics"), null);
   assert.equal(featureMessage("unlimited", "publicForms"), null);
+});
+
+test("per-seat price (VEC-238): US$4.95 per user per month", () => {
+  assert.equal(PRO_SEAT_PRICE_CENTS, 495);
+  assert.equal(PRO_PRICE_LABEL, "US$4.95 per user/month");
+  assert.equal(usd(495), "US$4.95");
+  assert.equal(usd(1485), "US$14.85");
+  assert.equal(usd(0), "US$0.00");
+  assert.equal(proMonthlyCents(3), 1485);
+  assert.equal(proMonthlyCents(0), 495, "billed for at least one seat");
+  assert.equal(seatTotalLabel(1), "1 seat x US$4.95 = US$4.95/month");
+  assert.equal(seatTotalLabel(12), "12 seats x US$4.95 = US$59.40/month");
+});
+
+test("billable seats: human memberships only, each person once", () => {
+  const u = (id) => ({ toString: () => id });
+  assert.equal(billableSeats([]), 0);
+  assert.equal(billableSeats([{ userId: u("a") }]), 1);
+  assert.equal(billableSeats([{ userId: u("a") }, { userId: u("b") }, { userId: "c" }]), 3);
+  // A duplicate membership row for one person is still one seat.
+  assert.equal(billableSeats([{ userId: u("a") }, { userId: "a" }]), 1);
+  // Bots and pending invites are not memberships, so callers never pass them: only the membership list counts.
+});
+
+test("seat quantity for Stripe: at least 1, whole numbers", () => {
+  assert.equal(seatQuantity(0), 1);
+  assert.equal(seatQuantity(-3), 1);
+  assert.equal(seatQuantity(1), 1);
+  assert.equal(seatQuantity(7), 7);
+  assert.equal(seatQuantity(2.9), 2);
+  assert.equal(seatQuantity(NaN), 1);
+});
+
+test("Free plan limits unchanged by per-seat pricing", () => {
+  assert.equal(entitlementsFor("free").maxMembers, 1);
+  assert.equal(entitlementsFor("free").maxBots, 1);
+  assert.equal(entitlementsFor("free").maxProjects, 1);
+  assert.equal(entitlementsFor("pro").maxMembers, null);
 });

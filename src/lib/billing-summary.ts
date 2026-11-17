@@ -15,6 +15,7 @@ const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : nul
 export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): Promise<BillingSummary> {
   if (!billingEnabled()) return UNLIMITED_SUMMARY;
   const c = await cols();
+  // members = billable seats (VEC-238, billableSeats in billing-core: human memberships, one each).
   const [members, pendingInvites, bots, projects, archivedProjects] = await Promise.all([
     c.memberships.countDocuments({ orgId: org._id }),
     c.invites.countDocuments({ orgId: org._id, acceptedAt: { $exists: false }, expiresAt: { $gt: new Date() } }),
@@ -44,5 +45,7 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
     limits: { members: ent.maxMembers, bots: ent.maxBots, projects: ent.maxProjects, concurrentBotTasks: ent.maxConcurrentBotTasks },
     features: { analytics: ent.analytics, publicForms: ent.publicForms },
     usage: { members: members + pendingInvites, bots, projects, pendingInvites, archivedProjects },
+    seats: members,
+    subscribedSeats: typeof b.seats === "number" ? b.seats : null,
   };
 }

@@ -20,7 +20,7 @@ function assertBillingOn() {
   if (!billingEnabled()) throw new UserError("Billing is turned off on this deployment.");
 }
 
-/** Admins: a Stripe Checkout URL to subscribe the org to Pro (US$5/month). */
+/** Admins: a Stripe Checkout URL to subscribe the org to Pro (US$4.95 per user/month, quantity = seats). */
 export async function startCheckout(slug: string): Promise<Result<{ url: string }>> {
   return guard(async () => {
     assertBillingOn();

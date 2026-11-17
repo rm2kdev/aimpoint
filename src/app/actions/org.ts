@@ -19,6 +19,7 @@ import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
 import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
 import { deleteProjectForms, formsStatusDeleted, formsStatusStageChanged } from "@/lib/project-forms";
 import { assertRoomForPerson, assertRoomForProject } from "@/lib/billing-limits";
+import { syncSeatsSoon } from "@/lib/seat-sync";
 
 function slugify(s: string) {
   return (
@@ -415,12 +416,14 @@ export async function acceptInvite(token: string): Promise<Result<{ slug: string
     if (!(await c.memberships.findOne({ orgId: org._id, userId: user._id }, { projection: { _id: 1 } }))) {
       await assertRoomForPerson(org, { accepting: true });
     }
-    await c.memberships.updateOne(
+    const joined = await c.memberships.updateOne(
       { orgId: org._id, userId: user._id },
       { $setOnInsert: { _id: new ObjectId(), orgId: org._id, userId: user._id, role: invite.role, createdAt: new Date() } },
       { upsert: true },
     );
     await c.invites.updateOne({ _id: invite._id }, { $set: { acceptedAt: new Date() } });
+    // A new seat on a Pro subscription (VEC-238); background, never fails the join.
+    if (joined.upsertedCount) syncSeatsSoon(org._id, "invite accepted");
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     return { slug: org.slug };
   });

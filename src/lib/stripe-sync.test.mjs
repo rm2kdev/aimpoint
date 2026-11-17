@@ -1,7 +1,7 @@
 // node --test src/lib/stripe-sync.test.mjs (VEC-223: Stripe -> org billing mapping)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canceledEndDate, hasLiveSubscription, invoiceSubscriptionId, mergeBilling, periodEnd, subscriptionPatch } from "./stripe-sync.ts";
+import { canceledEndDate, hasLiveSubscription, invoiceSubscriptionId, mergeBilling, periodEnd, subscriptionPatch, subscriptionSeats } from "./stripe-sync.ts";
 
 const T = 1_800_000_000;
 const sub = (over = {}) => ({ id: "sub_1", status: "active", customer: "cus_1", items: { data: [{ current_period_end: T }] }, ...over });
@@ -63,4 +63,12 @@ test("live subscription statuses block a second checkout", () => {
   for (const s of ["active", "trialing", "past_due", "unpaid", "paused"]) assert.equal(hasLiveSubscription({ status: s }), true);
   for (const s of ["canceled", "incomplete", "incomplete_expired", null]) assert.equal(hasLiveSubscription({ status: s }), false);
   assert.equal(hasLiveSubscription(undefined), false);
+});
+
+test("seats come from the subscription item quantity (VEC-238)", () => {
+  assert.equal(subscriptionPatch(sub({ items: { data: [{ id: "si_1", quantity: 4, current_period_end: T }] } })).seats, 4);
+  assert.equal(subscriptionSeats(sub({ items: { data: [{ quantity: 2 }, { quantity: 3 }] } })), 5);
+  assert.equal(subscriptionSeats(sub()), null, "no quantity on the item");
+  assert.equal(subscriptionSeats(sub({ items: null })), null);
+  assert.equal(mergeBilling({ seats: 2, status: "active" }, subscriptionPatch(sub({ items: { data: [{ quantity: 3 }] } })), new Date()).seats, 3);
 });

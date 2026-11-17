@@ -3,8 +3,8 @@
  * Server code imports `@/lib/billing` (UserError wrappers, env checks); this module holds the numbers
  * and the plan logic in one place. No Stripe calls here.
  *
- * Plans: "unlimited" when billing is off (self-hosted), "pro" for a paying org (US$5/month, everything
- * unlimited), "free" otherwise (1 person, 1 bot, 1 project, bots on 1 task at a time, no Analytics,
+ * Plans: "unlimited" when billing is off (self-hosted), "pro" for a paying org (US$4.95 per user per month,
+ * billed per org with the seat count as the Stripe quantity; everything unlimited), "free" otherwise (1 person, 1 bot, 1 project, bots on 1 task at a time, no Analytics,
  * no Public forms).
  */
 import type { OrgBilling } from "./types";
@@ -27,7 +27,39 @@ export interface Entitlements {
 export type LimitKind = "members" | "bots" | "projects" | "concurrentBotTasks";
 export type Feature = "analytics" | "publicForms";
 
-export const PRO_PRICE_LABEL = "US$5/month";
+/** Pro's price per seat (a human member) per month, in US cents (VEC-238). */
+export const PRO_SEAT_PRICE_CENTS = 495;
+export const PRO_PRICE_LABEL = "US$4.95 per user/month";
+
+/** "US$4.95", "US$14.85": a US-cent amount as shown in the UI. */
+export function usd(cents: number): string {
+  return `US$${(Math.round(cents) / 100).toFixed(2)}`;
+}
+
+/**
+ * Billable seats (VEC-238): the org's human members, one per distinct userId among its memberships. Bots are
+ * not seats (they aren't memberships) and pending invites aren't either until accepted (an accepted invite
+ * becomes a membership). Pass the org's membership docs (or just their userIds).
+ */
+export function billableSeats(memberships: readonly { userId: { toString(): string } | string }[]): number {
+  return new Set(memberships.map((m) => String(m.userId))).size;
+}
+
+/** The Stripe subscription quantity for `seats`: never below 1 (an org always has its admin). */
+export function seatQuantity(seats: number): number {
+  return Math.max(1, Math.floor(Number.isFinite(seats) ? seats : 1));
+}
+
+/** Monthly Pro total for `seats` seats, in US cents. */
+export function proMonthlyCents(seats: number): number {
+  return seatQuantity(seats) * PRO_SEAT_PRICE_CENTS;
+}
+
+/** "3 seats x US$4.95 = US$14.85/month". */
+export function seatTotalLabel(seats: number): string {
+  const n = seatQuantity(seats);
+  return `${n} ${n === 1 ? "seat" : "seats"} x ${usd(PRO_SEAT_PRICE_CENTS)} = ${usd(proMonthlyCents(n))}/month`;
+}
 
 /** How long a past_due subscription keeps Pro while Stripe retries the payment. */
 export const PAST_DUE_GRACE_DAYS = 7;

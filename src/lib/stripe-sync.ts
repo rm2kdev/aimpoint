@@ -27,7 +27,7 @@ export interface SubscriptionLike {
   /** When the subscription ended (set once it is canceled); canceled_at is when the cancel was requested. */
   ended_at?: number | null;
   canceled_at?: number | null;
-  items?: { data?: { current_period_end?: number | null }[] } | null;
+  items?: { data?: { id?: string; quantity?: number | null; current_period_end?: number | null }[] } | null;
 }
 
 export interface InvoiceLike {
@@ -63,6 +63,13 @@ export function invoiceSubscriptionId(inv: InvoiceLike): string | null {
   return refId(inv.parent?.subscription_details?.subscription) ?? refId(inv.subscription);
 }
 
+/** Seats billed (VEC-238): the subscription's item quantity (summed over items; Aimpoint uses one). Null when absent. */
+export function subscriptionSeats(sub: SubscriptionLike): number | null {
+  const items = sub.items?.data ?? [];
+  const q = items.map((i) => i.quantity).filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+  return q.length ? q.reduce((a, b) => a + b, 0) : null;
+}
+
 /** The org billing fields a subscription event sets (pastDueSince is filled by `mergeBilling`). */
 export function subscriptionPatch(sub: SubscriptionLike, deleted = false): OrgBilling {
   return {
@@ -74,6 +81,7 @@ export function subscriptionPatch(sub: SubscriptionLike, deleted = false): OrgBi
     cancelAtPeriodEnd: !deleted && (Boolean(sub.cancel_at_period_end) || Boolean(sub.cancel_at)),
     // A deleted subscription keeps the current_period_end it had, a month out after an immediate cancel (VEC-231).
     endedAt: endedAt(sub, deleted),
+    seats: subscriptionSeats(sub),
   };
 }
 

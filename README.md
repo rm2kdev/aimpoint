@@ -190,11 +190,15 @@ Admins get **Export CSV** on the Analytics screen: `GET /o/<slug>/analytics/expo
 - `timeseries.csv`: one row per bucket (`bucket_start, bucket_end`, then each metric per bucket); columns sum to the summary totals.
 - `projects.csv`, `breakdown.csv` (stage/priority/type), `contributors.csv` (top people and bots).
 
+## Billing (managed hosting)
+
+Off by default: a self-hosted instance (`BILLING_ENABLED` unset) has every feature on and needs no Stripe. With `BILLING_ENABLED=true` and the `STRIPE_*` vars from `.env.example`, organisations start on Free (1 person, 1 bot, 1 project, bots on one task at a time, no Analytics or Public forms) and an admin can upgrade in Settings > Billing to **Pro at US$4.95 per user/month**, billed per organisation. Seats are the organisation's people (members); bots and pending invites aren't seats. Checkout subscribes with the current seat count as the quantity, and when someone joins (accepts an invite), leaves or is removed, the subscription quantity is updated in Stripe with prorations (in the background, retried if Stripe is unreachable; `src/lib/seat-sync.ts`). Settings > Billing shows seats x US$4.95 = the monthly total. Plan rules: `src/lib/billing-core.ts`; Stripe: `src/lib/stripe.ts`, webhook `POST /api/stripe/webhook`.
+
 ## Notes
 
 - Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).
 - Comments are plain text with @mentions (stored as `<@id>` tokens, validated against the org on save); descriptions are sanitised HTML.
-- Not built yet: email notifications, billing, presence avatars, drag-to-reorder within a status.
+- Not built yet: email notifications, presence avatars, drag-to-reorder within a status.
 
 ## Renamed from Vector
 

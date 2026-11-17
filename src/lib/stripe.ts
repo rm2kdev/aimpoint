@@ -17,6 +17,7 @@ import Stripe from "stripe";
 import { ObjectId } from "mongodb";
 import { cols, getDb } from "@/lib/db";
 import { stripeConfig } from "@/lib/billing";
+import { seatQuantity } from "@/lib/billing-core";
 import { orgPath } from "@/lib/paths";
 import { publish } from "@/lib/realtime/server";
 import { UserError } from "@/lib/result";
@@ -78,18 +79,23 @@ export async function ensureCustomer(org: OrgDoc): Promise<string> {
   return fresh?.billing?.stripeCustomerId ?? customer.id;
 }
 
-/** A subscription-mode Checkout session for US$5/month (STRIPE_PRICE_ID). Refused while a subscription is live. */
+/**
+ * A subscription-mode Checkout session for Pro at US$4.95 per user per month (STRIPE_PRICE_ID is the per-seat
+ * price), with quantity = the org's billable seats now (min 1, VEC-238). Refused while a subscription is live.
+ */
 export async function createCheckoutSession(org: OrgDoc, origin: string): Promise<string> {
   if (hasLiveSubscription(org.billing))
     throw new UserError("This organisation already has a subscription. Manage it from the billing portal.");
   const { priceId } = stripeConfig();
   const customer = await ensureCustomer(org);
   const orgId = org._id.toHexString();
+  const { countBillableSeats } = await import("@/lib/seat-sync");
+  const quantity = seatQuantity(await countBillableSeats(org._id));
   const session = await stripe().checkout.sessions.create({
     mode: "subscription",
     customer,
     client_reference_id: orgId,
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [{ price: priceId, quantity }],
     metadata: { orgId },
     subscription_data: { metadata: { orgId } },
     success_url: billingUrl(origin, org.slug, "?checkout=success&session_id={CHECKOUT_SESSION_ID}"),
@@ -200,12 +206,19 @@ async function handleEvent(event: Stripe.Event): Promise<{ orgId: ObjectId | nul
     const org = await findOrg(sub.metadata?.orgId, { customer: refId(sub.customer), subscription: sub.id });
     if (!org) return { orgId: null, outcome: "ignored: no matching organisation" };
     const patch = subscriptionPatch(sub, deleted);
-    return apply(org, at, (prev) => {
+    const result = await apply(org, at, (prev) => {
       // An event about another subscription doesn't override the org's live one (e.g. a stale second checkout).
       if (prev?.subscriptionId && prev.subscriptionId !== sub.id && hasLiveSubscription(prev) && !hasLiveSubscription(patch))
         return null;
       return patch;
     });
+    // Seats (VEC-238): people may have joined or left between Checkout and now, or the quantity was edited in
+    // Stripe. Reconcile in the background when the stored quantity differs from the member count.
+    if (result.outcome.startsWith("applied") && hasLiveSubscription(patch)) {
+      const { countBillableSeats, syncSeatsSoon } = await import("@/lib/seat-sync");
+      if (patch.seats !== seatQuantity(await countBillableSeats(org._id))) syncSeatsSoon(org._id, event.type);
+    }
+    return result;
   }
   if (event.type === "invoice.payment_failed") {
     const inv = event.data.object as unknown as InvoiceLike;

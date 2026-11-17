@@ -127,6 +127,8 @@ export interface OrgBilling {
   endedAt?: Date | null;
   /** When the subscription went past_due; the Pro grace period counts from here (else from currentPeriodEnd). */
   pastDueSince?: Date | null;
+  /** Seats on the subscription (its item quantity, from the webhook, VEC-238): billed at US$4.95 each per month. */
+  seats?: number | null;
   /** `created` time of the newest Stripe webhook event applied (VEC-223); older late arrivals are skipped. */
   lastEventAt?: Date | null;
   updatedAt?: Date;

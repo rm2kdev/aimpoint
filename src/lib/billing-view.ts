@@ -5,10 +5,10 @@
  * in billing-core; this only describes the result. With billing off (`enabled: false`) every check here
  * passes and the UI shows no Billing entry and no prompts.
  */
-import { PLAN_LABEL, PRO_PRICE_LABEL, type Limit, type Plan } from "./billing-core";
+import { PLAN_LABEL, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatTotalLabel, usd, type Limit, type Plan } from "./billing-core";
 import type { BillingStatus } from "./types";
 
-export { PLAN_LABEL, PRO_PRICE_LABEL };
+export { PLAN_LABEL, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatTotalLabel, usd };
 export type { Plan };
 
 export type CountKind = "members" | "bots" | "projects";
@@ -36,6 +36,10 @@ export interface BillingSummary {
   features: { analytics: boolean; publicForms: boolean };
   /** What the org has, counted the way VEC-224 enforces it (people include pending invites, projects include archived). */
   usage: Record<CountKind, number> & { pendingInvites: number; archivedProjects: number };
+  /** Billable seats now (VEC-238): human members; bots and pending invites aren't seats. */
+  seats: number;
+  /** Seats on the Stripe subscription as last reported by the webhook (null before one arrived). */
+  subscribedSeats: number | null;
 }
 
 /** Billing off: what the self-hosted UI sees (nothing limited). */
@@ -53,6 +57,8 @@ export const UNLIMITED_SUMMARY: BillingSummary = {
   limits: { members: null, bots: null, projects: null, concurrentBotTasks: null },
   features: { analytics: true, publicForms: true },
   usage: { members: 0, bots: 0, projects: 0, pendingInvites: 0, archivedProjects: 0 },
+  seats: 0,
+  subscribedSeats: null,
 };
 
 const NOUN: Record<CountKind, [string, string]> = {

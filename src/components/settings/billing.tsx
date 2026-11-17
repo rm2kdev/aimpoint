@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { countNoun, PLAN_INCLUDES, PLAN_LABEL, PRO_PRICE_LABEL, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { countNoun, PLAN_INCLUDES, PLAN_LABEL, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
 import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -52,7 +52,7 @@ function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean
       return { text: ended ? `The Pro subscription ended on ${ended}.` : "The Pro subscription has ended." };
     }
     default:
-      return { text: `Free for 1 person, 1 bot and 1 project. Upgrade to Pro for ${PRO_PRICE_LABEL} per organisation.` };
+      return { text: `Free for 1 person, 1 bot and 1 project. Upgrade to Pro for ${PRO_PRICE_LABEL}.` };
   }
 }
 
@@ -126,13 +126,28 @@ function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; labe
   );
 }
 
+/** Seats x price = monthly total, and that the bill follows the member count (VEC-238). */
+function SeatsNote({ b, pro, billedSeats }: { b: BillingSummary; pro: boolean; billedSeats: number }) {
+  const people = `${b.seats} ${b.seats === 1 ? "person" : "people"}`;
+  const syncing = pro && b.liveSubscription && b.subscribedSeats !== null && b.subscribedSeats !== Math.max(1, b.seats);
+  return (
+    <p className="mt-1.5 text-[13px] text-muted-foreground" data-billing-seats={billedSeats}>
+      <span className="tabular text-foreground">{seatTotalLabel(billedSeats)}</span>
+      {pro
+        ? ". Adding or removing people changes the bill; Stripe prorates the difference."
+        : `, for the ${people} in this organisation now. Adding people later changes the bill.`}
+      {syncing && <span className="block text-[12.5px] text-faint">Updating Stripe to {seatTotalLabel(b.seats)}.</span>}
+    </p>
+  );
+}
+
 function PlanCard({ plan, current }: { plan: "free" | "pro"; current: boolean }) {
   return (
     <div className={cn("rounded-[10px] border px-4 py-3.5", current ? "border-foreground/40" : "border-border")} data-plan-card={plan}>
       <div className="flex items-center gap-2">
         <h3 className="text-[13.5px] font-semibold">{PLAN_LABEL[plan]}</h3>
         {current && <Tag>Current</Tag>}
-        <span className="ml-auto text-[13px] text-muted-foreground">{plan === "pro" ? `${PRO_PRICE_LABEL} per organisation` : "US$0"}</span>
+        <span className="ml-auto text-[13px] text-muted-foreground">{plan === "pro" ? PRO_PRICE_LABEL : "US$0"}</span>
       </div>
       <ul className="mt-2.5 grid gap-1.5 text-[13px]">
         {PLAN_INCLUDES[plan].map((line) => {
@@ -156,6 +171,8 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
   const [going, setGoing] = useState<"checkout" | "portal" | null>(null);
   const pro = b.plan === "pro";
   const state = describe(b, tz);
+  // On Pro, the quantity Stripe bills (from the webhook); before that, or on Free, the people in the org now.
+  const billedSeats = pro && b.subscribedSeats !== null ? b.subscribedSeats : b.seats;
   const over = (["members", "bots", "projects"] as const).some((k) => b.limits[k] !== null && b.usage[k] > b.limits[k]!);
 
   const go = (which: "checkout" | "portal") =>
@@ -177,7 +194,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
           title="Plan"
           desc={
             <>
-              Pro is {PRO_PRICE_LABEL} per organisation, whatever its size. Payments, invoices and cancelling go through Stripe.
+              Pro is {PRO_PRICE_LABEL}, billed per organisation: each person in it is a seat (bots and pending invites aren&rsquo;t). Payments, invoices and cancelling go through Stripe.
             </>
           }
         >
@@ -189,7 +206,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                 {b.status === "past_due" && (
                   <span className="rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive-ink">Payment failed</span>
                 )}
-                <span className="ml-auto text-[13px] text-muted-foreground">{pro ? PRO_PRICE_LABEL : "US$0"}</span>
+                <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{pro ? `${usd(proMonthlyCents(billedSeats))}/month` : "US$0"}</span>
               </div>
               <p
                 data-billing-note={state.warn ? "warning" : "info"}
@@ -201,6 +218,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                 {state.warn && <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />}
                 {state.text}
               </p>
+              <SeatsNote b={b} pro={pro} billedSeats={billedSeats} />
               {isAdmin ? (
                 <div className="mt-3.5 flex flex-wrap gap-2">
                   {/* Hidden while a finished Checkout waits for its webhook, so nobody pays twice. */}

@@ -7,6 +7,7 @@ import { publishWorking } from "@/lib/claims";
 import { toFeed } from "@/lib/data";
 import { isClosedCategory, type ActivityDoc } from "@/lib/types";
 import { flowOwnerRemoved } from "@/lib/flows";
+import { syncSeatsSoon } from "@/lib/seat-sync";
 
 /**
  * Take a person out of an organisation: used both when they leave (account page, org settings) and when
@@ -66,6 +67,8 @@ export async function removeMembership(orgId: ObjectId, userId: ObjectId, actorI
   await flowOwnerRemoved(orgId, "person", userId, person?.name ?? "A former member");
   // Their unread inbox for this org is no use to them any more (and may name tasks they can't open).
   await c.notifications.deleteMany({ orgId, userId });
+  // One seat fewer on a Pro subscription (VEC-238); background, never fails the removal.
+  syncSeatsSoon(orgId, "member removed");
   await publish(orgHex, { type: "org.changed", actorId: actorHex });
   return { unassigned: ids.length };
 }
