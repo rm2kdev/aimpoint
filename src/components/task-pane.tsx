@@ -24,6 +24,7 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
 import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
+import { FlowStepper } from "@/components/task-flow";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -336,6 +337,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 : `Only ${creator?.name ?? "the creator"}, the assignee or an admin can change this task. You can still comment.`}
             </p>
           )}
+
+          {!task.archivedAt && <FlowStepper task={task} className="mt-4" />}
 
           <dl className="mt-5 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[13px]">
             <dt className="text-faint">Status</dt>

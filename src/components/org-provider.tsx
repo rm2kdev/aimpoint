@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { BotWorkload, Counts, Member, OrgDefaults, Project, Status, WorkloadSnapshot } from "@/lib/types";
+import type { ResolvedFlow } from "@/lib/flow-model";
 import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
@@ -47,6 +48,11 @@ interface Ctx {
   statusesByProject: Map<string, Status[]>;
   /** Org-wide defaults with presets filled in (VEC-128), refreshed with the layout on org.changed. */
   defaults: OrgDefaults;
+  /**
+   * Each project's flow, for the task stepper and row step chips (VEC-178). Only projects whose flow names an
+   * owner or instructions (lib/flow-view.ts); refreshed with the layout on org.changed.
+   */
+  flowByProject: Map<string, ResolvedFlow>;
   counts: Counts;
   /** Unread notifications for the signed-in person. */
   unread: number;
@@ -110,6 +116,7 @@ export function OrgProvider({
   projectOrder: serverOrder,
   statuses: serverStatuses,
   defaults: serverDefaults,
+  flows: serverFlows,
   counts: initialCounts,
   unread: initialUnread,
   workload: initialWorkload,
@@ -126,6 +133,7 @@ export function OrgProvider({
   projectOrder: ProjectOrder;
   statuses: Status[];
   defaults: OrgDefaults;
+  flows?: Record<string, ResolvedFlow>;
   counts: Counts;
   unread: number;
   workload: WorkloadSnapshot;
@@ -287,6 +295,11 @@ export function OrgProvider({
   // Keyed on the value, so an org.changed refresh that didn't touch the defaults keeps OrgBase's identity.
   const newTaskStage = serverDefaults.newTaskStage;
   const defaults = useMemo<OrgDefaults>(() => ({ newTaskStage }), [newTaskStage]);
+  // Same value-keyed trick as statuses: an org.changed refresh that didn't touch a flow keeps OrgBase's identity.
+  const flowSig = JSON.stringify(serverFlows ?? {});
+  const [stableFlows, setStableFlows] = useState({ sig: flowSig, flows: serverFlows ?? {} });
+  if (stableFlows.sig !== flowSig) setStableFlows({ sig: flowSig, flows: serverFlows ?? {} });
+  const flowByProject = useMemo(() => new Map(Object.entries(stableFlows.flows)), [stableFlows]);
   const base = useMemo<OrgBase>(
     () => ({
       org,
@@ -300,9 +313,10 @@ export function OrgProvider({
       statusById: statusMaps.byId,
       statusesByProject: statusMaps.byProject,
       defaults,
+      flowByProject,
       subscribe,
     }),
-    [org, orgs, me, members, deletedMembers, projectById, statuses, statusMaps, defaults, subscribe],
+    [org, orgs, me, members, deletedMembers, projectById, statuses, statusMaps, defaults, flowByProject, subscribe],
   );
   const value = useMemo<Ctx>(
     () => ({

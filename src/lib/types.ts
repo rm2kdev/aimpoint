@@ -595,9 +595,18 @@ export interface Task {
   stalled: Stalled | null;
   /** Manual order key (lib/rank.ts); compare as strings, smaller = higher. "" only for a task saved before ranks. */
   rank: string;
+  /** Where the flow engine put it (VEC-178): the task pane's stepper and the row's step chip read this. */
+  flow?: TaskFlowView | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+}
+/** A task's flow position as the client sees it (from TaskDoc.flow). Absent / null = never positioned. */
+export interface TaskFlowView {
+  /** Null = detached (its status matches no step). */
+  stepId: string | null;
+  paused: boolean;
+  enteredAt: string;
 }
 /**
  * An open task that other open tasks are waiting on, with nobody moving it forward:

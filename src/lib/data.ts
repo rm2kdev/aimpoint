@@ -122,6 +122,7 @@ export function toTask(t: TaskDoc, projectKey: string, workingBotIds: string[] =
     workingBotIds,
     stalled: null,
     rank: t.rank ?? "",
+    flow: t.flow ? { stepId: t.flow.stepId ?? null, paused: !!t.flow.paused, enteredAt: new Date(t.flow.enteredAt).toISOString() } : null,
     createdBy: t.createdBy.toHexString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),

@@ -5,6 +5,7 @@ import { realtimeDriver } from "@/lib/realtime/server";
 import { unreadCount } from "@/lib/notifications";
 import { loadDeletedMembers } from "@/lib/deleted-users";
 import { loadOrgDefaults } from "@/lib/org-defaults";
+import { loadClientFlows } from "@/lib/flow-view";
 import { OrgProvider } from "@/components/org-provider";
 import { AppShell } from "@/components/app-shell";
 
@@ -12,13 +13,14 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
   const { org: slug } = await params;
   const { user, org, membership } = await requireOrgPage(slug);
   const c = await cols();
-  const [shell, myMemberships, unread, workload, deletedMembers, defaults] = await Promise.all([
+  const [shell, myMemberships, unread, workload, deletedMembers, defaults, flows] = await Promise.all([
     loadShell(org._id, user._id),
     c.memberships.find({ userId: user._id }).toArray(),
     unreadCount(org._id, user._id),
     loadWorkloadSnapshot(org._id),
     loadDeletedMembers(org._id),
     loadOrgDefaults(org._id),
+    loadClientFlows(org._id),
   ]);
   const orgs = await c.orgs.find({ _id: { $in: myMemberships.map((m) => m.orgId) } }).sort({ name: 1 }).toArray();
 
@@ -33,6 +35,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
       projectOrder={shell.projectOrder}
       statuses={shell.statuses}
       defaults={defaults}
+      flows={flows}
       counts={shell.counts}
       unread={unread}
       workload={workload}
