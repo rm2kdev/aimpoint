@@ -207,6 +207,7 @@ export function ProjectForms({
                             <>Submitter picks {orList(f.allowedTypes.map((t) => TYPE_LABELS[t]))}</>
                           )}
                         </span>
+                        {f.richText && <span>{f.allowImages ? "Rich text and images" : "Rich text"}</span>}
                       </div>
                       {f.disabledReason && !f.enabled && <p className="mt-1 text-[12.5px] text-destructive">{f.disabledReason}</p>}
                     </div>
@@ -353,6 +354,8 @@ function FormEditor({
   const [fixedType, setFixedType] = useState<TaskType>(form?.typeMode === "fixed" ? form.type : "issue");
   const [allowed, setAllowed] = useState<TaskType[]>(form?.typeMode === "choose" ? form.allowedTypes : ["issue", "feature"]);
   const [preset, setPreset] = useState<TaskType>(form?.typeMode === "choose" ? form.type : "issue");
+  const [richText, setRichText] = useState(form?.richText ?? false);
+  const [allowImages, setAllowImages] = useState(form?.allowImages ?? false);
 
   const allowedList = TASK_TYPES.filter((t) => allowed.includes(t));
   const presetNow = allowedList.includes(preset) ? preset : allowedList[0];
@@ -369,6 +372,9 @@ function FormEditor({
       enabled,
       destinationStatusId: statusId,
       typeMode: mode,
+      richText,
+      // Images need the rich text editor; the server refuses images without it.
+      allowImages: richText && allowImages,
       ...(mode === "fixed" ? { type: fixedType, allowedTypes: [] } : { type: presetNow, allowedTypes: allowedList }),
     };
     start(async () => {
@@ -520,6 +526,32 @@ function FormEditor({
               </div>
             )}
           </fieldset>
+
+          <div className="grid divide-y divide-border rounded-lg border border-border">
+            <label className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <span className="leading-tight">
+                <span className="block text-[13.5px] font-medium">Rich text editor</span>
+                <span className="mt-0.5 block text-[12.5px] text-muted-foreground">Submitters can format the details: bold, lists, links, quotes.</span>
+              </span>
+              <Switch
+                checked={richText}
+                onCheckedChange={(v) => {
+                  setRichText(v);
+                  if (!v) setAllowImages(false);
+                }}
+                aria-label="Rich text editor"
+              />
+            </label>
+            <label className={cn("flex items-center justify-between gap-3 px-3 py-2.5", !richText && "cursor-not-allowed")}>
+              <span className="leading-tight">
+                <span className={cn("block text-[13.5px] font-medium", !richText && "text-muted-foreground")}>Allow image uploads</span>
+                <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
+                  {richText ? "Screenshots up to 5 MB each, added to the task." : "Needs the rich text editor."}
+                </span>
+              </span>
+              <Switch checked={richText && allowImages} disabled={!richText} onCheckedChange={setAllowImages} aria-label="Allow image uploads" />
+            </label>
+          </div>
 
           <label className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
             <span className="leading-tight">

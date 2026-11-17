@@ -52,6 +52,8 @@ export default async function FormPage({ params, searchParams }: PageProps<"/f/[
       body: FORM_BODY_MAX,
     },
     honeypot: HONEYPOT_FIELD,
+    richText: form.richText,
+    allowImages: form.richText && form.allowImages,
   };
   return <PublicForm {...props} />;
 }

@@ -31,21 +31,30 @@ export async function uploadImage(orgSlug: string, file: File): Promise<string> 
   return json.url;
 }
 
-function insertImages(editor: Editor, orgSlug: string, files: File[], pos?: number) {
+/** Uploads one image and resolves to the URL to put in `src`; rejects with a message people can read. */
+export type ImageUploader = (file: File) => Promise<string>;
+
+function insertImages(editor: Editor, upload: ImageUploader, files: File[], pos?: number, onError?: (message: string) => void) {
   const images = files.filter((f) => f.type.startsWith("image/"));
   if (!images.length) return false;
   for (const file of images) {
     const id = toast.loading(`Uploading ${file.name || "image"}…`);
-    uploadImage(orgSlug, file)
+    upload(file)
       .then((src) => {
         const chain = editor.chain().focus();
         (pos !== undefined ? chain.insertContentAt(pos, { type: "image", attrs: { src, alt: file.name } }) : chain.setImage({ src, alt: file.name })).run();
         toast.success("Image added", { id, duration: 1500 });
       })
-      .catch((e: Error) => toast.error(e.message, { id }));
+      .catch((e: Error) => {
+        toast.error(e.message, { id });
+        onError?.(e.message);
+      });
   }
   return true;
 }
+
+/** Drops <img> from pasted HTML, for editors that don't take images. */
+const stripImages = (html: string) => html.replace(/<img\b[^>]*>/gi, "");
 
 export function RichEditor({
   orgSlug,
@@ -56,7 +65,13 @@ export function RichEditor({
   autofocus,
   syncKey,
   editable = true,
+  upload,
+  images = true,
+  onUploadError,
+  onTextChange,
+  ariaLabel = "Description",
 }: {
+  /** Org whose session upload (`POST /api/uploads`) is used when no `upload` is given. */
   orgSlug: string;
   value: string;
   onChange: (html: string) => void;
@@ -66,15 +81,26 @@ export function RichEditor({
   /** Changes when a remote update should replace the content (ignored while focused). */
   syncKey?: string | number;
   editable?: boolean;
+  /** Replaces the default `uploadImage(orgSlug, file)`, e.g. the public form upload endpoint (VEC-235). */
+  upload?: ImageUploader;
+  /** False: no image button, and pasted or dropped images (files and <img> in pasted HTML) are ignored. */
+  images?: boolean;
+  /** Called with the message of a failed upload, after the error toast. */
+  onUploadError?: (message: string) => void;
+  /** Plain text of the content on every change (for counters that count text, not HTML). */
+  onTextChange?: (text: string) => void;
+  ariaLabel?: string;
 }) {
   const onChangeRef = useRef(onChange);
   useEffect(() => {
     onChangeRef.current = onChange;
   });
-  const slugRef = useRef(orgSlug);
+  // Read at upload time, so the editor (created once) always uses the current props.
+  const uploadRef = useRef<{ upload: ImageUploader; images: boolean; onError?: (m: string) => void; onText?: (t: string) => void }>(null!);
   useEffect(() => {
-    slugRef.current = orgSlug;
-  }, [orgSlug]);
+    uploadRef.current = { upload: upload ?? ((file) => uploadImage(orgSlug, file)), images, onError: onUploadError, onText: onTextChange };
+  });
+  const doUpload: ImageUploader = (file) => uploadRef.current.upload(file);
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -85,30 +111,38 @@ export function RichEditor({
         heading: { levels: [1, 2, 3] },
         link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
       }),
-      Image.configure({ inline: false, allowBase64: false }),
+      // Without the Image node the schema itself drops images from pasted HTML and setContent.
+      ...(images ? [Image.configure({ inline: false, allowBase64: false })] : []),
       Placeholder.configure({ placeholder }),
     ],
     content: value,
     editorProps: {
-      attributes: { class: "prose-aimpoint", "aria-label": "Description", role: "textbox", "aria-multiline": "true" },
+      attributes: { class: "prose-aimpoint", "aria-label": ariaLabel, role: "textbox", "aria-multiline": "true" },
+      transformPastedHTML: (html) => (uploadRef.current?.images === false ? stripImages(html) : html),
       // Handle paste and drop ourselves and return true so the browser/ProseMirror
       // default never inserts a second copy.
       handlePaste(view, event) {
         const files = Array.from(event.clipboardData?.files ?? []);
         if (!files.some((f) => f.type.startsWith("image/"))) return false;
         event.preventDefault();
-        return insertImages(editorRef.current!, slugRef.current, files);
+        // Images off: swallow the file so nothing (not even a file name) is inserted.
+        if (!uploadRef.current.images) return true;
+        return insertImages(editorRef.current!, doUpload, files, undefined, uploadRef.current.onError);
       },
       handleDrop(view, event, _slice, moved) {
         if (moved) return false;
         const files = Array.from(event.dataTransfer?.files ?? []);
         if (!files.some((f) => f.type.startsWith("image/"))) return false;
         event.preventDefault();
+        if (!uploadRef.current.images) return true;
         const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-        return insertImages(editorRef.current!, slugRef.current, files, pos);
+        return insertImages(editorRef.current!, doUpload, files, pos, uploadRef.current.onError);
       },
     },
-    onUpdate: ({ editor }) => onChangeRef.current(editor.isEmpty ? "" : editor.getHTML()),
+    onUpdate: ({ editor }) => {
+      onChangeRef.current(editor.isEmpty ? "" : editor.getHTML());
+      uploadRef.current.onText?.(editor.getText({ blockSeparator: "\n" }));
+    },
   });
   const editorRef = useRef<Editor | null>(null);
   useEffect(() => {
@@ -134,7 +168,7 @@ export function RichEditor({
         <div
           role="toolbar"
           aria-label="Formatting"
-          className="sticky top-0 z-10 mb-3 flex w-max items-center gap-0.5 rounded-lg border border-border bg-background p-0.5 opacity-80 transition-opacity group-focus-within/editor:opacity-100 group-hover/editor:opacity-100"
+          className="sticky top-0 z-10 mb-3 flex w-max max-w-full flex-wrap items-center gap-0.5 rounded-lg border border-border bg-background p-0.5 opacity-80 transition-opacity group-focus-within/editor:opacity-100 group-hover/editor:opacity-100"
         >
           <Tool label="Bold" shortcut="⌘B" active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}>
             <BoldIcon />
@@ -172,21 +206,25 @@ export function RichEditor({
           >
             <LinkIcon />
           </Tool>
-          <Sep />
-          <Tool label="Upload image" onClick={() => fileInput.current?.click()}>
-            <ImageIcon />
-          </Tool>
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
-            multiple
-            hidden
-            onChange={(e) => {
-              insertImages(editor, orgSlug, Array.from(e.target.files ?? []));
-              e.target.value = "";
-            }}
-          />
+          {images && (
+            <>
+              <Sep />
+              <Tool label="Upload image" onClick={() => fileInput.current?.click()}>
+                <ImageIcon />
+              </Tool>
+              <input
+                ref={fileInput}
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp,image/avif"
+                multiple
+                hidden
+                onChange={(e) => {
+                  insertImages(editor, doUpload, Array.from(e.target.files ?? []), undefined, onUploadError);
+                  e.target.value = "";
+                }}
+              />
+            </>
+          )}
         </div>
       )}
       <EditorContent editor={editor} />
