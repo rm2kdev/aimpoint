@@ -327,11 +327,11 @@ export function PriorityIcon({ priority, className }: { priority: Priority; clas
 
 /* ---------- Type tag ---------- */
 
-/** Square colour per type (DESIGN.md: issue-red, feature-green, task-slate). */
+/** Square colour per type (DESIGN.md: issue-red, feature-green, task-slate), from the --type-* tokens the analytics donut also reads. */
 export const TYPE_SWATCH: Record<TaskType, string> = {
-  issue: "bg-[#e5484d]",
-  feature: "bg-[#30a46c]",
-  task: "bg-[#8b8d98]",
+  issue: "bg-type-issue",
+  feature: "bg-type-feature",
+  task: "bg-type-task",
 };
 
 export function TypeSquare({ type, className }: { type: TaskType; className?: string }) {

@@ -48,6 +48,9 @@
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
   --color-positive: var(--positive);
+  --color-type-issue: var(--type-issue);
+  --color-type-feature: var(--type-feature);
+  --color-type-task: var(--type-task);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -90,6 +93,10 @@
   --chart-5: #e5641a;
   --chart-6: #8b8d98;
   --positive: #218358;
+  /* Task type colours (TypeSquare and the Open by type donut, VEC-149); same values in both themes. */
+  --type-issue: #e5484d;
+  --type-feature: #30a46c;
+  --type-task: #8b8d98;
   --sidebar: #f7f7f5;
   --sidebar-foreground: #171717;
   --sidebar-border: #ececea;

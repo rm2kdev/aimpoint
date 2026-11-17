@@ -11,6 +11,7 @@ import {
   SeriesLegend,
   chartColor,
   fitText,
+  measureText,
   seriesConfig,
   seriesVar,
   valueAxisWidth,
@@ -32,6 +33,11 @@ export interface BarChartProps {
   granularity?: Granularity
   /** Label for the category column in the table fallback. */
   categoryLabel?: string
+  /**
+   * Field holding each category's identity colour (a project's dot). Drawn as a dot before the axis
+   * label, in the tooltip header and in the table; the bars keep their series colours.
+   */
+  categoryColorKey?: string
   stacked?: boolean
   horizontal?: boolean
   valueFormatter?: ValueFormatter
@@ -64,6 +70,7 @@ function CategoryTick({
   width,
   format,
   measured,
+  dot,
 }: {
   x?: number | string
   y?: number | string
@@ -71,10 +78,13 @@ function CategoryTick({
   width: number
   format: (v: unknown) => string
   measured: boolean
+  /** Identity colour: an 8px dot just before the (right-aligned) label, like the ProjectDot in tables. */
+  dot?: string
 }) {
   const full = format(payload?.value)
-  const shown = measured ? fitText(full, width) : full.length > width / 7 ? `${full.slice(0, Math.max(1, Math.floor(width / 7) - 1))}…` : full
-  return (
+  const room = dot ? width - DOT_ROOM : width
+  const shown = measured ? fitText(full, room) : full.length > room / 7 ? `${full.slice(0, Math.max(1, Math.floor(room / 7) - 1))}…` : full
+  const label = (
     <text
       x={Number(x)}
       y={Number(y)}
@@ -88,6 +98,27 @@ function CategoryTick({
       {shown}
     </text>
   )
+  if (!dot) return label
+  const textWidth = measured ? measureText(shown, AXIS_TICK.fontSize) : shown.length * AXIS_TICK.fontSize * 0.6
+  return (
+    <g>
+      <rect x={Number(x) - textWidth - DOT_ROOM} y={Number(y) - 4} width={8} height={8} rx={2.5} fill={dot} aria-hidden />
+      {label}
+    </g>
+  )
+}
+
+/** Space a category dot takes before its label: the 8px ProjectDot plus a 6px gap. */
+const DOT_ROOM = 14
+
+function CategoryName({ color, children }: { color?: string; children: React.ReactNode }) {
+  if (!color) return <>{children}</>
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span aria-hidden className="inline-block size-2 shrink-0 rounded-[3px]" style={{ background: color }} />
+      {children}
+    </span>
+  )
 }
 
 export function BarChart({
@@ -98,6 +129,7 @@ export function BarChart({
   series,
   granularity,
   categoryLabel,
+  categoryColorKey,
   stacked = false,
   horizontal = false,
   valueFormatter = formatNumber,
@@ -118,6 +150,14 @@ export function BarChart({
   const tick = (v: unknown) => (granularity ? formatTick(v as TimeValue, granularity, span) : String(v ?? ""))
   const text = summary ?? describe(title, data, categoryKey, series, exact, valueFormatter)
   const measured = useHydrated()
+  const colors = React.useMemo(
+    () => new Map(categoryColorKey ? data.map((d) => [String(d[categoryKey] ?? ""), d[categoryColorKey]]) : []),
+    [data, categoryKey, categoryColorKey],
+  )
+  const colorOf = (v: unknown) => {
+    const c = colors.get(String(v ?? ""))
+    return typeof c === "string" && c ? c : undefined
+  }
   const valueWidth = React.useMemo(() => {
     let max = 0
     for (const d of data) {
@@ -132,7 +172,7 @@ export function BarChart({
       caption={title}
       rows={data}
       columns={[
-        { label: categoryLabel ?? (granularity ? "Date" : "Category"), cell: (d) => exact(d[categoryKey]) },
+        { label: categoryLabel ?? (granularity ? "Date" : "Category"), cell: (d) => <CategoryName color={colorOf(d[categoryKey])}>{exact(d[categoryKey])}</CategoryName> },
         ...series.map((s, i) => ({ label: s.label, numeric: true, color: chartColor(i, s.color), cell: (d: BarDatum) => valueFormatter(num(d[s.key])) })),
         ...(stacked && series.length > 1
           ? [{ label: "Total", numeric: true, cell: (d: BarDatum) => valueFormatter(series.reduce((n, s) => n + num(d[s.key]), 0)) }]
@@ -195,7 +235,7 @@ export function BarChart({
                 tickMargin={6}
                 interval={0}
                 tick={(p: { x?: number | string; y?: number | string; payload?: { value: unknown } }) => (
-                  <CategoryTick {...p} width={categoryWidth - 8} format={tick} measured={measured} />
+                  <CategoryTick {...p} width={categoryWidth - 8} format={tick} measured={measured} dot={colorOf(p.payload?.value)} />
                 )}
               />
             </>
@@ -209,7 +249,7 @@ export function BarChart({
             isAnimationActive={false}
             cursor={{ fill: "var(--muted)" }}
             content={(p) => (
-              <KitTooltip {...p} total={stacked} format={valueFormatter} heading={(d) => exact(d[categoryKey])} />
+              <KitTooltip {...p} total={stacked} format={valueFormatter} heading={(d) => <CategoryName color={colorOf(d[categoryKey])}>{exact(d[categoryKey])}</CategoryName>} />
             )}
           />
           {series.map((s, i) => (

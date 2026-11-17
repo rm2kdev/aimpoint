@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AnalyticsCard, BarChart, DataTable, DonutChart, KpiTile, MEASURE_COLOR, TimeSeriesChart, formatNumber, type DataTableColumn, type DonutSlice } from "@/components/analytics";
+import { PRIORITY_FILL, STAGE_FILL, TYPE_FILL } from "@/components/analytics/colour-map";
 import {
   ANALYTICS_PRESETS,
   GRANULARITY_LABELS,
@@ -440,9 +441,9 @@ function Report({
     return { kind, people: pair[0], bots: pair[1] };
   });
 
-  const stage: DonutSlice[] = breakdown ? STATUS_STAGES.map((s) => ({ key: s, label: STAGE_LABELS[s], value: breakdown.byStage[s] ?? 0 })) : [];
-  const priority: DonutSlice[] = breakdown ? breakdown.byPriority.map((r) => ({ key: String(r.key), label: PRIORITY_LABELS[r.key], value: r.open })) : [];
-  const type: DonutSlice[] = breakdown ? breakdown.byType.map((r) => ({ key: r.key, label: TYPE_LABELS[r.key], value: r.open })) : [];
+  const stage: DonutSlice[] = breakdown ? STATUS_STAGES.map((s) => ({ key: s, label: STAGE_LABELS[s], value: breakdown.byStage[s] ?? 0, color: STAGE_FILL[s] })) : [];
+  const priority: DonutSlice[] = breakdown ? breakdown.byPriority.map((r) => ({ key: String(r.key), label: PRIORITY_LABELS[r.key], value: r.open, color: PRIORITY_FILL[r.key] })) : [];
+  const type: DonutSlice[] = breakdown ? breakdown.byType.map((r) => ({ key: r.key, label: TYPE_LABELS[r.key], value: r.open, color: TYPE_FILL[r.key] })) : [];
 
   const projectRows = report
     ? report.projects
@@ -451,8 +452,8 @@ function Report({
     : [];
   // Skeleton: one placeholder bar per active project, so the card keeps roughly its real height.
   const projectBars = report
-    ? projectRows.map((p) => ({ project: p.project.name, opened: p.opened.total, closed: p.closed.total }))
-    : projects.filter((p) => !p.archived).map((p) => ({ project: p.name, opened: 0, closed: 0 }));
+    ? projectRows.map((p) => ({ project: p.project.name, color: p.project.color, opened: p.opened.total, closed: p.closed.total }))
+    : projects.filter((p) => !p.archived).map((p) => ({ project: p.name, color: p.color, opened: 0, closed: 0 }));
   const vs = compare ? "vs previous" : undefined;
   const who = report?.period.contributor;
 
@@ -577,6 +578,7 @@ function Report({
           data={projectBars}
           categoryKey="project"
           categoryLabel="Project"
+          categoryColorKey="color"
           series={[
             { key: "opened", label: "Opened", color: MEASURE_COLOR.opened },
             { key: "closed", label: "Closed", color: MEASURE_COLOR.closed },

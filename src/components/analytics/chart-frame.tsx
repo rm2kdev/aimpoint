@@ -474,7 +474,7 @@ export function KitTooltip({
 }: {
   active?: boolean
   payload?: ReadonlyArray<TooltipPayloadEntry>
-  heading: (datum: Record<string, unknown>) => string
+  heading: (datum: Record<string, unknown>) => React.ReactNode
   format?: ValueFormatter
   total?: boolean
 }) {

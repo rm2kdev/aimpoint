@@ -22,7 +22,8 @@ export interface DonutSlice {
   key: string
   label: string
   value: number
-  color?: ChartColor
+  /** A chart token index, or any CSS colour (the semantic fills in colour-map.ts). Defaults by position. */
+  color?: ChartColor | string
 }
 
 export interface DonutChartProps {
@@ -59,10 +60,10 @@ export function DonutChart({
 }: DonutChartProps) {
   const slices = React.useMemo(
     () =>
-      // Colour comes from the slice's place in `data` (the full dimension, zeros included), so a
-      // stage or priority keeps its colour when another one drops to zero.
+      // Colour comes from the slice's key (an explicit colour from the colour map), else its place in
+      // `data` (the full dimension, zeros included), so a slice keeps its colour when another is zero.
       data
-        .map((d, i) => ({ ...d, fill: chartColor(i, d.color) }))
+        .map((d, i) => ({ ...d, fill: typeof d.color === "string" ? d.color : chartColor(i, d.color) }))
         .filter((d) => Number.isFinite(d.value) && d.value > 0),
     [data],
   )
@@ -87,7 +88,18 @@ export function DonutChart({
       caption={title}
       rows={[...slices, { key: "__total", label: "Total", value: total, fill: "" }]}
       columns={[
-        { label: "Segment", cell: (s) => s.label },
+        {
+          label: "Segment",
+          cell: (s) =>
+            s.fill ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span aria-hidden className={KIT.swatch} style={{ background: s.fill }} />
+                {s.label}
+              </span>
+            ) : (
+              s.label
+            ),
+        },
         { label: "Value", numeric: true, cell: (s) => valueFormatter(s.value) },
         { label: "Share", numeric: true, cell: (s) => share(s.value) },
       ]}
