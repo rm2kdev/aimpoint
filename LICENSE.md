@@ -1,6 +1,6 @@
-Required Notice: Copyright 2026 Ryan Lamvohee
+Required Notice: Copyright 2026 Ryan Lamvohee (https://www.aimpoint.dev)
 
-Licensor Line of Business: Aimpoint, issue and task tracking software for teams, including the hosted Aimpoint service
+Licensor Line of Business: Aimpoint, issue and task tracking software for teams, including the hosted Aimpoint service (https://www.aimpoint.dev)
 
 ---
 
