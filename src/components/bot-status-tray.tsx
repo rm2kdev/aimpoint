@@ -58,7 +58,7 @@ export function BotStatusTray() {
     <footer
       aria-label="Bot status"
       data-bot-status-tray
-      className="box-content flex h-[30px] shrink-0 items-center gap-3 border-t border-sidebar-border bg-sidebar pr-[calc(0.5rem+env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] pl-[calc(0.75rem+env(safe-area-inset-left))] text-[12.5px] text-sidebar-foreground"
+      className="flex h-[calc(30px+env(safe-area-inset-bottom))] shrink-0 items-center gap-3 border-t border-sidebar-border bg-sidebar pr-[calc(0.5rem+env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] pl-[calc(0.75rem+env(safe-area-inset-left))] text-[12.5px] text-sidebar-foreground"
     >
       <span className="shrink-0 text-[11.5px] font-medium text-faint">
         Bots
