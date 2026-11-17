@@ -6,6 +6,7 @@ import { publish } from "@/lib/realtime/server";
 import { toFeed, toTask, withWorkingBots } from "@/lib/data";
 import { isPush } from "@/lib/bot-connect";
 import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
+import { kickHeld } from "@/lib/wake-queue";
 import { loadTaskFlow } from "@/lib/flow-engine";
 import { flowPauseState } from "@/lib/flow-actions";
 import type { Actor } from "@/lib/task-service";
@@ -117,6 +118,8 @@ export async function stopWorkAs(actor: Actor, taskId: ObjectId): Promise<Task> 
   await record(actor, taskId, { kind: "stopped", to: hex(botId), ...(kind === "triage" ? { note: "triage" as ActivityNote } : {}) }, now);
   // Cut a run that's still going short (VEC-216): cancel the Hermes run, tell a webhook bot (task.stopped).
   signalStop(actor.orgId, { taskId, botId, taskKey: `${key}-${after.number}`, title: after.title, by: await actorName(actor), work: kind });
+  // Its slot on a limited plan is free now (VEC-225): send what was held for it.
+  kickHeld(actor.orgId, [botId]);
   return out;
 }
 

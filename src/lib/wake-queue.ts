@@ -1,9 +1,13 @@
 import "server-only";
+import { after } from "next/server";
 import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { isPush } from "@/lib/bot-connect";
-import { deliver, markHandedOver, type WakeReason } from "@/lib/bot-dispatch";
+import { deliver, markHandedOver, wakeTriage, type WakeReason } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
+import { billingEnabled } from "@/lib/billing";
+import { busyWith, concurrencyLimit } from "@/lib/bot-capacity";
+import { mentionResumesWork } from "@/lib/task-service";
 import { notify } from "@/lib/notifications";
 // Starts the wait-step reminder sweeper (VEC-182) alongside this one: every server path that writes tasks loads this module.
 import "@/lib/wait-reminders";
@@ -24,6 +28,11 @@ import { isClosedCategory, type BotDoc, type BotWakeDoc, type OrgDoc, type Queue
  * - The reconciler (same sweep) re-sends hand-offs that never got a queue row at all (the after() job was lost,
  *   the process died before sending): ready tasks assigned to a push bot, with no claim, no queued wake-up and no
  *   sign of the bot since they were handed over (GRACE_MS ago), and close-outs never delivered.
+ *
+ * - Plan limit (VEC-225): when the org's plan caps simultaneous bot work (Free: one task) the wake-up is `gated`. If
+ *   the bot's slot is taken (lib/bot-capacity.ts) it is queued as held (`heldAt`, no attempt) and releaseHeld sends
+ *   the oldest held one once the slot frees: kicked by complete_task, release_task, advance_task, Stop and a person
+ *   closing the task (kickHeld), and on every sweep as the safety net. Unlimited plans never gate.
  *
  * The sweep runs every SWEEP_MS in the long-lived server process (started when this module loads); on Vercel, where
  * nothing outlives a request, /api/cron/wakes runs it.
@@ -96,6 +105,7 @@ export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReaso
   // A stopped task (VEC-215) gets no work hand-off until it's resumed; Resume sends its own. Mentions still go out.
   if (reason.kind !== "mentioned" && (await isStopped(reason.taskId))) return;
   await c.botWakes.deleteMany({ botId: bot._id, taskId: reason.taskId, kind: reason.kind });
+  const gated = await gatedWake(bot, org, reason);
   const now = new Date();
   const wake: BotWakeDoc = {
     _id: new ObjectId(),
@@ -111,6 +121,8 @@ export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReaso
     updatedAt: now,
     failedAt: null,
     notifiedAt: null,
+    // Limited plan: queued as held, then released below straight away if the bot's slot is free.
+    ...(gated ? { gated: true, heldAt: now } : {}),
   };
   try {
     await c.botWakes.insertOne(wake);
@@ -118,7 +130,124 @@ export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReaso
     if ((err as { code?: number }).code === 11000) return; // the same hand-off is being sent right now
     throw err;
   }
-  await attempt(bot, org, wake);
+  if (gated) await releaseHeld(bot, org);
+  else await attempt(bot, org, wake);
+}
+
+/**
+ * Does this wake-up take the bot's slot under a plan limit (VEC-225)? Work hand-offs and close-outs do; a mention
+ * only when it hands the work back (the bot is its open, ready task's assignee), otherwise it's a question.
+ */
+async function gatedWake(bot: BotDoc, org: OrgDoc, reason: QueuedReason): Promise<boolean> {
+  if (concurrencyLimit(org) === null) return false;
+  if (reason.kind !== "mentioned") return true;
+  return mentionResumesWork(org._id, bot._id, reason.taskId);
+}
+
+/**
+ * Sends the bot's held wake-ups, oldest first, while its plan leaves a slot free (VEC-225). Each is released
+ * atomically (one sender), re-checked after the release in case a concurrent hand-off took the slot meanwhile (then
+ * held again for the next kick or sweep), and checked as still owed like a retry. Returns how many went out.
+ */
+export async function releaseHeld(bot: BotDoc, org: OrgDoc): Promise<number> {
+  const c = await cols();
+  let sent = 0;
+  for (let guard = 0; guard < 50; guard++) {
+    const next = await c.botWakes.find({ botId: bot._id, heldAt: { $ne: null }, failedAt: null }).sort({ createdAt: 1, _id: 1 }).limit(1).next();
+    if (!next) break;
+    if (!bot.connection || !isPush(bot.connection.method)) {
+      // No longer pushed to: a polling bot gets its work from check_for_work.
+      await c.botWakes.deleteMany({ botId: bot._id, heldAt: { $ne: null } });
+      break;
+    }
+    const limit = concurrencyLimit(org);
+    if (limit !== null && (await busyWith(org._id, bot._id, next.taskId)).length >= limit) break;
+    const wake = await c.botWakes.findOneAndUpdate(
+      { _id: next._id, heldAt: { $ne: null } },
+      { $set: { heldAt: null, nextAttemptAt: new Date(Date.now() + LEASE_MS), updatedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+    if (!wake) continue; // another sender released it
+    if (limit !== null && (await busyWith(org._id, bot._id, wake.taskId)).length >= limit) {
+      await c.botWakes.updateOne({ _id: wake._id }, { $set: { heldAt: new Date(), updatedAt: new Date() } });
+      break;
+    }
+    const owed = await stillOwed(wake);
+    if (owed === "drop") {
+      await c.botWakes.deleteOne({ _id: wake._id });
+      continue;
+    }
+    if (owed === "landed" && wake.attempts > 0) {
+      // An attempt from before it was held got through after all (a re-armed retry): bookkeeping only.
+      await markHandedOver(bot, org, toReason(wake));
+      await settled(bot, org, wake);
+      continue;
+    }
+    // Never sent yet: the bot acting on the task while it waited (answering a question) isn't this hand-off landing.
+    await attempt(bot, org, wake);
+    sent++;
+  }
+  return sent;
+}
+
+/** Bots with held wake-ups, and Triage tasks a busy triager was skipped for: offered again when there's room. */
+async function releaseAllHeld(orgId?: ObjectId, botId?: ObjectId): Promise<number> {
+  if (!billingEnabled()) {
+    // Billing switched off (self-hosted) while some were held: nothing limits them any more.
+    const c0 = await cols();
+    if (!(await c0.botWakes.findOne({ heldAt: { $ne: null } }, { projection: { _id: 1 } })) && !(await c0.tasks.findOne({ "triageHeld.at": { $exists: true } }, { projection: { _id: 1 } }))) return 0;
+  }
+  const c = await cols();
+  const scope = { ...(orgId ? { orgId } : {}), ...(botId ? { botId } : {}) };
+  const botIds = (await c.botWakes.distinct("botId", { ...scope, heldAt: { $ne: null }, failedAt: null })) as ObjectId[];
+  let sent = 0;
+  for (const id of botIds) {
+    const bot = await c.bots.findOne({ _id: id });
+    const org = bot && (await c.orgs.findOne({ _id: bot.orgId }));
+    if (!bot || !org) {
+      await c.botWakes.deleteMany({ botId: id, heldAt: { $ne: null } });
+      continue;
+    }
+    try {
+      sent += await releaseHeld(bot, org);
+    } catch (err) {
+      console.error("[bot wake] releasing held wake-ups failed", err);
+    }
+  }
+  // Triage: unmark and offer again; wakeTriage marks it again if every triager is still busy.
+  const held = await c.tasks.find({ ...(orgId ? { orgId } : {}), "triageHeld.at": { $exists: true }, archivedAt: null }, { projection: { description: 0 } }).limit(50).toArray();
+  for (const t of held) {
+    const un = await c.tasks.updateOne({ _id: t._id, "triageHeld.at": t.triageHeld!.at }, { $set: { triageHeld: null } });
+    if (!un.modifiedCount || t.stopped) continue;
+    const [status, claim, project] = await Promise.all([
+      c.statuses.findOne({ _id: t.statusId }, { projection: { category: 1 } }),
+      c.agentClaims.findOne({ taskId: t._id, kind: "triage" }, { projection: { _id: 1 } }),
+      c.projects.findOne({ _id: t.projectId }, { projection: { key: 1 } }),
+    ]);
+    if (status?.category !== "triage" || claim || !project) continue;
+    wakeTriage(t.orgId, { taskId: t._id, taskKey: `${project.key}-${t.number}`, title: t.title, by: "Aimpoint", ...(t.triageHeld!.exclude ? { exclude: t.triageHeld!.exclude } : {}) });
+  }
+  return sent;
+}
+
+/**
+ * A bot's work on a task ended (complete_task, release_task, advance_task, Stop, the task closed): send what was held
+ * for it, after the response. No-op unless billing is on. Never throws into the caller.
+ */
+export function kickHeld(orgId: ObjectId, botIds: ObjectId[]) {
+  if (!billingEnabled() || !botIds.length) return;
+  const job = async () => {
+    try {
+      for (const id of botIds) await releaseAllHeld(orgId, id);
+    } catch (err) {
+      console.error("[bot wake] kick failed", err);
+    }
+  };
+  try {
+    after(job);
+  } catch {
+    void job();
+  }
 }
 
 async function attempt(bot: BotDoc, org: OrgDoc, wake: BotWakeDoc) {
@@ -137,6 +266,8 @@ async function settled(bot: BotDoc, org: OrgDoc, wake: BotWakeDoc) {
   // A failed one showed the task as Stalled: republish so it clears.
   if (stale.some((s) => s.failedAt)) await publishWorking(org._id, bot._id, [wake.taskId]);
   // The bot is reachable again: give what gave up on it one more try on the next sweep.
+  // Plan-gated ones (VEC-225) go back in line as held, so they still go out one at a time.
+  await c.botWakes.updateMany({ botId: bot._id, failedAt: { $ne: null }, gated: true }, { $set: { failedAt: null, heldAt: new Date(), attempts: MAX_WAKE_ATTEMPTS - 1, updatedAt: new Date() } });
   await c.botWakes.updateMany({ botId: bot._id, failedAt: { $ne: null } }, { $set: { failedAt: null, attempts: MAX_WAKE_ATTEMPTS - 1, nextAttemptAt: new Date(), updatedAt: new Date() } });
 }
 
@@ -229,7 +360,8 @@ async function retryDue(): Promise<number> {
   for (; n < RETRIES_PER_SWEEP; n++) {
     const now = Date.now();
     const wake = await c.botWakes.findOneAndUpdate(
-      { failedAt: null, nextAttemptAt: { $lte: new Date(now) } },
+      // Held ones (VEC-225) wait for the bot's slot, not the clock: releaseAllHeld sends them.
+      { failedAt: null, heldAt: null, nextAttemptAt: { $lte: new Date(now) } },
       { $set: { nextAttemptAt: new Date(now + LEASE_MS) } },
       { sort: { nextAttemptAt: 1 }, returnDocument: "after" },
     );
@@ -326,10 +458,11 @@ async function reconcile(): Promise<number> {
 }
 
 /** One pass: retry what's due, then re-send lost hand-offs. Also the body of /api/cron/wakes. */
-export async function sweepWakes(): Promise<{ retried: number; resent: number }> {
+export async function sweepWakes(): Promise<{ retried: number; resent: number; released: number }> {
   const retried = await retryDue();
+  const released = await releaseAllHeld();
   const resent = await reconcile();
-  return { retried, resent };
+  return { retried, resent, released };
 }
 
 type SweepState = { timer?: ReturnType<typeof setInterval>; running?: boolean; run?: () => Promise<unknown> };

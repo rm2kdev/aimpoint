@@ -9,6 +9,7 @@ import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
+import { busyWith, concurrencyLimit } from "@/lib/bot-capacity";
 import { atWaitStep, flowBriefing, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
 import { MCP_SERVER_NAME, legacyMcpNote, mcpServerNameFor } from "@/lib/mcp-name";
@@ -170,7 +171,16 @@ export function wakeTriage(
       if (!org) return;
       const first = task.prefer ? bots.filter((b) => b._id.equals(task.prefer!)) : [];
       const ordered = [...first, ...bots.filter((b) => !first.includes(b))];
+      // VEC-225: a triager at its plan's limit of simultaneous work is skipped; if nobody takes it, the task is marked
+      // so the wake sweep offers it again once one is free.
+      const limit = concurrencyLimit(org);
+      const busy = async (botId: ObjectId) => limit !== null && (await busyWith(orgId, botId, task.taskId)).length >= limit;
+      let skipped = false;
       for (const bot of ordered.filter((b) => b.connection && isPush(b.connection.method))) {
+        if (await busy(bot._id)) {
+          skipped = true;
+          continue;
+        }
         const reason: WakeReason = { kind: "triage", taskId: task.taskId, taskKey: task.taskKey, title: task.title, by: task.by, ...(first.includes(bot) ? { resumed: true } : {}) };
         const claimId = new ObjectId();
         try {
@@ -181,11 +191,18 @@ export function wakeTriage(
           if (e.keyPattern && "kind" in e.keyPattern) return; // another bot is already triaging it
           continue; // this bot already holds another claim on the task (it's working on it as the assignee)
         }
+        // A concurrent hand-off may have taken its slot between the check and the claim: back off (offered again later).
+        if (await busy(bot._id)) {
+          await c.agentClaims.deleteOne({ _id: claimId });
+          skipped = true;
+          continue;
+        }
         await publishWorking(orgId, bot._id, [task.taskId]);
         if ((await deliver(bot, org, reason)).ok) return;
         await c.agentClaims.deleteOne({ _id: claimId });
         await publishWorking(orgId, bot._id, [task.taskId]);
       }
+      if (skipped) await c.tasks.updateOne({ _id: task.taskId, archivedAt: null }, { $set: { triageHeld: { at: new Date(), exclude: task.exclude ?? null } } });
     } catch (err) {
       console.error("[bot wake triage]", err);
     }

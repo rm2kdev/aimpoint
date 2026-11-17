@@ -305,10 +305,15 @@ async function isClosedTask(task: Pick<TaskDoc, "statusId">) {
  * to do, so its claim is finished like complete_task would. Runs before the task.upsert broadcast, which
  * then carries the cleared working ring. Triage claims are left for complete_task / release_task.
  */
-async function finishClaimsOnClose(taskId: ObjectId) {
+async function finishClaimsOnClose(orgId: ObjectId, taskId: ObjectId) {
   const c = await cols();
   const now = new Date();
-  await c.agentClaims.updateMany({ taskId, state: "in_progress", kind: { $ne: "triage" } }, { $set: { state: "done", finishedAt: now } });
+  const filter = { taskId, state: "in_progress" as const, kind: { $ne: "triage" as const } };
+  const bots = (await c.agentClaims.distinct("botId", filter)) as ObjectId[];
+  await c.agentClaims.updateMany(filter, { $set: { state: "done", finishedAt: now } });
+  // Their slots on a limited plan are free now (VEC-225): send what was held for them. The wake queue is loaded
+  // lazily: it imports this module.
+  if (bots.length) void import("@/lib/wake-queue").then((m) => m.kickHeld(orgId, bots)).catch((err) => console.error("[bot wake] kick failed", err));
 }
 
 /** Assignees can be org members or the org's bots. */
@@ -703,7 +708,7 @@ export async function updateTaskAs(
   }
   // The same bot owns the next step too: drop its finished claim before the broadcast, so it's handed the task afresh.
   if (flowPlan.handoff?.sameOwner && flowPlan.handoff.ownerKind === "bot") await reopenForNextStep(taskId, flowPlan.handoff.ownerId);
-  if (closed) await finishClaimsOnClose(taskId);
+  if (closed) await finishClaimsOnClose(actor.orgId, taskId);
   // Removing its last open dependency makes it ready: hand it back to a bot that had parked it (before the upsert).
   const nowReady = !!set.waitingOn && (before.waitingOn ?? []).length > 0 && !set.waitingOn.length;
   if (nowReady && set.assigneeId === undefined) await reopenForHandOff(actor.orgId, after);

@@ -298,6 +298,11 @@ export interface TaskDoc {
    */
   triagedBy?: ObjectId | null;
   /**
+   * VEC-225: a push triager was skipped for this Triage task because it was at its plan's limit of simultaneous work
+   * (Free: one task), and no other triager took it. The wake sweep offers it again once a triager is free.
+   */
+  triageHeld?: { at: Date; exclude: ObjectId | null } | null;
+  /**
    * The umbrella became ready and its triager (`botId`, = triagedBy then) was asked to close it out.
    * `deliveredAt` is null until a push wake-up succeeds or check_for_work hands it out, so a polling
    * triager finds it once. `resolvedAt` is set once that bot has handled it (complete_task on the task, or a status
@@ -631,6 +636,10 @@ export interface BotWakeDoc {
   updatedAt: Date;
   failedAt: Date | null;
   notifiedAt: Date | null;
+  /** VEC-225: the org's plan limits simultaneous bot work, so this wake-up takes the bot's slot while it is sent. */
+  gated?: boolean;
+  /** VEC-225: held back because the bot is at its plan's limit; sent (oldest first) when its slot frees. */
+  heldAt?: Date | null;
 }
 
 /** A named set of MCP tool permissions that can be applied to bots. */

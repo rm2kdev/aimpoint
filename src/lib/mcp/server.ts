@@ -5,10 +5,12 @@ import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { groupStatusesByProject, loadStatusWords, resolveProjectStatus, reviewWord, statusFilterIds } from "@/lib/statuses";
 import { toolsForBot } from "@/lib/bots";
-import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
+import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, mentionResumesWork, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
+import { busyWith, concurrencyLimit, planLimitInfo, planLimitText } from "@/lib/bot-capacity";
+import { kickHeld } from "@/lib/wake-queue";
 import { taskAccess } from "@/lib/access";
 import { advanceTarget, atWaitStep, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
 import { nextStepOf } from "@/lib/flow-engine-core";
@@ -207,6 +209,33 @@ async function queueCounts(ctx: McpCtx) {
     blockedAssignedCount(ctx),
   ]);
   return { unreadMentions: mentions, pendingCloseouts: closeouts, unstartedAssignedTasks: assigned.length, assignedWaitingOnDependencies: blocked };
+}
+
+/**
+ * check_for_work when the bot is at its plan's limit of simultaneous work (VEC-225): nothing handed out, and the reply
+ * names the task(s) it's busy with, what's waiting, and that the plan is the reason.
+ */
+async function planLimitIdle(ctx: McpCtx, busy: ObjectId[]) {
+  const c = await cols();
+  const [queue, tasks] = await Promise.all([queueCounts(ctx), c.tasks.find({ _id: { $in: busy } }, { projection: { description: 0 } }).toArray()]);
+  const rows = await summarise(ctx, tasks as TaskDoc[]);
+  const keys = rows.map((r) => r.key).join(", ");
+  const waiting = queue.unstartedAssignedTasks + queue.pendingCloseouts + queue.unreadMentions;
+  const what = [
+    queue.unstartedAssignedTasks ? `${queue.unstartedAssignedTasks} assigned task${queue.unstartedAssignedTasks === 1 ? "" : "s"}` : null,
+    queue.pendingCloseouts ? `${queue.pendingCloseouts} close-out${queue.pendingCloseouts === 1 ? "" : "s"}` : null,
+    queue.unreadMentions ? `${queue.unreadMentions} mention${queue.unreadMentions === 1 ? "" : "s"} handing work back` : null,
+  ].filter(Boolean);
+  return {
+    content: [
+      text(
+        `Nothing handed out: you're working on ${keys || "another task"}. ${planLimitText(ctx.org)}${
+          waiting ? ` Waiting for you: ${what.join(", ")}; ${waiting === 1 ? "it comes" : "they come"} through check_for_work once you finish ${rows.length === 1 ? "it" : "them"} with complete_task (or hand ${rows.length === 1 ? "it" : "them"} back with release_task).` : ""
+        }`,
+      ),
+      json({ kind: "idle", reason: "plan_limit", planLimit: planLimitInfo(ctx.org, waiting), workingOn: rows, queue }),
+    ],
+  };
 }
 
 async function taskResult(ctx: McpCtx, task: TaskDoc, project: ProjectDoc, headline: string, opts: { includeImages?: boolean; highlight?: ObjectId[]; extra?: Record<string, unknown> } = {}) {
@@ -410,12 +439,22 @@ const TOOLS: Record<string, ToolImpl> = {
     run: async (args, ctx) => {
       const c = await cols();
       const includeImages = bool(args, "include_images", true);
+      // VEC-225: on a plan that limits simultaneous work (Free: one task), a bot already busy gets no more work until it
+      // finishes: mentions that would hand work back, close-outs and assigned tasks wait; plain questions still come.
+      const limit = concurrencyLimit(ctx.org);
+      const busy = limit === null ? [] : await busyWith(ctx.org._id, ctx.bot._id);
+      const full = limit !== null && busy.length >= limit;
+      const heldMentionTasks: ObjectId[] = [];
+      if (full) {
+        const pending = (await c.botMentions.distinct("taskId", { botId: ctx.bot._id, deliveredAt: null })) as ObjectId[];
+        for (const id of pending) if (await mentionResumesWork(ctx.org._id, ctx.bot._id, id)) heldMentionTasks.push(id);
+      }
 
       // 1. New mentions, oldest first, one task at a time.
       for (let guard = 0; guard < 50; guard++) {
         const now = new Date();
         const first = await c.botMentions.findOneAndUpdate(
-          { botId: ctx.bot._id, deliveredAt: null },
+          { botId: ctx.bot._id, deliveredAt: null, ...(heldMentionTasks.length ? { taskId: { $nin: heldMentionTasks } } : {}) },
           { $set: { deliveredAt: now } },
           { sort: { createdAt: 1 }, returnDocument: "after" },
         );
@@ -450,6 +489,8 @@ const TOOLS: Record<string, ToolImpl> = {
         );
       }
 
+      if (full) return planLimitIdle(ctx, busy);
+
       // 2. Umbrellas this bot triaged, now ready to close out. Marked delivered atomically, so each is handed out once.
       for (let guard = 0; guard < 50; guard++) {
         const t = await c.tasks.findOneAndUpdate(
@@ -477,11 +518,20 @@ const TOOLS: Record<string, ToolImpl> = {
         // working while the task waits and this loop never offers it again.
         const waiting = await atWaitStep(t);
         const now = new Date();
+        const claimId = new ObjectId();
         try {
-          await c.agentClaims.insertOne({ _id: new ObjectId(), orgId: ctx.org._id, botId: ctx.bot._id, taskId: t._id, state: waiting ? "done" : "in_progress", claimedAt: now, finishedAt: waiting ? now : null });
+          await c.agentClaims.insertOne({ _id: claimId, orgId: ctx.org._id, botId: ctx.bot._id, taskId: t._id, state: waiting ? "done" : "in_progress", claimedAt: now, finishedAt: waiting ? now : null });
         } catch (err) {
           if ((err as { code?: number }).code === 11000) continue; // another run picked it up
           throw err;
+        }
+        // VEC-225: a concurrent hand-out (push or another check_for_work) took the slot meanwhile: give this one back.
+        if (!waiting && limit !== null) {
+          const others = await busyWith(ctx.org._id, ctx.bot._id, t._id);
+          if (others.length >= limit) {
+            await c.agentClaims.deleteOne({ _id: claimId });
+            return planLimitIdle(ctx, others);
+          }
         }
         // The status follows the work (Todo / In Review -> In Progress). That broadcast carries the claim too.
         const moved = waiting ? false : await markStartedByBot(ctx.org._id, ctx.bot._id, t._id);
@@ -497,6 +547,14 @@ const TOOLS: Record<string, ToolImpl> = {
         const finish = flow
           ? ` ${flow.text}`
           : ` Finish with ${w.done} when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use ${reviewWord(w)} only when a named person must check or decide something, and @mention them.`;
+        const queue = await queueCounts(ctx);
+        const more = queue.unstartedAssignedTasks + queue.pendingCloseouts;
+        // VEC-225: one at a time on a limited plan; say why the rest wait.
+        const limitNote =
+          limit !== null && !waiting && more
+            ? ` ${planLimitText(ctx.org)} ${more} more ${more === 1 ? "item is" : "items are"} waiting for you and will come through check_for_work once you finish this one with complete_task (or hand it back with release_task).`
+            : "";
+        const planLimit = limit !== null ? planLimitInfo(ctx.org, more) : null;
         return taskResult(
           ctx,
           task,
@@ -505,8 +563,8 @@ const TOOLS: Record<string, ToolImpl> = {
             waiting
               ? ` It's waiting at a flow step, so Aimpoint doesn't count you as working on it: watch for what it waits for and move it on with advance_task when that happens.`
               : `${moved ? ` It's now picked up by you, and Aimpoint moved it to ${w.started ?? "a started status"} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back).`
-          }${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE} ${STOP_NOTE}\n\n${PROGRESS_HINT}`,
-          { includeImages, extra: { kind: "assigned", ...(waiting ? { waiting: true } : {}), queue: await queueCounts(ctx), ...(flow ? { flow: flow.payload } : {}) } },
+          }${limitNote}${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE} ${STOP_NOTE}\n\n${PROGRESS_HINT}`,
+          { includeImages, extra: { kind: "assigned", ...(waiting ? { waiting: true } : {}), queue, ...(planLimit ? { planLimit } : {}), ...(flow ? { flow: flow.payload } : {}) } },
         );
       }
 
@@ -543,12 +601,36 @@ const TOOLS: Record<string, ToolImpl> = {
           ],
         };
       }
+      // VEC-225: a bot at its plan's limit of simultaneous work triages nothing new until it finishes.
+      const limit = concurrencyLimit(ctx.org);
+      const triageFull = async (except?: ObjectId) => {
+        if (limit === null) return null;
+        const busy = await busyWith(ctx.org._id, ctx.bot._id, except);
+        if (busy.length < limit) return null;
+        const rows = await summarise(ctx, (await c.tasks.find({ _id: { $in: busy } }, { projection: { description: 0 } }).toArray()) as TaskDoc[]);
+        return {
+          content: [
+            text(`Nothing handed out: you're working on ${rows.map((r) => r.key).join(", ") || "another task"}. ${planLimitText(ctx.org)}${tasks.length ? ` ${tasks.length} task${tasks.length === 1 ? " is" : "s are"} waiting in Triage; call check_for_triage again once you've finished it.` : ""}`),
+            json({ kind: "idle", reason: "plan_limit", planLimit: planLimitInfo(ctx.org, tasks.length), workingOn: rows, waitingInTriage: tasks.length }),
+          ],
+        };
+      };
+      if (tasks.length) {
+        const full = await triageFull();
+        if (full) return full;
+      }
       for (const [i, t] of tasks.entries()) {
+        const claimId = new ObjectId();
         try {
-          await c.agentClaims.insertOne({ _id: new ObjectId(), orgId: ctx.org._id, botId: ctx.bot._id, taskId: t._id, kind: "triage", state: "in_progress", claimedAt: new Date(), finishedAt: null });
+          await c.agentClaims.insertOne({ _id: claimId, orgId: ctx.org._id, botId: ctx.bot._id, taskId: t._id, kind: "triage", state: "in_progress", claimedAt: new Date(), finishedAt: null });
         } catch (err) {
           if ((err as { code?: number }).code === 11000) continue; // another bot took it, or you already hold a claim on it
           throw err;
+        }
+        const raced = await triageFull(t._id);
+        if (raced) {
+          await c.agentClaims.deleteOne({ _id: claimId });
+          return raced;
         }
         await publishWorking(ctx.org._id, ctx.bot._id, [t._id]);
         const task = await c.tasks.findOne({ _id: t._id });
@@ -661,6 +743,7 @@ const TOOLS: Record<string, ToolImpl> = {
           // Still in Triage: keep a finished claim so it isn't offered for triage again.
           await c.agentClaims.updateOne({ _id: claim._id }, { $set: { state: "done", finishedAt: now } });
           if (claim.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+          kickHeld(ctx.org._id, [ctx.bot._id]);
           return {
             content: [
               text(`Finished triaging ${key}, but it's still in ${st.name}, so it won't be offered for triage again until someone moves it out and back. Move it on with set_status if that wasn't intended.`),
@@ -670,12 +753,15 @@ const TOOLS: Record<string, ToolImpl> = {
         // Out of Triage: the triage is over. Drop the claim so the task is ordinary work again (also for you, if you assigned it to yourself).
         await c.agentClaims.deleteOne({ _id: claim._id });
         if (claim.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+        kickHeld(ctx.org._id, [ctx.bot._id]);
         return { content: [text(`Finished triaging ${key}.${status ? ` Moved to ${status}.` : ""}${flowNote}${comment ? " Comment posted." : ""}`)] };
       }
       // Finishing is also the end of its close-out, if one was pending: the task can show as "finished" Stalled now (VEC-89).
       const resolved = await resolveCloseout(task._id, ctx.bot._id);
       // A new done claim (none before, or in progress) can also make it Stalled, so republish then as well.
       if (claim?.state !== "done" || resolved) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+      // Its slot is free (VEC-225): what was held for it goes out after this reply.
+      kickHeld(ctx.org._id, [ctx.bot._id]);
       const key = `${project.key}-${task.number}`;
       // A flow hand-off gave the task its next owner (an advance, or an explicit status that sent it to another step's
       // owner, e.g. a tester failing it back to Develop): nothing is left waiting on this bot, so no review note.
@@ -700,6 +786,7 @@ const TOOLS: Record<string, ToolImpl> = {
       const c = await cols();
       const claim = await c.agentClaims.findOneAndDelete({ botId: ctx.bot._id, taskId: task._id });
       if (claim?.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+      kickHeld(ctx.org._id, [ctx.bot._id]);
       const key = `${project.key}-${task.number}`;
       if (claim?.kind === "triage") {
         const fresh = await c.tasks.findOne({ _id: task._id }, { projection: { statusId: 1, archivedAt: 1, title: 1 } });
@@ -756,6 +843,7 @@ const TOOLS: Record<string, ToolImpl> = {
       // owns the next step too) starts a fresh one and the move's broadcast shows the working ring cleared.
       await (await cols()).agentClaims.updateMany({ botId: ctx.bot._id, taskId: task._id, kind: { $ne: "triage" }, state: "in_progress" }, { $set: { state: "done", finishedAt: new Date() } });
       const t = await updateTaskAs(ctx.actor, task._id, target.statusChanges ? { statusId: to.status.id } : {}, { flowTo: to.id, flowResolver: true });
+      kickHeld(ctx.org._id, [ctx.bot._id]);
       const note = await flowReplyNote(ctx, task._id, target);
       return { content: [text(`${step.wait?.label ?? step.name}: resolved on ${key}.${note}${comment ? " Comment posted." : ""}${blockersNote(assignedBlockersOf(t))}`)] };
     },
