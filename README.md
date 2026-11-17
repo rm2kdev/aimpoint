@@ -203,3 +203,15 @@ The product, UI copy, MCP server name (`aimpoint`), webhook headers (`X-Aimpoint
 - Old integration names still served: the `vector` MCP server name for bots set up before the rename (`src/lib/mcp-name.ts`), `X-Vector-*` webhook headers next to `X-Aimpoint-*`, and `VECTOR_MCP_*` install sentinels next to `AIMPOINT_MCP_*`.
 - Unchanged because data depends on them: the `MONGODB_DB` default `vector`, the `vec_` API key prefix, the seeded `@demo.vector.dev` logins and `vector-demo` password, crypto key labels, stored `vectorUrl` / `vectorKeySealed` fields, browser storage keys, and the Hermes `Idempotency-Key` / session id prefixes (renaming them would reset every bot's Hermes sessions).
 - The `VEC` project key and `VEC-…` ticket numbers are data, not the product name.
+
+## Licence
+
+Aimpoint is **source-available** under the [PolyForm Shield License 1.0.0](LICENSE.md). In short:
+
+- You can read, run, modify and self-host Aimpoint, including for your own company's internal use, free of charge.
+- You can redistribute it, with or without changes, as long as the licence and its `Required Notice` line go with it.
+- You can't use it to provide a product or service that competes with Aimpoint, including a hosted Aimpoint-style tracker, whether paid or free.
+
+This summary is for convenience; [LICENSE.md](LICENSE.md) is the binding text. For uses the licence doesn't cover, such as reselling or white-labelling, contact the licensor for a commercial licence.
+
+Contributions are welcome under the [Contributor License Agreement](CLA.md); see [CONTRIBUTING.md](CONTRIBUTING.md).
