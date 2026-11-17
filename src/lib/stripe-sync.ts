@@ -24,6 +24,9 @@ export interface SubscriptionLike {
   cancel_at_period_end?: boolean | null;
   cancel_at?: number | null;
   current_period_end?: number | null;
+  /** When the subscription ended (set once it is canceled); canceled_at is when the cancel was requested. */
+  ended_at?: number | null;
+  canceled_at?: number | null;
   items?: { data?: { current_period_end?: number | null }[] } | null;
 }
 
@@ -69,7 +72,25 @@ export function subscriptionPatch(sub: SubscriptionLike, deleted = false): OrgBi
     currentPeriodEnd: periodEnd(sub),
     // The Customer Portal cancels with cancel_at (newer API versions) or cancel_at_period_end.
     cancelAtPeriodEnd: !deleted && (Boolean(sub.cancel_at_period_end) || Boolean(sub.cancel_at)),
+    // A deleted subscription keeps the current_period_end it had, a month out after an immediate cancel (VEC-231).
+    endedAt: endedAt(sub, deleted),
   };
+}
+
+/** When a canceled subscription ended: ended_at, else canceled_at for a deleted event; null while it is live. */
+function endedAt(sub: SubscriptionLike, deleted: boolean): Date | null {
+  const secs = sub.ended_at ?? (deleted ? sub.canceled_at : null);
+  return secs ? new Date(secs * 1000) : null;
+}
+
+/**
+ * The "ended on" date for a canceled subscription: endedAt, else (billing stored before VEC-231) the period end
+ * only when it has passed. Never a future date: an immediate cancel's period end is still a month away.
+ */
+export function canceledEndDate(billing: OrgBilling | null | undefined, now: Date): Date | null {
+  if (billing?.status !== "canceled") return null;
+  const d = billing.endedAt ?? billing.currentPeriodEnd ?? null;
+  return d && new Date(d).getTime() <= now.getTime() ? new Date(d) : null;
 }
 
 /**

@@ -1,7 +1,7 @@
 // node --test src/lib/stripe-sync.test.mjs (VEC-223: Stripe -> org billing mapping)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { hasLiveSubscription, invoiceSubscriptionId, mergeBilling, periodEnd, subscriptionPatch } from "./stripe-sync.ts";
+import { canceledEndDate, hasLiveSubscription, invoiceSubscriptionId, mergeBilling, periodEnd, subscriptionPatch } from "./stripe-sync.ts";
 
 const T = 1_800_000_000;
 const sub = (over = {}) => ({ id: "sub_1", status: "active", customer: "cus_1", items: { data: [{ current_period_end: T }] }, ...over });
@@ -19,6 +19,29 @@ test("subscription patch maps status, customer, cancel flags; deleted reads canc
   const d = subscriptionPatch(sub({ cancel_at_period_end: true }), true);
   assert.deepEqual([d.status, d.cancelAtPeriodEnd], ["canceled", false]);
   assert.equal(subscriptionPatch(sub({ status: "weird" })).status, null);
+});
+
+test("deleted subscription stores ended_at, not the period end it kept (VEC-231)", () => {
+  const now = T - 30 * 86_400; // immediate cancel: ended now, period end a month later
+  const d = subscriptionPatch(sub({ status: "canceled", ended_at: now, canceled_at: now }), true);
+  assert.equal(d.endedAt.getTime(), now * 1000);
+  assert.equal(d.currentPeriodEnd.getTime(), T * 1000);
+  const shown = canceledEndDate(d, new Date(now * 1000 + 60_000));
+  assert.equal(shown.getTime(), now * 1000);
+  // No ended_at: canceled_at stands in on a deleted event.
+  assert.equal(subscriptionPatch(sub({ canceled_at: now }), true).endedAt.getTime(), now * 1000);
+  // A live subscription has no endedAt (clears it after a resubscribe).
+  assert.equal(subscriptionPatch(sub()).endedAt, null);
+});
+
+test("cancel at period end shows the period-end date; a future date is never shown", () => {
+  const p = subscriptionPatch(sub({ status: "canceled", ended_at: T, canceled_at: T - 86_400 * 20 }), true);
+  assert.equal(canceledEndDate(p, new Date(T * 1000 + 1000)).getTime(), T * 1000);
+  // Stored before VEC-231 (no endedAt): a past period end is shown, a future one is not.
+  const old = { status: "canceled", currentPeriodEnd: new Date(T * 1000) };
+  assert.equal(canceledEndDate(old, new Date(T * 1000 + 1000)).getTime(), T * 1000);
+  assert.equal(canceledEndDate(old, new Date(T * 1000 - 86_400_000)), null);
+  assert.equal(canceledEndDate({ status: "active", currentPeriodEnd: new Date(0) }, new Date()), null);
 });
 
 test("pastDueSince is stamped on entry, kept while past_due, cleared after", () => {

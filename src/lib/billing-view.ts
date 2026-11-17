@@ -22,6 +22,8 @@ export interface BillingSummary {
   /** ISO dates. */
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  /** When a canceled subscription ended (never in the future), else null. */
+  endedAt: string | null;
   pastDueSince: string | null;
   /** When a past_due org drops to Free (pastDueSince + grace), else null. */
   graceEndsAt: string | null;
@@ -43,6 +45,7 @@ export const UNLIMITED_SUMMARY: BillingSummary = {
   status: null,
   currentPeriodEnd: null,
   cancelAtPeriodEnd: false,
+  endedAt: null,
   pastDueSince: null,
   graceEndsAt: null,
   hasCustomer: false,

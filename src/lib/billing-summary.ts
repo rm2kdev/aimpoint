@@ -6,7 +6,7 @@ import "server-only";
 import { cols } from "@/lib/db";
 import { billingEnabled, getEntitlements, getPlan } from "@/lib/billing";
 import { PAST_DUE_GRACE_DAYS } from "@/lib/billing-core";
-import { hasLiveSubscription } from "@/lib/stripe-sync";
+import { canceledEndDate, hasLiveSubscription } from "@/lib/stripe-sync";
 import { UNLIMITED_SUMMARY, type BillingSummary } from "@/lib/billing-view";
 import type { OrgDoc } from "@/lib/types";
 
@@ -36,6 +36,7 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
     status: b.status ?? null,
     currentPeriodEnd: iso(periodEnd),
     cancelAtPeriodEnd: !!b.cancelAtPeriodEnd,
+    endedAt: iso(canceledEndDate(b, new Date())),
     pastDueSince: iso(b.pastDueSince),
     graceEndsAt: graceFrom ? new Date(new Date(graceFrom).getTime() + PAST_DUE_GRACE_DAYS * 86_400_000).toISOString() : null,
     hasCustomer: !!b.stripeCustomerId,

@@ -46,8 +46,11 @@ function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean
       return { text: "The subscription is paused, so the organisation is on Free. Resume it in Manage billing." };
     case "incomplete":
       return { warn: true, text: "The first payment didn't go through. Subscribe again to finish upgrading." };
-    case "canceled":
-      return { text: end ? `The Pro subscription ended on ${end}.` : "The Pro subscription has ended." };
+    case "canceled": {
+      // endedAt, not the period end: an immediate cancel keeps a period end a month out (VEC-231).
+      const ended = formatDate(b.endedAt, tz);
+      return { text: ended ? `The Pro subscription ended on ${ended}.` : "The Pro subscription has ended." };
+    }
     default:
       return { text: `Free for 1 person, 1 bot and 1 project. Upgrade to Pro for ${PRO_PRICE_LABEL} per organisation.` };
   }
