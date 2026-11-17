@@ -123,19 +123,77 @@ export interface ProjectFlowSettings {
   steps: FlowStep[] | null;
   version: number | null;
   resolved: ResolvedFlow | null;
+  /** The project has a flow of its own stored (kept while it inherits or is off, until Reset to default). */
+  hasOwn: boolean;
 }
 export async function loadProjectFlowSettings(orgId: ObjectId, projectId: ObjectId): Promise<ProjectFlowSettings> {
   const c = await cols();
   const project = await c.projects.findOne({ _id: projectId, orgId }, { projection: { flowMode: 1, orgId: 1 } });
   if (!project) throw new UserError("That project no longer exists.");
   const mode = project.flowMode ?? "inherit";
-  const own = mode === "custom" ? await c.flows.findOne({ orgId, projectId }) : null;
+  const stored = await c.flows.findOne({ orgId, projectId });
+  const own = mode === "custom" ? stored : null;
   return {
     mode,
     steps: own ? flowStepsFromDoc(own.steps) : null,
     version: own?.version ?? null,
     resolved: await resolveFlow({ _id: projectId, orgId, flowMode: mode }),
+    hasOwn: !!stored,
   };
+}
+
+/** Open, unarchived tasks sitting at each step (by step id), for the editor: a project's own flow, or every task positioned against the org default. */
+export async function loadFlowStepCounts(orgId: ObjectId, scope: { projectId: ObjectId } | { source: "org" }): Promise<Record<string, number>> {
+  const c = await cols();
+  const closed = await c.statuses.find({ orgId, category: { $in: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray();
+  const rows = await c.tasks
+    .aggregate<{ _id: string; n: number }>([
+      {
+        $match: {
+          orgId,
+          archivedAt: null,
+          "flow.stepId": { $type: "string" },
+          statusId: { $nin: closed.map((s) => s._id) },
+          ...("projectId" in scope ? { projectId: scope.projectId, "flow.source": "project" } : { "flow.source": "org" }),
+        },
+      },
+      { $group: { _id: "$flow.stepId", n: { $sum: 1 } } },
+    ])
+    .toArray();
+  return Object.fromEntries(rows.map((r) => [r._id, r.n]));
+}
+
+/** Per project, for the org default editor: which flow it uses and which default steps it skips. Archived projects are left out. */
+export interface ProjectFlowSummary {
+  id: string;
+  key: string;
+  name: string;
+  color: string;
+  mode: FlowMode;
+  /** Inheriting projects only: ids of default steps that don't apply there (stage missing). */
+  skipped: string[];
+  /** The flow it runs has adjusted or skipped steps. */
+  hasIssues: boolean;
+}
+export async function loadProjectFlowSummaries(orgId: ObjectId): Promise<ProjectFlowSummary[]> {
+  const c = await cols();
+  const [projects, resolved] = await Promise.all([
+    c.projects.find({ orgId, archivedAt: null }, { projection: { key: 1, name: 1, color: 1, flowMode: 1, createdAt: 1 } }).sort({ createdAt: 1 }).toArray(),
+    resolveOrgFlows(orgId),
+  ]);
+  return projects.map((p) => {
+    const mode = p.flowMode ?? "inherit";
+    const flow = resolved.get(hex(p._id)) ?? null;
+    return {
+      id: hex(p._id),
+      key: p.key,
+      name: p.name,
+      color: p.color,
+      mode,
+      skipped: mode === "inherit" && flow ? flow.skipped.map((s) => s.id) : [],
+      hasIssues: !!flow?.hasIssues,
+    };
+  });
 }
 
 /* ---------------- writes (callers authorise and publish) ---------------- */

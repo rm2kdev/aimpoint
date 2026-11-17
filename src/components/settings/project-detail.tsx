@@ -9,6 +9,8 @@ import { useOrg } from "@/components/org-provider";
 import { AnalyticsLink, DetailHeader, SettingsRow, Tag } from "@/components/settings/ui";
 import { ColorDots, ProjectTile } from "@/components/settings/org-settings";
 import { ProjectStatuses } from "@/components/settings/project-statuses";
+import { ProjectFlow } from "@/components/settings/flow-settings";
+import type { ProjectFlowSettings } from "@/lib/flows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,7 +39,19 @@ const toRows = (m: ProjectMetaEntry[]): MetaRow[] => m.map((e) => ({ ...e, rid: 
 const fromRows = (rows: MetaRow[]): ProjectMetaEntry[] => rows.map(({ key, value }) => ({ key: key.trim(), value: value.trim() })).filter((e) => e.key || e.value);
 const sameMeta = (a: ProjectMetaEntry[], b: ProjectMetaEntry[]) => JSON.stringify(a) === JSON.stringify(b);
 
-export function ProjectDetail({ project: initial, taskCount, archivedTaskCount }: { project: ProjectDetailData; taskCount: number; archivedTaskCount: number }) {
+export function ProjectDetail({
+  project: initial,
+  taskCount,
+  archivedTaskCount,
+  flow,
+  flowCounts,
+}: {
+  project: ProjectDetailData;
+  taskCount: number;
+  archivedTaskCount: number;
+  flow: ProjectFlowSettings;
+  flowCounts: Record<string, number>;
+}) {
   const { org, isAdmin, projects, counts } = useOrg();
   const router = useRouter();
   const [project, setProject] = useState(initial);
@@ -158,6 +172,8 @@ export function ProjectDetail({ project: initial, taskCount, archivedTaskCount }
       </Row>
 
       <ProjectStatuses projectId={project.id} projectName={project.name} />
+
+      <ProjectFlow projectId={project.id} projectName={project.name} flow={flow} counts={flowCounts} />
 
       <Row
         title="Agent context"

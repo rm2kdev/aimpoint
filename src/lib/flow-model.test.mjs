@@ -251,3 +251,18 @@ test("org level: stage required, cancelled refused, names length-checked", () =>
   g[1].instructions = "y".repeat(4001);
   assert.match(errorsOf(g, ctx), /instructions are up to 4,000 characters/);
 });
+
+test("validation errors are also grouped per step and flow-wide for the editor (VEC-177)", () => {
+  const f = defaultFlowSteps();
+  f[1].name = "";
+  f[2].owner = { kind: "bot", id: "f".repeat(24) };
+  f.push({ id: "after", name: "After", status: { stage: "started" }, owner: { kind: "keep" }, advance: "complete" });
+  const v = validateFlow(f, { level: "org", dir, newId });
+  assert.equal(v.ok, false);
+  assert.deepEqual(v.stepErrors[1], ["Needs a name."]);
+  assert.deepEqual(v.stepErrors[2], ["Its bot isn't one of this organisation's bots."]);
+  assert.match(v.stepErrors[3].join(" "), /nothing can come after a done step/i);
+  assert.deepEqual(v.flowErrors, ["The last step must be a done step."]);
+  assert.ok(v.errors.includes("Step 2 needs a name."));
+  assert.ok(v.errors.some((e) => e.startsWith("Review: its bot")));
+});

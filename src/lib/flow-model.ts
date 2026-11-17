@@ -282,7 +282,13 @@ export interface FlowValidationContext {
   /** Makes an id for a step sent without one. */
   newId: () => string;
 }
-export type FlowValidation = { ok: true; steps: FlowStep[] } | { ok: false; errors: string[] };
+/**
+ * `errors` = every message (each prefixed with its step's name), for a server UserError. `stepErrors[i]` =
+ * step i's messages without the prefix and `flowErrors` = the flow-wide ones, so the editor can show them inline.
+ */
+export type FlowValidation =
+  | { ok: true; steps: FlowStep[] }
+  | { ok: false; errors: string[]; stepErrors: Record<number, string[]>; flowErrors: string[] };
 
 const ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -296,11 +302,21 @@ const str = (v: unknown) => (typeof v === "string" ? v : "");
  */
 export function validateFlow(input: unknown, ctx: FlowValidationContext): FlowValidation {
   const errors: string[] = [];
-  if (!Array.isArray(input)) return { ok: false, errors: ["A flow is a list of steps."] };
-  if (input.length < 1) return { ok: false, errors: ["A flow needs at least one step (its last step is a done step)."] };
-  if (input.length > FLOW_MAX_STEPS) return { ok: false, errors: [`A flow has at most ${FLOW_MAX_STEPS} steps.`] };
+  const stepErrors: Record<number, string[]> = {};
+  const flowErrors: string[] = [];
+  const flowErr = (m: string): FlowValidation => ({ ok: false, errors: [m], stepErrors, flowErrors: [m] });
+  /** Records a step's message twice: prefixed for the server error, bare (capitalised) for the editor. */
+  const stepErr = (i: number, label: string, m: string) => {
+    errors.push(`${label}: ${m}`);
+    const bare = m.charAt(0).toUpperCase() + m.slice(1);
+    const list = (stepErrors[i] ??= []);
+    if (!list.includes(bare)) list.push(bare);
+  };
+  if (!Array.isArray(input)) return flowErr("A flow is a list of steps.");
+  if (input.length < 1) return flowErr("A flow needs at least one step (its last step is a done step).");
+  if (input.length > FLOW_MAX_STEPS) return flowErr(`A flow has at most ${FLOW_MAX_STEPS} steps.`);
   const statuses = ctx.statuses ? sortByOrder(ctx.statuses) : null;
-  if (ctx.level === "project" && !statuses) return { ok: false, errors: ["Project flows need the project's statuses."] };
+  if (ctx.level === "project" && !statuses) return flowErr("Project flows need the project's statuses.");
 
   const steps: FlowStep[] = [];
   const seen = new Set<string>();
@@ -308,13 +324,16 @@ export function validateFlow(input: unknown, ctx: FlowValidationContext): FlowVa
     const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
     const name = str(r.name).trim();
     const label = name || `Step ${i + 1}`;
-    const err = (m: string) => errors.push(`${label}: ${m}`);
+    const err = (m: string) => stepErr(i, label, m);
     let id = str(r.id).trim();
     if (!id) id = ctx.newId();
     if (!ID_RE.test(id)) err("has an invalid id.");
     else if (seen.has(id)) err("has the same id as another step.");
     seen.add(id);
-    if (!name) errors.push(`Step ${i + 1} needs a name.`);
+    if (!name) {
+      errors.push(`Step ${i + 1} needs a name.`);
+      (stepErrors[i] ??= []).push("Needs a name.");
+    }
     else if (name.length > FLOW_NAME_MAX) err(`names are up to ${FLOW_NAME_MAX} characters.`);
 
     // Status
@@ -397,22 +416,25 @@ export function validateFlow(input: unknown, ctx: FlowValidationContext): FlowVa
   steps.forEach((s, i) => {
     const label = s.name || `Step ${i + 1}`;
     if (s.next != null) {
-      if (s.next === s.id) errors.push(`${label}: can't jump to itself.`);
-      else if (!ids.has(s.next)) errors.push(`${label}: its jump target isn't a step of this flow.`);
+      if (s.next === s.id) stepErr(i, label, "can't jump to itself.");
+      else if (!ids.has(s.next)) stepErr(i, label, "its jump target isn't a step of this flow.");
     }
     if (s.status.stage === "done") {
-      if (i < steps.length - 1) errors.push(`${label}: nothing can come after a done step. Move it to the end.`);
-      if (s.next) errors.push(`${label}: the done step ends the flow; it can't jump elsewhere.`);
+      if (i < steps.length - 1) stepErr(i, label, "nothing can come after a done step. Move it to the end.");
+      if (s.next) stepErr(i, label, "the done step ends the flow; it can't jump elsewhere.");
     }
     const prev = steps[i - 1];
     if (prev && sameStatus(prev.status, s.status) && sameOwner(prev.owner, s.owner)) {
-      errors.push(`${label}: has the same status and owner as ${prev.name || `step ${i}`}. Merge them or change one.`);
+      stepErr(i, label, `has the same status and owner as ${prev.name || `step ${i}`}. Merge them or change one.`);
     }
   });
   const last = steps[steps.length - 1];
-  if (last && last.status.stage !== "done") errors.push("The last step must be a done step.");
+  if (last && last.status.stage !== "done") {
+    errors.push("The last step must be a done step.");
+    flowErrors.push("The last step must be a done step.");
+  }
 
-  return errors.length ? { ok: false, errors: [...new Set(errors)] } : { ok: true, steps };
+  return errors.length ? { ok: false, errors: [...new Set(errors)], stepErrors, flowErrors } : { ok: true, steps };
 }
 
 function sameStatus(a: FlowStepStatus, b: FlowStepStatus) {
