@@ -476,9 +476,11 @@ function Report({
   const rightNow = (
     <Section id="analytics-now" title="Right now" note="Current tasks, not limited to the period" dim={dimNow}>
       <div className="grid gap-3 md:grid-cols-3">
-        <DonutChart title="By stage" description="All unarchived tasks" data={stage} centerLabel="tasks" loading={loading} />
-        <DonutChart title="Open by priority" description="Open tasks" data={priority} centerLabel="open" loading={loading} />
-        <DonutChart title="Open by type" description="Open tasks" data={type} centerLabel="open" loading={loading} />
+        {/* Legends reserve room for the longest dimension (stages) so the three cards line up;
+            the empty copy doesn't mention the period, which this section isn't limited to. */}
+        <DonutChart title="By stage" description="All unarchived tasks" data={stage} centerLabel="tasks" loading={loading} legendItems={STATUS_STAGES.length} emptyMessage="No tasks right now" />
+        <DonutChart title="Open by priority" description="Open tasks" data={priority} centerLabel="open" loading={loading} legendItems={STATUS_STAGES.length} emptyMessage="No open tasks right now" />
+        <DonutChart title="Open by type" description="Open tasks" data={type} centerLabel="open" loading={loading} legendItems={STATUS_STAGES.length} emptyMessage="No open tasks right now" />
       </div>
     </Section>
   );

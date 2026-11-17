@@ -69,7 +69,7 @@ export function KpiTile({
       aria-busy={loading || undefined}
       data-slot="kpi-tile"
       className={cn(
-        "flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-background px-4 py-3.5",
+        "@container/kpi flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-background px-4 py-3.5",
         className,
       )}
     >
@@ -106,7 +106,9 @@ export function KpiTile({
                   <Icon className="size-3.5" />
                   {deltaText}
                 </span>
-                <span aria-hidden className="min-w-0 truncate font-normal text-faint">
+                {/* Only when the tile has room for chip and suffix (e.g. not in the six-up row at
+                    1280); the chip and the spoken sentence carry the change either way. */}
+                <span aria-hidden className="hidden min-w-0 truncate font-normal text-faint @[8.5rem]/kpi:block">
                   {comparisonLabel}
                 </span>
                 <span className="sr-only">{spoken}</span>

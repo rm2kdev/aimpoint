@@ -36,8 +36,11 @@ export interface DonutChartProps {
   emptyMessage?: string
   summary?: string
   height?: number
-  /** Legend rows to reserve (two items per row, default 3), so donuts side by side line up. */
-  legendRows?: number
+  /**
+   * Legend items to reserve room for (default 6), so donuts side by side line up: pass the size of
+   * the longest dimension in the row. Two per row in a wide card, one per row in a narrow one.
+   */
+  legendItems?: number
   className?: string
 }
 
@@ -51,7 +54,7 @@ export function DonutChart({
   emptyMessage,
   summary,
   height = 200,
-  legendRows = 3,
+  legendItems = 6,
   className,
 }: DonutChartProps) {
   const slices = React.useMemo(
@@ -103,7 +106,8 @@ export function DonutChart({
       table={table}
       className={className}
       shape="donut"
-      legendHeight={Math.max(1, legendRows) * LEGEND_ROW}
+      legendHeight={Math.max(1, Math.ceil(legendItems / 2)) * LEGEND_ROW}
+      legendHeightNarrow={Math.max(1, legendItems) * LEGEND_ROW}
       legend={
         <SeriesLegend
           variant="grid"

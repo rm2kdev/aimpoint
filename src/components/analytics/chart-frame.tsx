@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { BarChart3, Table2 } from "lucide-react"
+import { BarChart3, ChartNoAxesColumn, ChartPie, Table2 } from "lucide-react"
 import type { TooltipPayloadEntry } from "recharts"
 import { Button } from "@/components/ui/button"
 import type { ChartConfig } from "@/components/ui/chart"
@@ -78,6 +78,13 @@ export const KIT = {
 
 /** Height of one legend line (11.5px label at 1.3 plus breathing room). */
 export const LEGEND_ROW = 18
+
+/**
+ * Container query (on the chart body) above which the donut legend grid has room for two columns.
+ * Below it (a three-up row at 768-1279 px) labels would break mid-word, so the grid drops to one
+ * column. Keep the class and the width in step.
+ */
+export const LEGEND_TWO_COLUMNS = "@[17rem]/chart:grid-cols-2"
 
 export interface AnalyticsCardProps {
   title: string
@@ -166,6 +173,11 @@ export interface ChartFrameProps {
   legend?: React.ReactNode
   /** Height reserved under the plot for the legend, so neighbouring cards line up (default one row). */
   legendHeight?: number
+  /**
+   * Height reserved for the legend when the card is narrow (body under 17rem, see
+   * LEGEND_TWO_COLUMNS), for legends that reflow to more rows there (default legendHeight).
+   */
+  legendHeightNarrow?: number
   /** Skeleton drawn while loading, matching the chart type. */
   shape?: ChartShape
   className?: string
@@ -189,14 +201,23 @@ export function ChartFrame({
   aside,
   legend,
   legendHeight = LEGEND_ROW,
+  legendHeightNarrow = legendHeight,
   shape = "bars",
   className,
   children,
 }: ChartFrameProps) {
   const [asTable, setAsTable] = React.useState(false)
+  const EmptyIcon = shape === "donut" ? ChartPie : ChartNoAxesColumn
   const showToggle = !loading && !empty
-  // Legend slot: 8px gap plus the reserved rows; kept in table/empty/loading too.
-  const slot = legendHeight + 8
+  // Legend slot: 8px gap plus the reserved rows; kept in table/empty/loading too. The narrow and
+  // wide heights are CSS variables picked by a container query on the card body, so every mode
+  // reserves the same height at any card width.
+  const vars = {
+    "--plot": `${height}px`,
+    "--slot-n": `${legendHeightNarrow + 8}px`,
+    "--slot-w": `${legendHeight + 8}px`,
+  } as React.CSSProperties
+  const slotH = "h-(--slot-n) @[17rem]/chart:h-(--slot-w)"
 
   return (
     <AnalyticsCard
@@ -205,11 +226,11 @@ export function ChartFrame({
       loading={loading}
       slot="analytics-chart"
       className={className}
-      bodyClassName="px-2"
+      bodyClassName="@container/chart px-2"
       skeleton={
         <>
           <ChartSkeleton height={height} shape={shape} />
-          <div aria-hidden style={{ height: slot }} />
+          <div aria-hidden style={vars} className={slotH} />
         </>
       }
       aside={
@@ -234,17 +255,22 @@ export function ChartFrame({
     >
       {empty ? (
         <>
+          {/* The page EmptyState, scaled to a card: faint thin-stroke icon over one quiet line. */}
           <div
             role="status"
             style={{ height }}
-            className="mx-2 flex items-center justify-center rounded-lg border border-dashed border-input text-[13px] text-faint"
+            className="mx-2 flex flex-col items-center justify-center gap-2 text-center text-[13px] text-muted-foreground"
           >
+            <EmptyIcon aria-hidden className="size-7 stroke-1 text-faint/60" />
             {emptyMessage}
           </div>
-          <div aria-hidden style={{ height: slot }} />
+          <div aria-hidden style={vars} className={slotH} />
         </>
       ) : asTable ? (
-        <div className="mx-2 overflow-auto" style={{ height: height + slot }}>
+        <div
+          className="mx-2 h-[calc(var(--plot)+var(--slot-n))] overflow-auto @[17rem]/chart:h-[calc(var(--plot)+var(--slot-w))]"
+          style={vars}
+        >
           {table()}
         </div>
       ) : (
@@ -257,7 +283,7 @@ export function ChartFrame({
           >
             {children}
           </div>
-          <div style={{ minHeight: slot }} className="pt-2">
+          <div style={vars} className="min-h-(--slot-n) pt-2 @[17rem]/chart:min-h-(--slot-w)">
             {legend}
           </div>
         </>
@@ -449,13 +475,14 @@ export interface LegendItem {
 
 /**
  * Legend under every chart (always visible, so colour isn't the only key). "row" wraps items on one
- * line; "grid" is a fixed two-column grid (label left, value right-aligned) for donuts, whose
- * height the frame reserves so the three donuts' plots line up.
+ * line; "grid" is a label / value grid for donuts, two columns when the card body is at least 17rem
+ * wide and one below that (labels never truncate), whose height the frame reserves for each layout
+ * so side-by-side donuts line up.
  */
 export function SeriesLegend({ items, variant = "row" }: { items: LegendItem[]; variant?: "row" | "grid" }) {
   if (variant === "grid") {
     return (
-      <ul className={cn("grid grid-cols-2 gap-x-4 px-2 text-muted-foreground", KIT.label, "font-normal")}>
+      <ul className={cn("grid grid-cols-1 gap-x-4 px-2 text-muted-foreground", LEGEND_TWO_COLUMNS, KIT.label, "font-normal")}>
         {items.map((it) => (
           <li key={it.label} className="flex min-w-0 items-center gap-1.5" style={{ height: LEGEND_ROW }}>
             <span aria-hidden className={KIT.swatch} style={{ background: it.color }} />
