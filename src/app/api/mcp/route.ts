@@ -97,7 +97,7 @@ export async function POST(req: Request) {
 
 /** No server-initiated stream and no sessions: GET and DELETE aren't offered. */
 export function GET() {
-  return new Response("Vector's MCP endpoint takes JSON-RPC over POST.", { status: 405, headers: { Allow: "POST" } });
+  return new Response("Aimpoint's MCP endpoint takes JSON-RPC over POST.", { status: 405, headers: { Allow: "POST" } });
 }
 export function DELETE() {
   return new Response(null, { status: 405, headers: { Allow: "POST" } });

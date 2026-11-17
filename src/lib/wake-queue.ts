@@ -235,7 +235,7 @@ async function retryDue(): Promise<number> {
 async function actorName(id: ObjectId) {
   const c = await cols();
   const [u, b] = await Promise.all([c.users.findOne({ _id: id }, { projection: { name: 1 } }), c.bots.findOne({ _id: id }, { projection: { name: 1 } })]);
-  return u?.name ?? b?.name ?? "Vector";
+  return u?.name ?? b?.name ?? "Aimpoint";
 }
 
 /**
@@ -308,7 +308,7 @@ async function reconcile(): Promise<number> {
     if (!org || !project) continue;
     const key = `${project.key}-${t.number}`;
     console.info(`[bot wake] re-sending a lost close-out: ${key} to ${bot.name}`);
-    await dispatchWake(bot, org, { kind: "closeout", taskId: t._id, taskKey: key, title: t.title, by: "Vector", detail: "Nothing it depends on is open any more" });
+    await dispatchWake(bot, org, { kind: "closeout", taskId: t._id, taskKey: key, title: t.title, by: "Aimpoint", detail: "Nothing it depends on is open any more" });
     sent++;
   }
   return sent;

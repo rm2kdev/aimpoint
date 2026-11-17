@@ -399,8 +399,8 @@ function RecoveryCodes({ codes, fresh, onDone }: { codes: string[]; fresh: boole
           variant="ghost"
           size="sm"
           onClick={() => {
-            const url = URL.createObjectURL(new Blob([`Vector recovery codes\n\n${text}\n`], { type: "text/plain" }));
-            const a = Object.assign(document.createElement("a"), { href: url, download: "vector-recovery-codes.txt" });
+            const url = URL.createObjectURL(new Blob([`Aimpoint recovery codes\n\n${text}\n`], { type: "text/plain" }));
+            const a = Object.assign(document.createElement("a"), { href: url, download: "aimpoint-recovery-codes.txt" });
             a.click();
             URL.revokeObjectURL(url);
           }}

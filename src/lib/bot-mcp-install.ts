@@ -157,7 +157,7 @@ async function pollRun(t: HermesTarget, runId: string): Promise<RunPoll> {
   try {
     const res = await hermesFetch(t, `/v1/runs/${encodeURIComponent(runId)}`);
     if (res.status === 404) return { kind: "gone", error: "Hermes no longer knows the run (did its gateway restart?)." };
-    if (res.status === 401 || res.status === 403) return { kind: "gone", error: "Hermes rejected its API key (API_SERVER_KEY) while Vector was watching the run." };
+    if (res.status === 401 || res.status === 403) return { kind: "gone", error: "Hermes rejected its API key (API_SERVER_KEY) while Aimpoint was watching the run." };
     if (!res.ok) return { kind: "unreachable", error: await httpError(res, "Hermes") };
     const j = (await res.json().catch(() => ({}))) as { status?: string; output?: string; error?: unknown };
     const status = String(j.status ?? "");
@@ -261,10 +261,10 @@ async function step(bot: BotDoc, d: BotMcpInstallDoc): Promise<Step> {
       const what = d.phase === "install" ? "the install" : "the connection check";
       const mins = Math.round(limit / 60_000);
       let why: string;
-      if (poll.kind === "unreachable") why = `Vector lost contact with Hermes during ${what} and gave up after ${mins} minutes. Last error: ${poll.error}`;
+      if (poll.kind === "unreachable") why = `Aimpoint lost contact with Hermes during ${what} and gave up after ${mins} minutes. Last error: ${poll.error}`;
       else {
         if (d.runId) await stopRun(t, d.runId);
-        why = `Hermes didn't finish ${what} within ${mins} minutes, so Vector stopped it.`;
+        why = `Hermes didn't finish ${what} within ${mins} minutes, so Aimpoint stopped it.`;
       }
       return d.phase === "install" ? fail(why) : afterCheck(d, why);
     }
@@ -287,10 +287,10 @@ async function step(bot: BotDoc, d: BotMcpInstallDoc): Promise<Step> {
       poll.status !== "completed"
         ? `the check run ${poll.status}${poll.error ? `: ${scrub(poll.error)}` : ""}`
         : s && !s.ok
-          ? (s.reason ?? "Hermes couldn't call Vector")
+          ? (s.reason ?? "Hermes couldn't call Aimpoint")
           : s?.ok
-            ? "Hermes said it called Vector, but Vector never heard from the bot"
-            : "Hermes didn't call Vector";
+            ? "Hermes said it called Aimpoint, but Aimpoint never heard from the bot"
+            : "Hermes didn't call Aimpoint";
     return afterCheck(d, why);
   }
 
@@ -308,7 +308,7 @@ function afterCheck(d: BotMcpInstallDoc, why: string): Step {
     const mins = d.installedAt ? Math.max(1, Math.round((Date.now() - d.installedAt.getTime()) / 60_000)) : null;
     return {
       ...fail(
-        `Hermes installed the MCP server, but still hadn't loaded Vector's tools${mins ? ` ${mins} minutes later` : ""} (last check: ${scrub(why)}). Try the install again in a few minutes, or set it up by hand.`,
+        `Hermes installed the MCP server, but still hadn't loaded Aimpoint's tools${mins ? ` ${mins} minutes later` : ""} (last check: ${scrub(why)}). Try the install again in a few minutes, or set it up by hand.`,
       ),
       runId: null,
       checks,

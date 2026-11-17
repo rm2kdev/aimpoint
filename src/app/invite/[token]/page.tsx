@@ -24,7 +24,7 @@ export default async function InvitePage({ params }: PageProps<"/invite/[token]"
           <>
             <h1 className="text-[22px] font-semibold tracking-[-0.02em]">This invite has expired</h1>
             <p className="mt-1.5 text-[13.5px] text-muted-foreground">Invite links last 14 days and work once. Ask your admin for a new one.</p>
-            <Button asChild variant="outline" className="mt-6 h-9"><Link href="/">Go to Vector</Link></Button>
+            <Button asChild variant="outline" className="mt-6 h-9"><Link href="/">Go to Aimpoint</Link></Button>
           </>
         ) : (
           <>

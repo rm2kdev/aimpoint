@@ -308,7 +308,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
           stalled.reason === "finished"
             ? `${personRef(dir, stalled.botId)?.name ?? "Its bot"} finished its work but left it open`
             : stalled.reason === "undelivered"
-            ? `Vector couldn't deliver the hand-off to ${personRef(dir, stalled.botId)?.name ?? "its bot"} after several retries, so nobody is working on it`
+            ? `Aimpoint couldn't deliver the hand-off to ${personRef(dir, stalled.botId)?.name ?? "its bot"} after several retries, so nobody is working on it`
             : stalled.reason === "needs_owner"
               ? "nobody is assigned yet; it is still waiting on its own dependencies, so it isn't holding anything up yet, but it needs an owner before they're done"
               : "nobody is assigned",

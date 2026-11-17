@@ -80,7 +80,7 @@ const isPublicHttps = (origin: string) => {
 };
 
 function useOrigin() {
-  const [origin, setOrigin] = useState("https://your-vector-host");
+  const [origin, setOrigin] = useState("https://your-aimpoint-host");
   useEffect(() => setOrigin(window.location.origin), []);
   return origin;
 }
@@ -116,7 +116,7 @@ export function BotConnection({ bot, setBot, apiKey, setApiKey }: { bot: Bot; se
       <div className="max-w-[640px] rounded-[10px] border border-dashed border-input px-4 py-3.5">
         <p className="text-[13px] text-muted-foreground">
           {bot.lastUsedAt
-            ? `No backend is set, so Vector can't start ${bot.name} when work arrives. It has called Vector over MCP or the API itself (last ${timeAgo(bot.lastUsedAt)}).`
+            ? `No backend is set, so Aimpoint can't start ${bot.name} when work arrives. It has called Aimpoint over MCP or the API itself (last ${timeAgo(bot.lastUsedAt)}).`
             : `No backend yet. Pick Claude, OpenAI or Hermes to run ${bot.name}.`}
         </p>
         {isAdmin ? (
@@ -160,7 +160,7 @@ function Summary({ bot, setBot, onEdit, onChange }: { bot: Bot; setBot: (b: Bot)
         </span>
       ),
     ]);
-  rows.push(["Last call to Vector", <span key="c" className="text-muted-foreground">{bot.lastUsedAt ? timeAgo(bot.lastUsedAt) : "Never"}</span>]);
+  rows.push(["Last call to Aimpoint", <span key="c" className="text-muted-foreground">{bot.lastUsedAt ? timeAgo(bot.lastUsedAt) : "Never"}</span>]);
 
   return (
     <div className="max-w-[640px] rounded-[10px] border border-border">
@@ -168,7 +168,7 @@ function Summary({ bot, setBot, onEdit, onChange }: { bot: Bot; setBot: (b: Bot)
         <AgentMark agent={conn.agent} size={36} />
         <div className="min-w-0 flex-1 leading-tight">
           <div className="text-[14px] font-medium">{b.title}</div>
-          <div className="mt-1 text-[12.5px] text-muted-foreground">{b.push ? `Vector starts ${bot.name} when work arrives` : `${bot.name} checks Vector on its own schedule`}</div>
+          <div className="mt-1 text-[12.5px] text-muted-foreground">{b.push ? `Aimpoint starts ${bot.name} when work arrives` : `${bot.name} checks Aimpoint on its own schedule`}</div>
         </div>
       </div>
       <dl className="grid grid-cols-[148px_minmax(0,1fr)] gap-x-4 gap-y-2 border-t border-border px-4 py-3.5 text-[13px]">
@@ -325,7 +325,7 @@ function Setup({
               Which backend runs {bot.name}?
             </h3>
             <p className="mt-1 max-w-[68ch] text-[13px] text-muted-foreground">
-              When {bot.name} is assigned a task or mentioned, Vector sends the task and its thread to this backend. The agent works on the ticket through Vector&rsquo;s tools.
+              When {bot.name} is assigned a task or mentioned, Aimpoint sends the task and its thread to this backend. The agent works on the ticket through Aimpoint&rsquo;s tools.
             </p>
             <ul className="mt-4 grid gap-1.5">
               {main.map((b) => (
@@ -487,7 +487,7 @@ function Settings({
       {offline && (
         <p className="mt-3 flex max-w-xl gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
           <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
-          You&rsquo;re on {origin}, which {b.title} can&rsquo;t reach. Saving works once Vector is on a public https:// address.
+          You&rsquo;re on {origin}, which {b.title} can&rsquo;t reach. Saving works once Aimpoint is on a public https:// address.
         </p>
       )}
 
@@ -547,7 +547,7 @@ function Settings({
 
       {rotates && bot.lastUsedAt && (
         <p className="mt-4 max-w-xl text-[12.5px] text-muted-foreground">
-          Saving gives {bot.name} a new key for {b.title} to call Vector with. Anything else using {bot.keyHint} stops working.
+          Saving gives {bot.name} a new key for {b.title} to call Aimpoint with. Anything else using {bot.keyHint} stops working.
         </p>
       )}
 
@@ -570,7 +570,7 @@ function McpBox({ bot, setBot, apiKey, setApiKey, hermes }: { bot: Bot; setBot: 
   const origin = useOrigin();
   return (
     <div className="mt-6 max-w-xl rounded-[10px] border border-border bg-sidebar px-4 py-3.5">
-      <p className="text-[13px] font-medium">{hermes ? "Install Vector's MCP server in Hermes yourself" : "Vector's MCP server"}</p>
+      <p className="text-[13px] font-medium">{hermes ? "Install Aimpoint's MCP server in Hermes yourself" : "Aimpoint's MCP server"}</p>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
         {hermes
           ? `Add it to Hermes under the name “vector”, with ${bot.name}'s key as a Bearer token, then come back and send a test.`
@@ -641,7 +641,7 @@ function Install({
     start(async () => {
       setRefused(undefined);
       const r = await installBotMcp(org.slug, bot.id, { key: (!staleKey && apiKey) || undefined, vectorUrl: window.location.origin }).catch(
-        () => ({ ok: false as const, error: "Vector couldn't start the install. Check your connection and try again." }),
+        () => ({ ok: false as const, error: "Aimpoint couldn't start the install. Check your connection and try again." }),
       );
       setPhase("running");
       if (!r.ok) {
@@ -705,10 +705,10 @@ function Install({
   return (
     <section aria-labelledby="in-title">
       <h3 id="in-title" className="text-[15px] font-semibold tracking-[-0.01em]">
-        Install Vector&rsquo;s tools in Hermes
+        Install Aimpoint&rsquo;s tools in Hermes
       </h3>
       <p className="mt-1 max-w-[68ch] text-[13px] text-muted-foreground">
-        Saved. Hermes works on tickets through Vector&rsquo;s MCP server, so Vector asks Hermes to add it under the name &ldquo;vector&rdquo; with {bot.name}&rsquo;s key, then
+        Saved. Hermes works on tickets through Aimpoint&rsquo;s MCP server, so Aimpoint asks Hermes to add it under the name &ldquo;vector&rdquo; with {bot.name}&rsquo;s key, then
         checks that Hermes can use it.
       </p>
 
@@ -716,8 +716,8 @@ function Install({
         <div className="mt-5 max-w-xl rounded-[10px] border border-border px-4 py-3.5">
           <p className="text-[13px]">
             {last?.state === "installed"
-              ? `Hermes already has Vector's tools (installed ${timeAgo(last.finishedAt ?? last.startedAt)}). Install again if you changed where Hermes runs.`
-              : `Vector can install its tools in Hermes for you.`}
+              ? `Hermes already has Aimpoint's tools (installed ${timeAgo(last.finishedAt ?? last.startedAt)}). Install again if you changed where Hermes runs.`
+              : `Aimpoint can install its tools in Hermes for you.`}
           </p>
           <p className="mt-1 text-[12.5px] text-muted-foreground">
             This page doesn&rsquo;t have {bot.name}&rsquo;s key, so installing gives it a new one. Anything else using {bot.keyHint} stops working.
@@ -733,10 +733,10 @@ function Install({
           <li className="flex items-center gap-3 rounded-[10px] border border-border px-3.5 py-3">
             <StatusDot state={addState} />
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="text-[13.5px] font-medium">Hermes adds Vector&rsquo;s MCP server</div>
+              <div className="text-[13.5px] font-medium">Hermes adds Aimpoint&rsquo;s MCP server</div>
               <div className={cn("mt-0.5 text-[12.5px]", addState === "fail" ? "text-destructive" : "text-muted-foreground")}>
                 {addState === "wait"
-                  ? `Asking Hermes to install Vector's tools…${job ? ` ${elapsed(since)}` : ""}`
+                  ? `Asking Hermes to install Aimpoint's tools…${job ? ` ${elapsed(since)}` : ""}`
                   : addState === "ok"
                     ? `Added${job?.tools ? `, ${job.tools} tools` : ""}`
                     : addState === "fail"
@@ -748,14 +748,14 @@ function Install({
           <li className="flex items-center gap-3 rounded-[10px] border border-border px-3.5 py-3">
             <StatusDot state={loadState} />
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="text-[13.5px] font-medium">Hermes loads Vector&rsquo;s tools</div>
+              <div className="text-[13.5px] font-medium">Hermes loads Aimpoint&rsquo;s tools</div>
               <div className={cn("mt-0.5 text-[12.5px]", loadState === "fail" ? "text-destructive" : loadState === "ok" ? "text-[#30a46c]" : "text-muted-foreground")}>
                 {loadState === "ok"
                   ? "Installed"
                   : loadState === "fail"
                     ? "Didn't work"
                     : loadState === "wait"
-                      ? `Waiting for Hermes to pick it up and call Vector${job && job.checks > 1 ? ` (check ${job.checks})` : ""}… ${elapsed(since)}`
+                      ? `Waiting for Hermes to pick it up and call Aimpoint${job && job.checks > 1 ? ` (check ${job.checks})` : ""}… ${elapsed(since)}`
                       : "After the server is added"}
               </div>
             </div>
@@ -829,7 +829,7 @@ function KeyField({ bot, setBot, apiKey, setApiKey }: { bot: Bot; setBot: (b: Bo
     return (
       <>
         <CopyField label="Key" value={apiKey} secret />
-        <p className="pl-12 text-[12px] text-faint">Shown while you&rsquo;re on this page. Vector only stores a hash.</p>
+        <p className="pl-12 text-[12px] text-faint">Shown while you&rsquo;re on this page. Aimpoint only stores a hash.</p>
       </>
     );
   }
@@ -933,8 +933,8 @@ function Test({ bot, setBot, backend: b, mcpInstalled, onDone }: { bot: Bot; set
       </h3>
       <p className="mt-1 max-w-[68ch] text-[13px] text-muted-foreground">
         {b.push
-          ? `Saved. The test asks ${b.title} to read your workspace through Vector's tools without changing anything, which proves both directions work.`
-          : `Saved. Point your agent at the MCP server and run it once; this turns green when it calls Vector.`}
+          ? `Saved. The test asks ${b.title} to read your workspace through Aimpoint's tools without changing anything, which proves both directions work.`
+          : `Saved. Point your agent at the MCP server and run it once; this turns green when it calls Aimpoint.`}
       </p>
 
       <ul className="mt-5 grid max-w-xl gap-1.5">
@@ -942,7 +942,7 @@ function Test({ bot, setBot, backend: b, mcpInstalled, onDone }: { bot: Bot; set
           <li className="flex items-center gap-3 rounded-[10px] border border-border px-3.5 py-3">
             <StatusDot state={pending ? "wait" : delivery ? (delivery.ok ? "ok" : "fail") : "idle"} />
             <div className="min-w-0 flex-1 leading-tight">
-              <div className="text-[13.5px] font-medium">Vector reaches {b.title}</div>
+              <div className="text-[13.5px] font-medium">Aimpoint reaches {b.title}</div>
               <div className={cn("mt-0.5 text-[12.5px]", delivery && !delivery.ok ? "text-destructive" : "text-muted-foreground")}>
                 {pending ? (slow ? `${b.title} is running the test. This can take a minute…` : "Sending…") : delivery ? (delivery.ok ? "Sent" : (delivery.error ?? "Failed")) : "Not sent yet"}
               </div>
@@ -955,13 +955,13 @@ function Test({ bot, setBot, backend: b, mcpInstalled, onDone }: { bot: Bot; set
         <li className="flex items-center gap-3 rounded-[10px] border border-border px-3.5 py-3" aria-live="polite">
           <StatusDot state={checkedIn ? "ok" : b.push && !delivery ? "idle" : "wait"} />
           <div className="min-w-0 flex-1 leading-tight">
-            <div className="text-[13.5px] font-medium">{b.push ? `${b.title} uses Vector's tools` : `${bot.name} calls Vector`}</div>
-            <div className="mt-0.5 text-[12.5px] text-muted-foreground">{checkedIn ? `Called Vector ${timeAgo(checkedIn)}` : b.push && !delivery ? "After the test is sent" : "Waiting for the first call…"}</div>
+            <div className="text-[13.5px] font-medium">{b.push ? `${b.title} uses Aimpoint's tools` : `${bot.name} calls Aimpoint`}</div>
+            <div className="mt-0.5 text-[12.5px] text-muted-foreground">{checkedIn ? `Called Aimpoint ${timeAgo(checkedIn)}` : b.push && !delivery ? "After the test is sent" : "Waiting for the first call…"}</div>
           </div>
         </li>
       </ul>
       {b.method === "hermes-api" && !mcpInstalled && delivery?.ok && !checkedIn && (
-        <p className="mt-3 max-w-[68ch] text-[12.5px] text-faint">Hermes took the run. If this doesn&rsquo;t turn green within a minute or two, check that Vector&rsquo;s MCP server is installed in Hermes with this bot&rsquo;s key.</p>
+        <p className="mt-3 max-w-[68ch] text-[12.5px] text-faint">Hermes took the run. If this doesn&rsquo;t turn green within a minute or two, check that Aimpoint&rsquo;s MCP server is installed in Hermes with this bot&rsquo;s key.</p>
       )}
 
       <Footer>

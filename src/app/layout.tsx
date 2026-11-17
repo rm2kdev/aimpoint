@@ -12,11 +12,11 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: { default: "Vector", template: "%s · Vector" },
+  title: { default: "Aimpoint", template: "%s · Aimpoint" },
   description: "Issues and feature requests for small software teams.",
-  applicationName: "Vector",
+  applicationName: "Aimpoint",
   // Home-screen web app on iOS (VEC-153). "default" keeps content below the status bar in standalone mode.
-  appleWebApp: { capable: true, title: "Vector", statusBarStyle: "default" },
+  appleWebApp: { capable: true, title: "Aimpoint", statusBarStyle: "default" },
   formatDetection: { telephone: false },
   // Next 16 only emits mobile-web-app-capable for appleWebApp.capable; older iOS still reads the apple- name.
   other: { "apple-mobile-web-app-capable": "yes" },

@@ -406,7 +406,7 @@ export async function hermesProbe(url: string, key: string): Promise<{ ok: true;
     return { ok: true, model: caps.model ?? "hermes-agent" };
   } catch (err) {
     const e = err as Error;
-    return { ok: false, error: e.name === "TimeoutError" ? "No answer after 8 seconds. Vector has to be able to reach this address." : friendlyNetworkError(e) };
+    return { ok: false, error: e.name === "TimeoutError" ? "No answer after 8 seconds. Aimpoint has to be able to reach this address." : friendlyNetworkError(e) };
   }
 }
 

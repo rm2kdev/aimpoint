@@ -161,7 +161,7 @@ function cleanUrl(raw: string | undefined, label: string) {
   if (u.protocol !== "http:" && u.protocol !== "https:") throw new UserError(`${label} has to start with http:// or https://.`);
   const h = u.hostname.toLowerCase();
   if (/^169\.254\./.test(h) || h === "metadata.google.internal" || h.startsWith("[fe80")) throw new UserError(`${label} can't point at that address.`);
-  if (process.env.VERCEL && isPrivateHost(h)) throw new UserError(`Vector runs in the cloud and can't reach ${h}. Use a public address or a tunnel.`);
+  if (process.env.VERCEL && isPrivateHost(h)) throw new UserError(`Aimpoint runs in the cloud and can't reach ${h}. Use a public address or a tunnel.`);
   return u.toString().replace(/\/+$/, "");
 }
 
@@ -202,7 +202,7 @@ export async function saveBotConnection(slug: string, id: string, input: Connect
     }
     if (m.needsVectorKey) {
       if (!conn.vectorUrl || /^http:/.test(conn.vectorUrl) || isPrivateHost(new URL(conn.vectorUrl).hostname)) {
-        throw new UserError(`${m.title} calls Vector from its own servers, so Vector needs a public https:// address. This one is ${conn.vectorUrl ?? "unknown"}.`);
+        throw new UserError(`${m.title} calls Aimpoint from its own servers, so Aimpoint needs a public https:// address. This one is ${conn.vectorUrl ?? "unknown"}.`);
       }
       const vk = input.vectorKey?.trim();
       if (vk) {
@@ -297,13 +297,13 @@ export async function installBotMcp(slug: string, id: string, input: { key?: str
       const v = new URL(String(input.vectorUrl ?? ""));
       if (v.protocol === "http:" || v.protocol === "https:") vectorUrl = v.origin;
     } catch {}
-    if (!vectorUrl) throw new UserError("Vector doesn't know its own address for this connection. Run setup again.");
+    if (!vectorUrl) throw new UserError("Aimpoint doesn't know its own address for this connection. Run setup again.");
 
     let key = typeof input.key === "string" ? input.key.trim() : "";
     if (key && hashKey(key) !== bot.keyHash) throw new UserError("That isn't this bot's current key.");
     // Check Hermes answers before rerolling, so an unreachable Hermes doesn't cost the bot its working key.
     const down = await preflightHermes(bot);
-    if (down) return toMcpInstall(await recordFailedInstall(bot, `Vector couldn't reach Hermes: ${down}`));
+    if (down) return toMcpInstall(await recordFailedInstall(bot, `Aimpoint couldn't reach Hermes: ${down}`));
     let rerolled = false;
     if (!key) {
       const issued = generateKey();

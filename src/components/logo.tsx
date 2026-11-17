@@ -34,7 +34,7 @@ export function Logo({ className }: { className?: string }) {
   return (
     <div className={cn("flex items-center gap-2.5", className)}>
       <LogoMark />
-      <span className="text-[15px] font-semibold tracking-[-0.01em]">Vector</span>
+      <span className="text-[15px] font-semibold tracking-[-0.01em]">Aimpoint</span>
     </div>
   );
 }

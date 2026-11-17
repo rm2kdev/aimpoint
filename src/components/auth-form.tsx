@@ -34,7 +34,7 @@ export function AuthForm({
       <div className="w-full max-w-[360px]">
         <Logo className="mb-8" />
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">
-          {mode === "login" ? "Sign in to Vector" : "Create your account"}
+          {mode === "login" ? "Sign in to Aimpoint" : "Create your account"}
         </h1>
         <p className="mt-1.5 text-[13.5px] text-muted-foreground">
           {mode === "login" ? "Pick up where your team left off." : "Then create an organisation or accept an invite."}
@@ -87,7 +87,7 @@ export function AuthForm({
         <p className="mt-6 text-[13px] text-muted-foreground">
           {mode === "login" ? (
             <>
-              New to Vector?{" "}
+              New to Aimpoint?{" "}
               <Link className="font-medium text-foreground underline underline-offset-4" href={`/signup${nextQs}`}>
                 Create an account
               </Link>

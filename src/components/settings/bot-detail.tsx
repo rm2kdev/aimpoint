@@ -117,8 +117,8 @@ export function BotDetail({
             title="Backend"
             desc={
               <>
-                What runs {bot.name}. When it&rsquo;s assigned a task or @mentioned, Vector sends the task and its thread to this backend, and the agent works on
-                the ticket through Vector&rsquo;s tools.
+                What runs {bot.name}. When it&rsquo;s assigned a task or @mentioned, Aimpoint sends the task and its thread to this backend, and the agent works on
+                the ticket through Aimpoint&rsquo;s tools.
               </>
             }
           >
@@ -214,7 +214,7 @@ export function BotDetail({
 
           <Row
             title="Max concurrent tasks"
-            desc={`How many tasks ${bot.name} works on at once (${BOT_MAX_TASKS_MIN}-${BOT_MAX_TASKS_MAX}). Shown in the bot status tray; Vector doesn't hold work back when it's reached yet.`}
+            desc={`How many tasks ${bot.name} works on at once (${BOT_MAX_TASKS_MIN}-${BOT_MAX_TASKS_MAX}). Shown in the bot status tray; Aimpoint doesn't hold work back when it's reached yet.`}
           >
             <form
               className="flex max-w-xl items-center gap-2"

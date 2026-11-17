@@ -87,7 +87,7 @@ export function OrgFlowSettings({ flow, projects, counts }: { flow: OrgFlowData;
         title="Default flow"
         desc={
           <>
-            The steps a task goes through and who owns each one. When a step is finished, Vector moves the task to the next step&rsquo;s status and hands it to
+            The steps a task goes through and who owns each one. When a step is finished, Aimpoint moves the task to the next step&rsquo;s status and hands it to
             that step&rsquo;s owner, with its instructions. Owners can be people or{" "}
             <Link href={orgPath(org.slug, "settings", "bots")} className="underline underline-offset-2 hover:text-foreground">
               bots

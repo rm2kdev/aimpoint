@@ -5,8 +5,8 @@ import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Vector",
-    short_name: "Vector",
+    name: "Aimpoint",
+    short_name: "Aimpoint",
     description: "Issues and feature requests for small software teams.",
     start_url: "/",
     scope: "/",

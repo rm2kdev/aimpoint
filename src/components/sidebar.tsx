@@ -56,7 +56,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
       <Link
         href={orgPath(org.slug, "my")}
         onClick={onNavigate}
-        aria-label="Vector home"
+        aria-label="Aimpoint home"
         className="mb-1.5 flex h-9 items-center rounded-lg px-2 outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <Logo />

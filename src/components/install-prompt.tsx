@@ -148,7 +148,7 @@ export function InstallPrompt({ className }: { className?: string }) {
   if (!mode || !open) return null;
   return (
     <aside
-      aria-label="Install Vector"
+      aria-label="Install Aimpoint"
       data-install-prompt={mode}
       className={cn(
         "pointer-events-auto flex w-full items-start gap-3 rounded-[10px] bg-popover p-3 text-popover-foreground shadow-lg ring-1 ring-foreground/10 sm:w-[360px]",
@@ -158,7 +158,7 @@ export function InstallPrompt({ className }: { className?: string }) {
       {/* eslint-disable-next-line @next/next/no-img-element -- static 192px PWA icon from public/ */}
       <img src="/icon-192.png" alt="" width={36} height={36} className="mt-0.5 size-9 shrink-0 rounded-[9px] ring-1 ring-foreground/10" />
       <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] leading-5 font-medium">Install Vector</p>
+        <p className="text-[13.5px] leading-5 font-medium">Install Aimpoint</p>
         {mode === "ios" ? (
           <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">
             Tap Share
@@ -168,7 +168,7 @@ export function InstallPrompt({ className }: { className?: string }) {
           </p>
         ) : (
           <>
-            <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">Open Vector in its own window, straight from your home screen or dock.</p>
+            <p className="mt-0.5 text-[13px] leading-5 text-muted-foreground">Open Aimpoint in its own window, straight from your home screen or dock.</p>
             <Button size="sm" className="mt-2.5" onClick={() => void promptInstall()}>
               Install app
             </Button>

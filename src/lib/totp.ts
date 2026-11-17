@@ -74,7 +74,7 @@ export function matchTotp(secret: string, code: string, { skew = 1, now = Date.n
 }
 
 /** otpauth:// URI for the QR code. */
-export function otpauthUri(secret: string, account: string, issuer = "Vector") {
+export function otpauthUri(secret: string, account: string, issuer = "Aimpoint") {
   const label = encodeURIComponent(`${issuer}:${account}`);
   const q = new URLSearchParams({ secret, issuer, algorithm: "SHA1", digits: String(TOTP_DIGITS), period: String(TOTP_PERIOD) });
   return `otpauth://totp/${label}?${q}`;

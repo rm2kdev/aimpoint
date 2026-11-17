@@ -325,7 +325,7 @@ export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: T
   const later = flow.steps.slice(i + 1).filter((s) => s.required && s.status.category !== "done");
   let finish: string;
   if (step.advance === "wait") {
-    finish = `This step waits for "${step.wait?.label ?? "an outside event"}": it moves on when that happens, not when you call complete_task. When it has happened, call advance_task with a comment saying what happened (the step owner and its resolver bots may), or a person moves it on. While it waits you aren't counted as working on it: Vector marks your part done as soon as it's handed to you, so there's nothing to complete_task.`;
+    finish = `This step waits for "${step.wait?.label ?? "an outside event"}": it moves on when that happens, not when you call complete_task. When it has happened, call advance_task with a comment saying what happened (the step owner and its resolver bots may), or a person moves it on. While it waits you aren't counted as working on it: Aimpoint marks your part done as soon as it's handed to you, so there's nothing to complete_task.`;
   } else if (!next) {
     finish = "Finish with complete_task.";
   } else if (next.status.category === "done") {
