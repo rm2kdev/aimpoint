@@ -14,13 +14,18 @@ Set up through the Stripe MCP on 2026-11-18 (VEC-239).
 
 ## Staging (Stripe sandbox, test mode)
 
+Staging is https://dev.aimpoint.dev: the `development` branch of rm2kdev/aimpoint on the Vercel project
+`aimpoint` (team ryan-s-projects-335ad04d), env vars scoped to Preview + git branch `development`.
+Production (https://app.aimpoint.dev, branch `main`) has no billing yet: its Stripe vars are placeholders
+and `BILLING_ENABLED` is unset.
+
 | Object | Id |
 | --- | --- |
 | Account | `acct_1Ud2KoBCR0YJ1Rig` ("Aimpoint sandbox") |
 | Product "Aimpoint Pro" | `prod_VeQVjZRNfseHh2` |
 | Price (495 USD / month per seat, licensed, lookup key `aimpoint_pro_seat_monthly`) | `price_1Ud7eDBCR0YJ1Rig69Ka9fir` |
 | Customer Portal configuration (account default) | `bpc_1Ud7eWBCR0YJ1RigELr7Mq9e` |
-| Webhook endpoint | not created yet: no staging deployment exists (see below) |
+| Webhook endpoint (`https://dev.aimpoint.dev/api/stripe/webhook`, created in VEC-251) | `we_1Ud8gbBCR0YJ1Rig007M4JMX` |
 
 ## Production (Stripe live mode)
 
@@ -30,10 +35,25 @@ Set up through the Stripe MCP on 2026-11-18 (VEC-239).
 | Product "Aimpoint Pro" | `prod_VeQVNfCBhrBm0v` |
 | Price (495 USD / month per seat, licensed, lookup key `aimpoint_pro_seat_monthly`) | `price_1Ud7eDPkMccAD7nRtmuQvbBM` |
 | Customer Portal configuration (account default) | `bpc_1Ud7edPkMccAD7nRPkadm64D` |
-| Webhook endpoint | not created yet: no production deployment exists (see below) |
+| Webhook endpoint | not created: billing is off in production for now (see below) |
 
-Both prices use `tax_behavior: exclusive` (tax, if Stripe Tax is ever turned on, is added on top of
-US$4.95).
+Both prices use `tax_behavior: exclusive`, so tax is added on top of US$4.95.
+
+## Tax and Stripe Managed Payments
+
+Stripe Managed Payments (Stripe as merchant of record) is on by default (confirmed in the sandbox) and is
+kept on (decided by Ryan in VEC-245). It requires a product tax code, or Checkout refuses to create a
+session ("the product tax code is missing"). Both "Aimpoint Pro" products use
+`tax_code = txcd_10103001` (Software as a service, business use):
+
+| Environment | Product | Tax code |
+| --- | --- | --- |
+| Staging (sandbox) | `prod_VeQVjZRNfseHh2` | `txcd_10103001` (set in VEC-241) |
+| Production (live) | `prod_VeQVNfCBhrBm0v` | `txcd_10103001` (set in VEC-245) |
+
+Managed Payments adds the customer's local tax on top at Checkout (for example 10% GST for an
+Australian address), so the Customer Portal and invoices show the tax-inclusive amount while Aimpoint
+shows the pre-tax price. Any new product must get the same tax code.
 
 ## Customer Portal
 
@@ -46,9 +66,10 @@ in `src/lib/stripe.ts` uses it without passing a `configuration` id:
 - update subscription (plan or quantity): off, the app manages seat quantity
 - update customer details: off
 
-## Webhook endpoint (to do once a deployment exists)
+## Webhook endpoint
 
-When a staging or production URL exists, create an endpoint in the matching account:
+Staging has one (VEC-251, table above). For production, create an endpoint in the live account once
+billing is turned on there:
 
 - URL: `<base>/api/stripe/webhook`
 - events: `checkout.session.completed`, `customer.subscription.created`,
@@ -57,12 +78,13 @@ When a staging or production URL exists, create an endpoint in the matching acco
 Its signing secret (`whsec_...`) is shown once on creation and goes into `STRIPE_WEBHOOK_SECRET` for
 that environment. Record the endpoint id and URL in the tables above.
 
-As of VEC-239 there is no Aimpoint project on Vercel (checked both teams through the Vercel MCP) and
-`aimpoint.dev` does not resolve, so no endpoint was created and no Vercel env vars were set.
+dev.aimpoint.dev is a Vercel preview deployment. If Vercel Deployment Protection covers it, Stripe's
+deliveries get Vercel's 401/302 instead of reaching the app, so protection has to be off for it or the
+endpoint URL has to carry a protection-bypass secret.
 
 ## Environment variables
 
-| Variable | Staging (Vercel Preview) | Production (Vercel Production) |
+| Variable | Staging (Vercel Preview, branch `development`) | Production (Vercel Production) |
 | --- | --- | --- |
 | `BILLING_ENABLED` | `true` | `true` |
 | `STRIPE_PRICE_ID` | `price_1Ud7eDBCR0YJ1Rig69Ka9fir` | `price_1Ud7eDPkMccAD7nRtmuQvbBM` |
