@@ -10,7 +10,7 @@ import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { taskAccess } from "@/lib/access";
-import { advanceTarget, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
+import { advanceTarget, atWaitStep, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
 import { nextStepOf } from "@/lib/flow-engine-core";
 import { botOrgFlows } from "@/lib/flow-bot-view";
 import { notify } from "@/lib/notifications";
@@ -459,15 +459,19 @@ const TOOLS: Record<string, ToolImpl> = {
 
       // 3. Assigned tasks not yet picked up.
       for (const t of await unclaimedAssigned(ctx)) {
+        // A wait step (design 5.7, VEC-181): told once with the wait instructions, then done, so the bot isn't shown as
+        // working while the task waits and this loop never offers it again.
+        const waiting = await atWaitStep(t);
+        const now = new Date();
         try {
-          await c.agentClaims.insertOne({ _id: new ObjectId(), orgId: ctx.org._id, botId: ctx.bot._id, taskId: t._id, state: "in_progress", claimedAt: new Date(), finishedAt: null });
+          await c.agentClaims.insertOne({ _id: new ObjectId(), orgId: ctx.org._id, botId: ctx.bot._id, taskId: t._id, state: waiting ? "done" : "in_progress", claimedAt: now, finishedAt: waiting ? now : null });
         } catch (err) {
           if ((err as { code?: number }).code === 11000) continue; // another run picked it up
           throw err;
         }
         // The status follows the work (Todo / In Review -> In Progress). That broadcast carries the claim too.
-        const moved = await markStartedByBot(ctx.org._id, ctx.bot._id, t._id);
-        if (!moved) await publishWorking(ctx.org._id, ctx.bot._id, [t._id]);
+        const moved = waiting ? false : await markStartedByBot(ctx.org._id, ctx.bot._id, t._id);
+        if (!moved && !waiting) await publishWorking(ctx.org._id, ctx.bot._id, [t._id]);
         const task = await c.tasks.findOne({ _id: t._id });
         const project = task && (await c.projects.findOne({ _id: task.projectId }));
         if (!task || !project) continue;
@@ -483,8 +487,12 @@ const TOOLS: Record<string, ToolImpl> = {
           ctx,
           task,
           project,
-          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to ${w.started ?? "a started status"} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back).${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
-          { includeImages, extra: { kind: "assigned", queue: await queueCounts(ctx), ...(flow ? { flow: flow.payload } : {}) } },
+          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${
+            waiting
+              ? ` It's waiting at a flow step, so Vector doesn't count you as working on it: watch for what it waits for and move it on with advance_task when that happens.`
+              : `${moved ? ` It's now picked up by you, and Vector moved it to ${w.started ?? "a started status"} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back).`
+          }${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
+          { includeImages, extra: { kind: "assigned", ...(waiting ? { waiting: true } : {}), queue: await queueCounts(ctx), ...(flow ? { flow: flow.payload } : {}) } },
         );
       }
 
@@ -648,7 +656,8 @@ const TOOLS: Record<string, ToolImpl> = {
       const key = `${project.key}-${task.number}`;
       // A flow hand-off gave the task its next owner (an advance, or an explicit status that sent it to another step's
       // owner, e.g. a tester failing it back to Develop): nothing is left waiting on this bot, so no review note.
-      const handoff = step?.kind === "advance" || (moved && (await handedOnByFlow(task._id, ctx.bot._id))) ? "" : await reviewHandoff(ctx, task._id, key, comment);
+      // At a wait step nothing is left for a reviewer either: it moves on with advance_task (VEC-181).
+      const handoff = step?.kind === "advance" || step?.kind === "wait" || (moved && (await handedOnByFlow(task._id, ctx.bot._id))) ? "" : await reviewHandoff(ctx, task._id, key, comment);
       // Parked behind open dependencies nobody owns (the status didn't change, or no status was given): take them (VEC-107).
       const owned = [...assignedBlockersOf(moved), ...(await ownUnownedBlockers(ctx.actor, task._id))];
       // Where it is now and who has it (VEC-176), unless the flow note already said so.

@@ -27,6 +27,7 @@ import type {
 } from "@/lib/types";
 import { botMaxTasks } from "@/lib/types";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
+import { atWaitStep } from "@/lib/flow-engine";
 
 /** The status set every new project starts with (VEC-114: statuses belong to a project). */
 export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId" | "projectId">[] = [
@@ -290,6 +291,13 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
         .toArray()
     : [];
   for (const d of closingOut) if (d.closeout) finishedBy.delete(`${d._id.toHexString()}:${d.closeout.botId.toHexString()}`);
+  // ...nor while the task sits at a flow wait step (VEC-181): its bot was told what to watch for and its claim is done
+  // on purpose (design 5.7); the task is waiting for an outside event, not left behind.
+  const stillFinished = maybeFinished.filter((t) => finishedBy.has(`${t.id}:${t.assigneeId}`));
+  if (stillFinished.length) {
+    const docs = await c.tasks.find({ _id: { $in: stillFinished.map((t) => new ObjectId(t.id)) } }, { projection: { orgId: 1, projectId: 1, statusId: 1, flow: 1 } }).toArray();
+    for (const d of docs) if (await atWaitStep(d)) finishedBy.delete(`${d._id.toHexString()}:${stillFinished.find((t) => t.id === d._id.toHexString())!.assigneeId}`);
+  }
   const byKey = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
   for (const t of blocked) {
     const keys = blocking.get(t.id)!.sort(byKey);

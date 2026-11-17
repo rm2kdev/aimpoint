@@ -269,6 +269,19 @@ export async function advanceTarget(task: TaskDoc): Promise<AdvanceTarget> {
 }
 
 /**
+ * The task sits at a wait step of its flow (design 5.7, VEC-181): a bot handed it is told once with the wait
+ * instructions and its claim is done straight away, so it isn't shown as working (nor as "finished" Stalled) while
+ * the task waits. Paused flows and closed statuses don't count.
+ */
+export async function atWaitStep(task: FlowTask, loaded?: TaskFlowContext | null): Promise<boolean> {
+  if (task.flow?.paused) return false;
+  const ctx = loaded !== undefined ? loaded : await loadTaskFlow(task);
+  if (!ctx?.current || !ctx.status) return false;
+  if (ctx.status.category === "done" || ctx.status.category === "cancelled" || ctx.status.category === "triage") return false;
+  return ctx.current.advance === "wait";
+}
+
+/**
  * Where a bot's pickup moves a flow task (design 5.4). `legacy`: no flow / not on a step, use the old rule (first
  * started status). `stay`: leave the status alone (the step already sits in a started status). `move`: go here.
  */
@@ -312,7 +325,7 @@ export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: T
   const later = flow.steps.slice(i + 1).filter((s) => s.required && s.status.category !== "done");
   let finish: string;
   if (step.advance === "wait") {
-    finish = `This step waits for "${step.wait?.label ?? "an outside event"}": it moves on when that happens, not when you call complete_task. When it has happened, call advance_task with a comment saying what happened (the step owner and its resolver bots may), or a person moves it on.`;
+    finish = `This step waits for "${step.wait?.label ?? "an outside event"}": it moves on when that happens, not when you call complete_task. When it has happened, call advance_task with a comment saying what happened (the step owner and its resolver bots may), or a person moves it on. While it waits you aren't counted as working on it: Vector marks your part done as soon as it's handed to you, so there's nothing to complete_task.`;
   } else if (!next) {
     finish = "Finish with complete_task.";
   } else if (next.status.category === "done") {
