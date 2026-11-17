@@ -6,9 +6,9 @@ import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
 /**
- * Upgrade prompts (VEC-226): where a Free limit bites, the action is disabled and this line says why, with a
+ * Upgrade prompts (VEC-226): where a feature is unavailable to an unpaid (locked) org, the action is disabled and this line says why, with a
  * link to Settings > Billing. Admins are told to upgrade; members to ask an admin. Render it only when the
- * limit applies (`atLimit` / `billing.features`), which is never with billing off.
+ * feature is off (`billing.features`), which is never with billing off.
  */
 /** `gain` ends the sentence: "Upgrade to Pro for <gain>.", e.g. `unlimited ${countNoun(kind, 2)}` or "Public forms". */
 export function UpgradeNote({ reason, gain, className }: { reason: string; gain: string; className?: string }) {
@@ -25,7 +25,7 @@ export function UpgradeNote({ reason, gain, className }: { reason: string; gain:
   );
 }
 
-/** Small neutral "Pro" chip after a nav entry the Free plan doesn't include. */
+/** Small neutral "Pro" chip after a nav entry an unpaid (locked) org can't use. */
 export function ProTag({ className }: { className?: string }) {
   return (
     <span

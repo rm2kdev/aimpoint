@@ -5,7 +5,7 @@ import { clientIp, FORM_BODY_MAX, submitPublicForm, type RawSubmission } from "@
  * Public submission endpoint for external forms (VEC-207). No session: anyone with the form's link may post.
  * Takes JSON (the form page's fetch) or a plain urlencoded/multipart form post (no JavaScript, or someone's own
  * HTML form), caps the body at FORM_BODY_MAX, and answers with a short message only:
- *   200 {ok:true}  400 bad input  403 unavailable (org on the Free plan, VEC-224)  404 unknown/disabled form  413 too large
+ *   200 {ok:true}  400 bad input  403 unavailable (org unpaid/locked, VEC-224/262)  404 unknown/disabled form  413 too large
  *   429 rate limited (Retry-After).
  * A plain form post is redirected back to the page (303) with `?sent=1` or `?error=<message>`.
  */

@@ -1,7 +1,8 @@
 /**
  * Billing for managed hosting (VEC-222). The rules and numbers live in `billing-core.ts`; this module
  * reads the deployment flag and gives server code getPlan / getEntitlements plus the assert helpers the
- * enforcement paths call. With `BILLING_ENABLED` off (the default) every org is "unlimited" and no
+ * enforcement paths call: assertOrgActive (VEC-262, the org is locked without a live subscription) and
+ * assertEntitlement. With `BILLING_ENABLED` off (the default) every org is "unlimited" and no
  * Stripe env is needed. With it on, missing Stripe env is a hard error (checked at startup in
  * `src/instrumentation.ts` and again on first use).
  *
@@ -21,17 +22,35 @@ import {
   debugStripeProblems,
   entitlementsFor,
   featureMessage,
-  limitMessage,
   missingStripeEnv,
+  orgAccessMessage,
+  planActive,
   planFor,
   type Entitlements,
   type Feature,
-  type LimitKind,
   type Plan,
 } from "@/lib/billing-core";
 
-export type { Entitlements, Feature, LimitKind, Plan } from "@/lib/billing-core";
-export { PLAN_LABEL, PRO_PRICE_LABEL, limitOf } from "@/lib/billing-core";
+export type { Entitlements, Feature, Plan } from "@/lib/billing-core";
+export { PLAN_LABEL, PRO_PRICE_LABEL } from "@/lib/billing-core";
+
+/** A refusal because of the org's plan: REST answers 402, the UI and MCP show the message (it says how to subscribe). */
+export class PlanLimitError extends UserError {
+  readonly upgrade = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "PlanLimitError";
+  }
+}
+
+/** The org has no live subscription, so it's locked (VEC-262). A PlanLimitError, so every 402 mapping covers it. */
+export class OrgLockedError extends PlanLimitError {
+  readonly locked = true;
+  constructor(message: string) {
+    super(message);
+    this.name = "OrgLockedError";
+  }
+}
 
 /** Thrown when billing is on but Stripe isn't configured. Not a UserError: it must not read as a user mistake. */
 export class BillingConfigError extends Error {
@@ -109,18 +128,30 @@ export function getEntitlements(org: OrgLike, now?: Date): Entitlements {
   return entitlementsFor(getPlan(org, now));
 }
 
-/** Throws a UserError with an upgrade message when the org's plan lacks `feature`. */
-export function assertEntitlement(org: OrgLike, feature: Feature): void {
-  const msg = featureMessage(getPlan(org), feature);
-  if (msg) throw new UserError(msg);
+/** Whether the org can be used: Pro, or billing off (self-hosted). False = locked until an admin subscribes. */
+export function isOrgActive(org: OrgLike, now?: Date): boolean {
+  return planActive(getPlan(org, now));
 }
 
 /**
- * Throws a UserError with an upgrade message when adding one more `kind` would pass the plan's limit.
- * `current` = how many the org has now (people, bots, projects), or for concurrentBotTasks the tasks the
- * bot is already working on.
+ * Why the org is locked, worded for an admin (subscribe in Settings > Billing) or a member (ask an admin), or null
+ * when it's usable.
  */
-export function assertWithinLimit(org: OrgLike, kind: LimitKind, current: number): void {
-  const msg = limitMessage(getPlan(org), kind, current);
-  if (msg) throw new UserError(msg);
+export function orgLockMessage(org: OrgLike, opts: { isAdmin?: boolean; now?: Date } = {}): string | null {
+  return orgAccessMessage(getPlan(org, opts.now), !!opts.isAdmin, org.billing ?? null);
+}
+
+/**
+ * Throws OrgLockedError (REST 402) when the org has no live subscription. Every path except Settings > Billing and
+ * signing in calls this before doing anything (wired up in VEC-263).
+ */
+export function assertOrgActive(org: OrgLike, opts: { isAdmin?: boolean; now?: Date } = {}): void {
+  const msg = orgLockMessage(org, opts);
+  if (msg) throw new OrgLockedError(msg);
+}
+
+/** Throws PlanLimitError (REST 402) when the org's plan lacks `feature` (only an unpaid, locked org does). */
+export function assertEntitlement(org: OrgLike, feature: Feature, opts: { isAdmin?: boolean } = {}): void {
+  const msg = featureMessage(getPlan(org), feature, opts.isAdmin ?? true);
+  if (msg) throw new PlanLimitError(msg);
 }

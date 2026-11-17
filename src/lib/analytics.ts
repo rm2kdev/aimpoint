@@ -223,7 +223,7 @@ function openAt(t: OpenStateRow, at: Date): boolean {
  * (loadAnalytics does `requireOrg(slug, {admin: true})`). Exported for the export endpoints and scripts.
  */
 export async function computeAnalytics(orgId: ObjectId, query: AnalyticsQuery): Promise<AnalyticsReport> {
-  // Free plan has no Analytics (VEC-224): every caller (screen, refresh, CSV, REST, MCP) goes through here.
+  // An unpaid (locked) org has no Analytics (VEC-224/262): every caller (screen, refresh, CSV, REST, MCP) goes through here.
   await requireFeatureById(orgId, "analytics");
   const p = parseAnalyticsQuery(query);
   const c = await cols();

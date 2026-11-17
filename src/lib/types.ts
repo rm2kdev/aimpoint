@@ -103,7 +103,7 @@ export interface OrgDoc {
   createdAt: Date;
   /** Org-wide defaults (VEC-128). Absent fields read as their preset (see loadOrgDefaults). */
   defaults?: Partial<OrgDefaults>;
-  /** Stripe subscription state (VEC-222), written by the Stripe webhook. Absent = never subscribed (Free when billing is on). */
+  /** Stripe subscription state (VEC-222), written by the Stripe webhook. Absent = never subscribed (unpaid, so locked, when billing is on; VEC-262). */
   billing?: OrgBilling;
 }
 /** Stripe subscription statuses (https://docs.stripe.com/api/subscriptions/object#subscription_object-status). */
@@ -890,7 +890,7 @@ export interface Project {
   archived: boolean;
   /** The project's new-task status override (VEC-190), one of its own statuses; null = inherits the org default. */
   newTaskStatusId: string | null;
-  /** Public project switched on (VEC-256 badge; ProjectDoc.publicAccess.enabled). The Free plan still hides the public page. */
+  /** Public project switched on (VEC-256 badge; ProjectDoc.publicAccess.enabled). An unpaid (locked) org still hides the public page. */
   public: boolean;
 }
 export interface ProjectDetail extends Project {

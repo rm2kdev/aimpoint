@@ -24,7 +24,6 @@ import {
 import { setProjectPublicAccess } from "@/app/actions/project-public";
 import { STAGE_LABELS } from "@/lib/stages";
 import { publicProjectPath } from "@/lib/paths";
-import { PLAN_LABEL } from "@/lib/billing-view";
 import { UpgradeNote } from "@/components/upgrade-note";
 import { isFormDestinationStage, type ProjectPublicAccess, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -137,7 +136,7 @@ export function ProjectPublic({
 
   const lockedNote = locked && enabled && (
     <p data-public-locked className="rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground">
-      On the {PLAN_LABEL[billing.plan]} plan the public page shows &ldquo;unavailable&rdquo; to visitors and nobody can submit. Settings are kept.
+      Without a Pro subscription the public page shows &ldquo;unavailable&rdquo; to visitors and nobody can submit. Settings are kept.
     </p>
   );
 
@@ -195,7 +194,7 @@ export function ProjectPublic({
             aria-label={enabled ? `Make ${projectName} private` : `Make ${projectName} public`}
           />
         </div>
-        {!enabled && locked && <UpgradeNote className="-mt-2" reason={`Public projects aren't included in the ${PLAN_LABEL[billing.plan]} plan.`} gain="public projects" />}
+        {!enabled && locked && <UpgradeNote className="-mt-2" reason="Public projects need a Pro subscription." gain="public projects" />}
         {!enabled && archived && <p className="-mt-2 text-[12.5px] text-faint">Restore the project to make it public.</p>}
 
         {enabled && link}

@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { countNoun, PLAN_INCLUDES, PLAN_LABEL, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { countNoun, PLAN_LABEL, PRO_INCLUDES, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
 import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +26,7 @@ function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean
   switch (b.status) {
     case "active":
       if (b.cancelAtPeriodEnd)
-        return { text: `Cancels on ${end ?? "the end of the billing period"}. The organisation moves to Free then; nothing is deleted.` };
+        return { text: `Cancels on ${end ?? "the end of the billing period"}. The organisation is locked then until it subscribes again; nothing is deleted.` };
       return { text: end ? `Renews on ${end}.` : "Active." };
     case "trialing":
       return { text: end ? `Trial ends on ${end}.` : "On a trial." };
@@ -38,21 +38,21 @@ function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean
           text: `The last payment failed. Pro stays on${grace ? ` until ${grace}` : ""} while Stripe retries; update the card in Manage billing to keep it.`,
         };
       }
-      return { warn: true, text: "Payment is overdue, so the organisation is on Free until it's paid. Update the card in Manage billing." };
+      return { warn: true, text: "Payment is overdue, so the organisation is locked until it's paid. Update the card in Manage billing." };
     }
     case "unpaid":
-      return { warn: true, text: "The subscription is unpaid, so the organisation is on Free. Pay the open invoice in Manage billing." };
+      return { warn: true, text: "The subscription is unpaid, so the organisation is locked. Pay the open invoice in Manage billing." };
     case "paused":
-      return { text: "The subscription is paused, so the organisation is on Free. Resume it in Manage billing." };
+      return { warn: true, text: "The subscription is paused, so the organisation is locked. Resume it in Manage billing." };
     case "incomplete":
-      return { warn: true, text: "The first payment didn't go through. Subscribe again to finish upgrading." };
+      return { warn: true, text: "The first payment didn't go through, so the organisation is locked. Subscribe again to unlock it." };
     case "canceled": {
       // endedAt, not the period end: an immediate cancel keeps a period end a month out (VEC-231).
       const ended = formatDate(b.endedAt, tz);
-      return { text: ended ? `The Pro subscription ended on ${ended}.` : "The Pro subscription has ended." };
+      return { warn: true, text: `${ended ? `The Pro subscription ended on ${ended}` : "The Pro subscription has ended"}, so the organisation is locked. Subscribe again to unlock it; nothing has been deleted.` };
     }
     default:
-      return { text: `Free for 1 person, 1 bot and 1 project. Upgrade to Pro for ${PRO_PRICE_LABEL}.` };
+      return { warn: true, text: `No subscription, so the organisation is locked. Subscribe to Pro (${PRO_PRICE_LABEL}) to unlock it; nothing has been deleted.` };
   }
 }
 
@@ -99,9 +99,6 @@ function CheckoutBanner({ checkout, pro }: { checkout: Exclude<Checkout, null>; 
 
 function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; label: string }) {
   const used = b.usage[kind];
-  const limit = b.limits[kind];
-  const over = limit !== null && used > limit;
-  const full = limit !== null && used >= limit;
   const extra =
     kind === "members" && b.usage.pendingInvites
       ? `incl. ${b.usage.pendingInvites} pending invite${b.usage.pendingInvites === 1 ? "" : "s"}`
@@ -114,14 +111,7 @@ function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; labe
         {label}
         {extra && <span className="ml-1.5 text-[12.5px] text-faint">{extra}</span>}
       </span>
-      {limit !== null && (
-        <span className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-chip sm:block" aria-hidden>
-          <span className={cn("block h-full rounded-full", over ? "bg-destructive" : "bg-foreground/70")} style={{ width: `${Math.min(100, (used / limit) * 100)}%` }} />
-        </span>
-      )}
-      <span className={cn("tabular w-28 text-right text-[13px]", over ? "text-destructive" : full ? "text-foreground" : "text-muted-foreground")}>
-        {limit === null ? `${used} ${countNoun(kind, used)}` : `${used} of ${limit}`}
-      </span>
+      <span className="tabular w-28 text-right text-[13px] text-muted-foreground">{`${used} ${countNoun(kind, used)}`}</span>
     </li>
   );
 }
@@ -141,24 +131,21 @@ function SeatsNote({ b, pro, billedSeats }: { b: BillingSummary; pro: boolean; b
   );
 }
 
-function PlanCard({ plan, current }: { plan: "free" | "pro"; current: boolean }) {
+function PlanCard({ current }: { current: boolean }) {
   return (
-    <div className={cn("rounded-[10px] border px-4 py-3.5", current ? "border-foreground/40" : "border-border")} data-plan-card={plan}>
+    <div className={cn("rounded-[10px] border px-4 py-3.5", current ? "border-foreground/40" : "border-border")} data-plan-card="pro">
       <div className="flex items-center gap-2">
-        <h3 className="text-[13.5px] font-semibold">{PLAN_LABEL[plan]}</h3>
+        <h3 className="text-[13.5px] font-semibold">{PLAN_LABEL.pro}</h3>
         {current && <Tag>Current</Tag>}
-        <span className="ml-auto text-[13px] text-muted-foreground">{plan === "pro" ? PRO_PRICE_LABEL : "US$0"}</span>
+        <span className="ml-auto text-[13px] text-muted-foreground">{PRO_PRICE_LABEL}</span>
       </div>
       <ul className="mt-2.5 grid gap-1.5 text-[13px]">
-        {PLAN_INCLUDES[plan].map((line) => {
-          const missing = line.startsWith("No ");
-          return (
-            <li key={line} className={cn("flex items-center gap-2", missing ? "text-faint" : "text-muted-foreground")}>
-              {missing ? <XIcon className="size-3.5 shrink-0" /> : <CheckIcon className="size-3.5 shrink-0" />}
-              {line}
-            </li>
-          );
-        })}
+        {PRO_INCLUDES.map((line) => (
+          <li key={line} className="flex items-center gap-2 text-muted-foreground">
+            <CheckIcon className="size-3.5 shrink-0" />
+            {line}
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -171,9 +158,8 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
   const [going, setGoing] = useState<"checkout" | "portal" | null>(null);
   const pro = b.plan === "pro";
   const state = describe(b, tz);
-  // On Pro, the quantity Stripe bills (from the webhook); before that, or on Free, the people in the org now.
+  // On Pro, the quantity Stripe bills (from the webhook); before that, or while locked, the people in the org now.
   const billedSeats = pro && b.subscribedSeats !== null ? b.subscribedSeats : b.seats;
-  const over = (["members", "bots", "projects"] as const).some((k) => b.limits[k] !== null && b.usage[k] > b.limits[k]!);
 
   const go = (which: "checkout" | "portal") =>
     start(async () => {
@@ -237,7 +223,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                   {!b.liveSubscription && !(checkout === "success" && !pro) && (
                     <Button onClick={() => go("checkout")} disabled={pending} className="gap-2" data-billing-action="checkout">
                       {going === "checkout" ? <LoaderIcon className="size-3.5 animate-spin" /> : <CreditCardIcon className="size-3.5" />}
-                      {b.status === "canceled" ? "Subscribe again" : `Upgrade to Pro, ${PRO_PRICE_LABEL}`}
+                      {b.status === "canceled" ? "Subscribe again" : `Subscribe to Pro, ${PRO_PRICE_LABEL}`}
                     </Button>
                   )}
                   {b.hasCustomer && (
@@ -256,24 +242,18 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
 
         <SettingsRow
           title="Usage"
-          desc={pro ? "Pro has no limits on people, bots or projects." : "What this organisation has against the Free plan's limits. Pending invites and archived projects count."}
+          desc="What this organisation has. Pro has no limits on people, bots or projects."
         >
           <ul className="max-w-2xl divide-y divide-border rounded-[10px] border border-border" aria-label="Usage">
             <UsageRow kind="members" b={b} label="People" />
             <UsageRow kind="bots" b={b} label="Bots" />
             <UsageRow kind="projects" b={b} label="Projects" />
           </ul>
-          {over && (
-            <p className="mt-2 max-w-2xl text-[12.5px] text-muted-foreground" data-over-limit>
-              This organisation has more than Free includes. Everything it already has stays, but nothing more can be added until it&rsquo;s within the limits or on Pro.
-            </p>
-          )}
         </SettingsRow>
 
-        <SettingsRow title="Plans" desc="Every organisation starts on Free. Pro unlocks everything for the whole organisation.">
+        <SettingsRow title="Plans" desc="Hosted Aimpoint has one plan, Pro, for the whole organisation. Self-hosting is free.">
           <div className="grid max-w-2xl gap-3 sm:grid-cols-2">
-            <PlanCard plan="free" current={b.plan === "free"} />
-            <PlanCard plan="pro" current={pro} />
+            <PlanCard current={pro} />
           </div>
         </SettingsRow>
       </div>

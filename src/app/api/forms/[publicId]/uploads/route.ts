@@ -5,7 +5,7 @@ import { uploadFormImage } from "@/lib/form-uploads";
 /**
  * Public image upload for external forms (VEC-233). No session: anyone with the form's link may post, when the form
  * has images on. Multipart with the image in `file`; the body is capped before it is read (lib/form-uploads.ts).
- *   200 {url}  400 not an image / bad request  403 images off, or org on the Free plan (VEC-224)
+ *   200 {url}  400 not an image / bad request  403 images off, or org unpaid/locked (VEC-224/262)
  *   404 unknown/disabled form  413 too large  429 rate limited (Retry-After)
  * The URL is all it returns: no ids or anything about the org. The image stays pending until a submission uses it.
  */

@@ -18,7 +18,7 @@ import { advanceMcpInstall, installRunning, preflightHermes, recordFailedInstall
 import { orgPath } from "@/lib/paths";
 import { MCP_SERVER_NAME } from "@/lib/mcp-name";
 import { flowOwnerRemoved } from "@/lib/flows";
-import { assertRoomForBot } from "@/lib/billing-limits";
+import { assertOrgActive } from "@/lib/billing";
 
 export interface BotInput {
   name: string;
@@ -44,7 +44,7 @@ export async function createBot(slug: string, input: BotInput): Promise<Result<{
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
     const data = clean(input, org._id.toHexString());
-    await assertRoomForBot(org);
+    assertOrgActive(org, { isAdmin: true });
     const { key, hash, hint } = generateKey();
     const now = new Date();
     const doc = { _id: new ObjectId(), orgId: org._id, ...data, maxTasks: BOT_MAX_TASKS_DEFAULT, mcpServerName: MCP_SERVER_NAME, keyHash: hash, keyHint: hint, keyRotatedAt: now, createdBy: user._id, createdAt: now };

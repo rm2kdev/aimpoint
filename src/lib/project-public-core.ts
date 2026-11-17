@@ -26,7 +26,7 @@ export const PUBLIC_TASKS_MAX = 500;
 /** Comments returned per task in the public view. */
 export const PUBLIC_COMMENTS_MAX = 200;
 
-/** What a public project says while its org is on the Free plan. Nothing about the plan or the org. */
+/** What a public project says while its org is unpaid (locked). Nothing about the plan or the org. */
 export const PUBLIC_UNAVAILABLE = "This project's public page is unavailable right now. Please try again later or contact the team that shared it.";
 
 export interface StatusLike {

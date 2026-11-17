@@ -11,9 +11,11 @@ import {
   debugBillingError,
   missingStripeEnv,
   billingConfigError,
-  limitMessage,
   featureMessage,
-  limitOf,
+  orgAccessMessage,
+  planActive,
+  unpaidReason,
+  PLAN_LABEL,
   PAST_DUE_GRACE_DAYS,
   PRO_PRICE_LABEL,
   PRO_SEAT_PRICE_CENTS,
@@ -28,21 +30,26 @@ const NOW = new Date("2026-11-18T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
 const ago = (days) => new Date(NOW.getTime() - days * DAY);
 
-const FREE = { maxMembers: 1, maxBots: 1, maxProjects: 1, maxConcurrentBotTasks: 1, analytics: false, publicForms: false };
-const ALL = { maxMembers: null, maxBots: null, maxProjects: null, maxConcurrentBotTasks: null, analytics: true, publicForms: true };
+const NONE = { analytics: false, publicForms: false };
+const ALL = { analytics: true, publicForms: true };
 
-test("billing disabled: every org is unlimited, whatever its billing state", () => {
+
+test("billing disabled (self-hosted): every org is unlimited and usable, whatever its billing state", () => {
   for (const billing of [undefined, null, {}, { status: "canceled" }, { status: "past_due", pastDueSince: ago(90) }, { status: "active" }]) {
     assert.equal(planFor(billing, false, NOW), "unlimited");
   }
   assert.deepEqual(entitlementsFor("unlimited"), ALL);
+  assert.equal(planActive("unlimited"), true);
+  assert.equal(orgAccessMessage("unlimited", false), null);
 });
 
-test("billing enabled, no subscription: Free with the Free numbers", () => {
-  assert.equal(planFor(undefined, true, NOW), "free");
-  assert.equal(planFor({}, true, NOW), "free");
-  assert.equal(planFor({ stripeCustomerId: "cus_1", status: null }, true, NOW), "free");
-  assert.deepEqual(entitlementsFor("free"), FREE);
+test("billing enabled, no subscription: unpaid (locked), no free tier", () => {
+  assert.equal(planFor(undefined, true, NOW), "unpaid");
+  assert.equal(planFor(null, true, NOW), "unpaid");
+  assert.equal(planFor({}, true, NOW), "unpaid");
+  assert.equal(planFor({ stripeCustomerId: "cus_1", status: null }, true, NOW), "unpaid");
+  assert.deepEqual(entitlementsFor("unpaid"), NONE);
+  assert.equal(planActive("unpaid"), false);
 });
 
 test("active and trialing are Pro (incl. cancel at period end until Stripe cancels)", () => {
@@ -50,29 +57,42 @@ test("active and trialing are Pro (incl. cancel at period end until Stripe cance
   assert.equal(planFor({ status: "active", cancelAtPeriodEnd: true }, true, NOW), "pro");
   assert.equal(planFor({ status: "trialing" }, true, NOW), "pro");
   assert.deepEqual(entitlementsFor("pro"), ALL);
+  assert.equal(planActive("pro"), true);
+  assert.equal(orgAccessMessage("pro", true), null);
 });
 
-test("past_due keeps Pro within the grace period, then Free", () => {
+test("past_due keeps Pro within the 7-day grace period, then locks", () => {
+  assert.equal(PAST_DUE_GRACE_DAYS, 7);
   assert.equal(planFor({ status: "past_due", pastDueSince: ago(1) }, true, NOW), "pro");
   assert.equal(planFor({ status: "past_due", pastDueSince: ago(PAST_DUE_GRACE_DAYS) }, true, NOW), "pro");
-  assert.equal(planFor({ status: "past_due", pastDueSince: ago(PAST_DUE_GRACE_DAYS + 0.01) }, true, NOW), "free");
-  // No pastDueSince: counts from currentPeriodEnd.
+  assert.equal(planFor({ status: "past_due", pastDueSince: ago(PAST_DUE_GRACE_DAYS + 0.01) }, true, NOW), "unpaid");
+  // No pastDueSince: counts from currentPeriodEnd; neither date: still Pro (the webhook hasn't stamped it yet).
   assert.equal(planFor({ status: "past_due", currentPeriodEnd: ago(2) }, true, NOW), "pro");
-  assert.equal(planFor({ status: "past_due", currentPeriodEnd: ago(30) }, true, NOW), "free");
+  assert.equal(planFor({ status: "past_due", currentPeriodEnd: ago(30) }, true, NOW), "unpaid");
+  assert.equal(planFor({ status: "past_due" }, true, NOW), "pro");
   // Dates may arrive as strings (JSON); still resolved.
   assert.equal(planFor({ status: "past_due", pastDueSince: ago(1).toISOString() }, true, NOW), "pro");
+  assert.equal(planFor({ status: "past_due", pastDueSince: ago(8).toISOString() }, true, NOW), "unpaid");
 });
 
-test("cancelled and other ended statuses are Free", () => {
+test("canceled, unpaid, incomplete, paused are unpaid (locked)", () => {
   for (const status of ["canceled", "unpaid", "incomplete", "incomplete_expired", "paused"]) {
-    assert.equal(planFor({ status, currentPeriodEnd: new Date(NOW.getTime() + 5 * DAY) }, true, NOW), "free", status);
+    assert.equal(planFor({ status, currentPeriodEnd: new Date(NOW.getTime() + 5 * DAY) }, true, NOW), "unpaid", status);
   }
 });
 
 test("entitlementsFor returns a copy", () => {
-  const e = entitlementsFor("free");
-  e.maxBots = 99;
-  assert.equal(entitlementsFor("free").maxBots, 1);
+  const e = entitlementsFor("pro");
+  e.analytics = false;
+  assert.equal(entitlementsFor("pro").analytics, true);
+});
+
+test("no Free plan anywhere", () => {
+  assert.deepEqual(Object.keys(PLAN_LABEL).sort(), ["pro", "unlimited", "unpaid"]);
+  for (const plan of ["pro", "unpaid", "unlimited"]) {
+    for (const feature of ["analytics", "publicForms"]) assert.doesNotMatch(featureMessage(plan, feature) ?? "", /\bFree\b/);
+    for (const admin of [true, false]) assert.doesNotMatch(orgAccessMessage(plan, admin) ?? "", /\bFree\b/);
+  }
 });
 
 test("BILLING_ENABLED parsing: unset/false = self-hosted", () => {
@@ -94,24 +114,31 @@ test("Stripe env: required only when billing is on, missing vars named", () => {
   assert.match(msg, /BILLING_ENABLED/);
 });
 
-test("limit messages: Free blocks the second one, Pro and unlimited never block", () => {
-  assert.equal(limitMessage("free", "projects", 0), null);
-  assert.match(limitMessage("free", "projects", 1), /Free plan includes 1 project\..*upgrade to Pro \(US\$4\.95 per user\/month\).*unlimited projects/);
-  assert.match(limitMessage("free", "members", 1), /1 person/);
-  assert.match(limitMessage("free", "bots", 3), /1 bot\b/);
-  assert.match(limitMessage("free", "concurrentBotTasks", 1), /a bot works on 1 task at a time/);
-  for (const plan of ["pro", "unlimited"]) {
-    for (const kind of ["members", "bots", "projects", "concurrentBotTasks"]) assert.equal(limitMessage(plan, kind, 10_000), null);
-  }
-  assert.equal(limitOf(entitlementsFor("free"), "concurrentBotTasks"), 1);
-  assert.equal(limitOf(entitlementsFor("pro"), "members"), null);
+test("lock message: admins subscribe in Settings > Billing, members ask an admin", () => {
+  const admin = orgAccessMessage("unpaid", true);
+  assert.match(admin, /^This organisation is locked\./);
+  assert.match(admin, /Pro subscription \(US\$4\.95 per user\/month\)/);
+  assert.match(admin, /Subscribe in Settings > Billing to unlock it; nothing has been deleted\./);
+  const member = orgAccessMessage("unpaid", false);
+  assert.match(member, /Ask an admin to subscribe in Settings > Billing/);
+  assert.doesNotMatch(member, /^.*Subscribe in Settings/);
+  // The billing state sharpens the reason.
+  assert.match(orgAccessMessage("unpaid", true, null), /It has no subscription,/);
+  assert.match(orgAccessMessage("unpaid", true, { status: "canceled" }), /Its subscription has ended,/);
+  assert.match(orgAccessMessage("unpaid", true, { status: "past_due", pastDueSince: ago(9) }), /Its last payment failed,/);
+  assert.match(orgAccessMessage("unpaid", false, { status: "unpaid" }), /Its last payment failed,/);
+  assert.match(orgAccessMessage("unpaid", true, { status: "paused" }), /paused/);
+  assert.match(orgAccessMessage("unpaid", true, { status: "incomplete_expired" }), /first payment didn't go through/);
+  assert.equal(unpaidReason(undefined), "It has no subscription");
 });
 
-test("feature messages: Free lacks Analytics and Public forms", () => {
-  assert.match(featureMessage("free", "analytics"), /Analytics isn't included in the Free plan/);
-  assert.match(featureMessage("free", "publicForms"), /Public forms isn't included/);
-  assert.equal(featureMessage("pro", "analytics"), null);
-  assert.equal(featureMessage("unlimited", "publicForms"), null);
+test("feature messages: only an unpaid org lacks Analytics and Public forms, with the lock message", () => {
+  assert.match(featureMessage("unpaid", "analytics"), /^Analytics isn't available\. This organisation is locked\..*Subscribe in Settings > Billing/);
+  assert.match(featureMessage("unpaid", "publicForms", false), /^Public forms isn't available\..*Ask an admin/);
+  for (const plan of ["pro", "unlimited"]) {
+    assert.equal(featureMessage(plan, "analytics"), null);
+    assert.equal(featureMessage(plan, "publicForms"), null);
+  }
 });
 
 test("per-seat price (VEC-238): US$4.95 per user per month", () => {
@@ -143,13 +170,6 @@ test("seat quantity for Stripe: at least 1, whole numbers", () => {
   assert.equal(seatQuantity(7), 7);
   assert.equal(seatQuantity(2.9), 2);
   assert.equal(seatQuantity(NaN), 1);
-});
-
-test("Free plan limits unchanged by per-seat pricing", () => {
-  assert.equal(entitlementsFor("free").maxMembers, 1);
-  assert.equal(entitlementsFor("free").maxBots, 1);
-  assert.equal(entitlementsFor("free").maxProjects, 1);
-  assert.equal(entitlementsFor("pro").maxMembers, null);
 });
 
 test("debug toggle (VEC-240) only exists with AIMPOINT_DEBUG on and BILLING_ENABLED off", () => {

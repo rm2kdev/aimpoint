@@ -31,7 +31,6 @@ import { STAGE_LABELS } from "@/lib/stages";
 import { isFormDestinationStage, TASK_TYPES, type FormTypeMode, type ProjectForm, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { UpgradeNote } from "@/components/upgrade-note";
-import { PLAN_LABEL } from "@/lib/billing-view";
 
 /** Public URL path of a form (the route itself is VEC-207's). */
 const formPath = (publicId: string) => `/f/${encodeURIComponent(publicId)}`;
@@ -106,7 +105,7 @@ export function ProjectForms({
   formCount: number;
 }) {
   const { org, isAdmin, statusesByProject, billing } = useOrg();
-  // Free plan (VEC-224/226): no new forms; existing ones stay editable but show "Form unavailable" publicly.
+  // Unpaid, locked org (VEC-224/262): no new forms; existing ones stay editable but show "Form unavailable" publicly.
   const formsLocked = !billing.features.publicForms;
   const router = useRouter();
   const origin = useOrigin();
@@ -169,7 +168,7 @@ export function ProjectForms({
       <div className="grid max-w-2xl gap-3">
         {formsLocked && forms.length > 0 && (
           <p data-forms-locked className="rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground">
-            On the {PLAN_LABEL[billing.plan]} plan these forms are kept but show &ldquo;Form unavailable&rdquo; to visitors.
+            Without a Pro subscription these forms are kept but show &ldquo;Form unavailable&rdquo; to visitors.
           </p>
         )}
         {forms.length === 0 ? (
@@ -278,7 +277,7 @@ export function ProjectForms({
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditing("new")} disabled={archived || formsLocked || destinations.length === 0}>
             <PlusIcon className="size-3.5" /> Add form
           </Button>
-          {formsLocked && <UpgradeNote reason={`Public forms aren't included in the ${PLAN_LABEL[billing.plan]} plan.`} gain="Public forms" />}
+          {formsLocked && <UpgradeNote reason="Public forms need a Pro subscription." gain="Public forms" />}
           {archived && <p className="mt-1.5 text-[12.5px] text-faint">Restore the project to add forms.</p>}
         </div>
       </div>

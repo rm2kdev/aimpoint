@@ -37,7 +37,7 @@ export const RATE_LIMITS = {
   form: { max: 60, windowMs: 60 * 60_000 },
 } as const;
 
-/** What a public form says while its org is on the Free plan (VEC-224). Nothing about plans or the org leaks to the public. */
+/** What a public form says while its org is unpaid (locked, VEC-224/262). Nothing about plans or the org leaks to the public. */
 export const FORM_UNAVAILABLE = "This form is unavailable right now. Please try again later or contact the team that shared it.";
 
 export type SubmitResult =
@@ -135,7 +135,7 @@ export function waitText(seconds: number) {
 export async function submitPublicForm(publicId: string, raw: RawSubmission, ip: string): Promise<SubmitResult> {
   const form = await findOpenForm(publicId);
   if (!form) return { ok: false, status: 404, error: "This form doesn't exist or isn't taking submissions." };
-  // The org is on the Free plan (VEC-224): the form is kept but unavailable until it upgrades.
+  // The org is unpaid (locked, VEC-224/262): the form is kept but unavailable until it subscribes.
   if (!(await hasFeature(form.orgId, "publicForms"))) return { ok: false, status: 403, error: FORM_UNAVAILABLE };
   const input = validate(raw, form);
   if (typeof input === "string") return { ok: false, status: 400, error: input };

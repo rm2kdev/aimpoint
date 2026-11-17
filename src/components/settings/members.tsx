@@ -26,8 +26,6 @@ import type { Role, Task } from "@/lib/types";
 import type { InviteRow } from "@/components/settings/org-settings";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
-import { UpgradeNote } from "@/components/upgrade-note";
-import { atLimit, countNoun, limitReason } from "@/lib/billing-view";
 
 export interface MemberStats {
   assigned: number;
@@ -85,9 +83,7 @@ export function MembersSettings({ invites, stats }: { invites: InviteRow[]; stat
 }
 
 function InviteRows({ invites }: { invites: InviteRow[] }) {
-  const { org, billing } = useOrg();
-  // Free plan (VEC-226): members plus pending invites at the limit, so the invite is refused server-side anyway.
-  const full = atLimit(billing, "members");
+  const { org } = useOrg();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
   const [link, setLink] = useState<string>();
@@ -113,8 +109,8 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
           });
         }}
       >
-        <Input type="email" placeholder="teammate@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-56 flex-1" aria-label="Email" disabled={full} />
-        <Select value={role} onValueChange={(v) => setRole(v as Role)} disabled={full}>
+        <Input type="email" placeholder="teammate@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-56 flex-1" aria-label="Email" />
+        <Select value={role} onValueChange={(v) => setRole(v as Role)}>
           <SelectTrigger className="w-28" aria-label="Role">
             <SelectValue />
           </SelectTrigger>
@@ -123,17 +119,10 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
             <SelectItem value="admin">Admin</SelectItem>
           </SelectContent>
         </Select>
-        <Button type="submit" disabled={pending || full || !email.trim()} className="gap-2">
+        <Button type="submit" disabled={pending || !email.trim()} className="gap-2">
           <UserPlusIcon className="size-3.5" /> Create invite
         </Button>
       </form>
-      {full && (
-        <UpgradeNote
-          reason={`${limitReason(billing, "members")}${billing.usage.pendingInvites ? " Pending invites count." : ""}`}
-          gain={`unlimited ${countNoun("members", 2)}`}
-          className="mt-2 max-w-lg"
-        />
-      )}
       {link && (
         <p className="mt-3 flex items-center gap-2 text-[12.5px] text-muted-foreground">
           Link copied: <span className="truncate font-mono text-foreground">{link}</span>

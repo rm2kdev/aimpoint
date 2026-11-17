@@ -3,28 +3,25 @@
  * Server code imports `@/lib/billing` (UserError wrappers, env checks); this module holds the numbers
  * and the plan logic in one place. No Stripe calls here.
  *
- * Plans: "unlimited" when billing is off (self-hosted), "pro" for a paying org (US$4.95 per user per month,
- * billed per org with the seat count as the Stripe quantity; everything unlimited), "free" otherwise (1 person, 1 bot, 1 project, bots on 1 task at a time, no Analytics,
- * no Public forms).
+ * Plans (VEC-262): "unlimited" when billing is off (self-hosted), "pro" for a paying org (US$4.95 per user per month,
+ * billed per org with the seat count as the Stripe quantity; everything included, no count limits), "unpaid" otherwise.
+ * There is no free tier on managed hosting: an unpaid org is locked, not deleted. Members can still sign in and see
+ * Settings > Billing, an admin can subscribe there, and everything else is refused (orgAccessMessage). Its data stays
+ * and it unlocks the moment a subscription is live.
  */
 import type { OrgBilling } from "./types";
 
-export type Plan = "unlimited" | "pro" | "free";
+export type Plan = "unlimited" | "pro" | "unpaid";
 
-/** A count limit: a number, or null for unlimited (null survives JSON, Infinity doesn't). */
-export type Limit = number | null;
-
+/**
+ * What a plan includes. Pro and self-hosted include everything; an unpaid org includes nothing (it's locked), which
+ * also keeps its public forms and public project pages unavailable until it subscribes.
+ */
 export interface Entitlements {
-  maxMembers: Limit;
-  maxBots: Limit;
-  maxProjects: Limit;
-  /** Tasks one bot may work on at once. */
-  maxConcurrentBotTasks: Limit;
   analytics: boolean;
   publicForms: boolean;
 }
 
-export type LimitKind = "members" | "bots" | "projects" | "concurrentBotTasks";
 export type Feature = "analytics" | "publicForms";
 
 /** Pro's price per seat (a human member) per month, in US cents (VEC-238). */
@@ -65,33 +62,12 @@ export function seatTotalLabel(seats: number): string {
 export const PAST_DUE_GRACE_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const FREE: Entitlements = {
-  maxMembers: 1,
-  maxBots: 1,
-  maxProjects: 1,
-  maxConcurrentBotTasks: 1,
-  analytics: false,
-  publicForms: false,
-};
-const UNLIMITED: Entitlements = {
-  maxMembers: null,
-  maxBots: null,
-  maxProjects: null,
-  maxConcurrentBotTasks: null,
-  analytics: true,
-  publicForms: true,
-};
+const EVERYTHING: Entitlements = { analytics: true, publicForms: true };
+const NOTHING: Entitlements = { analytics: false, publicForms: false };
 
-export const PLAN_ENTITLEMENTS: Record<Plan, Entitlements> = { unlimited: UNLIMITED, pro: UNLIMITED, free: FREE };
+export const PLAN_ENTITLEMENTS: Record<Plan, Entitlements> = { unlimited: EVERYTHING, pro: EVERYTHING, unpaid: NOTHING };
 
-export const PLAN_LABEL: Record<Plan, string> = { unlimited: "Self-hosted", pro: "Pro", free: "Free" };
-
-const LIMIT_FIELD: Record<LimitKind, keyof Entitlements> = {
-  members: "maxMembers",
-  bots: "maxBots",
-  projects: "maxProjects",
-  concurrentBotTasks: "maxConcurrentBotTasks",
-};
+export const PLAN_LABEL: Record<Plan, string> = { unlimited: "Self-hosted", pro: "Pro", unpaid: "No subscription" };
 
 export const STRIPE_ENV_VARS = ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_ID"] as const;
 
@@ -156,7 +132,7 @@ export function billingConfigError(missing: string[]): string {
 /**
  * Plan for an org's billing state. Pro while the subscription is active or trialing, and while it is
  * past_due for up to PAST_DUE_GRACE_DAYS (from `pastDueSince`, else from `currentPeriodEnd`). Anything
- * else (no subscription, canceled, unpaid, incomplete, paused, grace over) is Free.
+ * else (no subscription, canceled, unpaid, incomplete, paused, grace over) is "unpaid": the org is locked.
  */
 export function planFor(billing: OrgBilling | null | undefined, enabled: boolean, now: Date = new Date()): Plan {
   if (!enabled) return "unlimited";
@@ -165,45 +141,60 @@ export function planFor(billing: OrgBilling | null | undefined, enabled: boolean
   if (status === "past_due") {
     const since = billing?.pastDueSince ?? billing?.currentPeriodEnd ?? null;
     if (!since) return "pro";
-    return now.getTime() - new Date(since).getTime() <= PAST_DUE_GRACE_DAYS * DAY_MS ? "pro" : "free";
+    return now.getTime() - new Date(since).getTime() <= PAST_DUE_GRACE_DAYS * DAY_MS ? "pro" : "unpaid";
   }
-  return "free";
+  return "unpaid";
+}
+
+/** Whether an org on `plan` can be used at all (everything but Settings > Billing is refused when not). */
+export function planActive(plan: Plan): boolean {
+  return plan !== "unpaid";
 }
 
 export function entitlementsFor(plan: Plan): Entitlements {
   return { ...PLAN_ENTITLEMENTS[plan] };
 }
 
-export function limitOf(ent: Entitlements, kind: LimitKind): Limit {
-  return ent[LIMIT_FIELD[kind]] as Limit;
+/** Why an unpaid org is locked, as the opening clause of the lock message (from its Stripe subscription status). */
+export function unpaidReason(billing: OrgBilling | null | undefined): string {
+  switch (billing?.status) {
+    case "past_due":
+    case "unpaid":
+      return "Its last payment failed";
+    case "canceled":
+      return "Its subscription has ended";
+    case "paused":
+      return "Its subscription is paused";
+    case "incomplete":
+    case "incomplete_expired":
+      return "Its first payment didn't go through";
+    default:
+      return "It has no subscription";
+  }
 }
-
-const NOUN: Record<LimitKind, [string, string]> = {
-  members: ["person", "people"],
-  bots: ["bot", "bots"],
-  projects: ["project", "projects"],
-  concurrentBotTasks: ["task at a time per bot", "tasks at a time"],
-};
-const FEATURE_NAME: Record<Feature, string> = { analytics: "Analytics", publicForms: "Public forms" };
-
-const upgrade = (what: string) => `An admin can upgrade to Pro (${PRO_PRICE_LABEL}) in Settings > Billing for ${what}.`;
 
 /**
- * Message when adding one more `kind` would pass the plan's limit (`current` = how many exist now,
- * for concurrentBotTasks: tasks the bot is already working on), or null when it fits.
+ * The one answer to "is this org usable" (VEC-262): null when it is, else the message every refused path shows (REST
+ * answers 402 with it). Admins are pointed at Settings > Billing to subscribe; members are told to ask an admin.
+ * `billing` only sharpens the reason (ended, payment failed); without it the message is generic.
  */
-export function limitMessage(plan: Plan, kind: LimitKind, current: number): string | null {
-  const limit = limitOf(entitlementsFor(plan), kind);
-  if (limit === null || current + 1 <= limit) return null;
-  const [one, many] = NOUN[kind];
-  const cap = `${limit} ${limit === 1 ? one : many}`;
-  if (kind === "concurrentBotTasks")
-    return `On the ${PLAN_LABEL[plan]} plan a bot works on ${cap}. ${upgrade("bots that work on several tasks at once")}`;
-  return `The ${PLAN_LABEL[plan]} plan includes ${cap}. ${upgrade(`unlimited ${many}`)}`;
+export function orgAccessMessage(plan: Plan, isAdmin: boolean, billing?: OrgBilling | null): string | null {
+  if (planActive(plan)) return null;
+  const why = billing === undefined ? "It has no active subscription" : unpaidReason(billing);
+  const head = `This organisation is locked. ${why}, and Aimpoint's hosted service needs a Pro subscription (${PRO_PRICE_LABEL}).`;
+  const tail = isAdmin
+    ? "Subscribe in Settings > Billing to unlock it; nothing has been deleted."
+    : "Ask an admin to subscribe in Settings > Billing; nothing has been deleted.";
+  return `${head} ${tail}`;
 }
 
-/** Message when the plan doesn't include `feature`, or null when it does. */
-export function featureMessage(plan: Plan, feature: Feature): string | null {
+const FEATURE_NAME: Record<Feature, string> = { analytics: "Analytics", publicForms: "Public forms" };
+
+/**
+ * Message when the plan doesn't include `feature`, or null when it does. Only an unpaid (locked) org lacks a feature,
+ * so this is the lock message naming the feature.
+ */
+export function featureMessage(plan: Plan, feature: Feature, isAdmin = true): string | null {
   if (entitlementsFor(plan)[feature]) return null;
-  return `${FEATURE_NAME[feature]} isn't included in the ${PLAN_LABEL[plan]} plan. ${upgrade(FEATURE_NAME[feature])}`;
+  return `${FEATURE_NAME[feature]} isn't available. ${orgAccessMessage(plan, isAdmin)}`;
 }

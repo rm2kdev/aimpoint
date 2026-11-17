@@ -1,12 +1,13 @@
 import "server-only";
 import type { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
-import { getEntitlements, getPlan, PLAN_LABEL, PRO_PRICE_LABEL } from "@/lib/billing";
+import { getPlan, PLAN_LABEL, PRO_PRICE_LABEL } from "@/lib/billing";
 import { isClosedCategory, type OrgDoc } from "@/lib/types";
 
 /**
- * Plan limit on simultaneous bot work (VEC-225). On the Free plan a bot works on one task at a time; Pro and
- * self-hosted (billing off) have no limit, and then nothing here runs a query.
+ * Plan limit on simultaneous bot work (VEC-225). It only ever applied to the Free plan, which VEC-262 removed: Pro
+ * and self-hosted have no limit, so concurrencyLimit is always null and nothing here runs a query. The hold
+ * machinery below (and in wake-queue.ts) is inert until VEC-263 removes it or replaces it with the unpaid-org lock.
  *
  * A bot's slot is taken by:
  * - an in-progress claim (assigned work, triage, a mention that handed work back) on an open, unarchived task;
@@ -23,7 +24,8 @@ const hex = (id: ObjectId) => id.toHexString();
 
 /** Tasks one bot of this org may work on at once; null = unlimited. */
 export function concurrencyLimit(org: Pick<OrgDoc, "billing">): number | null {
-  return getEntitlements(org).maxConcurrentBotTasks;
+  void org;
+  return null;
 }
 
 /** The tasks `botId` is busy with now (see above), leaving out `except` (the task being handed over). */
@@ -54,7 +56,7 @@ export async function atCapacity(org: OrgLike, botId: ObjectId, except?: ObjectI
   return (await busyWith(org._id, botId, except)).length >= limit;
 }
 
-/** "On the Free plan a bot works on one task at a time." plus the upgrade line, for agent-facing notes. */
+/** "On the <plan> plan a bot works on N tasks at a time." plus the upgrade line, for agent-facing notes (unused while no plan limits). */
 export function planLimitText(org: Pick<OrgDoc, "billing">): string {
   const limit = concurrencyLimit(org) ?? 0;
   const plan = PLAN_LABEL[getPlan(org)];

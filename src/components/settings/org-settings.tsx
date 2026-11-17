@@ -17,8 +17,6 @@ import {
 } from "@/app/actions/org";
 import type { Role } from "@/lib/types";
 import { orgPath, projectSettingsPath } from "@/lib/paths";
-import { UpgradeNote } from "@/components/upgrade-note";
-import { atLimit, countNoun, limitReason } from "@/lib/billing-view";
 
 export interface InviteRow {
   id: string;
@@ -76,9 +74,7 @@ export function GeneralSettings() {
 /* ---------------- Projects ---------------- */
 
 export function ProjectsSettings({ openNew }: { openNew: boolean }) {
-  const { org, projects, isAdmin, counts, billing } = useOrg();
-  // Free plan (VEC-226): archived projects count too, matching the server check.
-  const projectsFull = atLimit(billing, "projects");
+  const { org, projects, isAdmin, counts } = useOrg();
   const router = useRouter();
   const [name, setName] = useState("");
   const [key, setKey] = useState("");
@@ -133,7 +129,7 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
           >
             <div className="grid gap-1.5">
               <Label htmlFor="pname">Name</Label>
-              <Input id="pname" value={name} onChange={(e) => setName(e.target.value)} placeholder="Mobile App" autoFocus={openNew && !projectsFull} maxLength={60} disabled={projectsFull} />
+              <Input id="pname" value={name} onChange={(e) => setName(e.target.value)} placeholder="Mobile App" autoFocus={openNew} maxLength={60} />
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="pkey">Key</Label>
@@ -142,17 +138,13 @@ export function ProjectsSettings({ openNew }: { openNew: boolean }) {
                 value={key}
                 onChange={(e) => setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10))}
                 placeholder={autoKey || "MOB"}
-                disabled={projectsFull}
                 className="w-32 font-mono uppercase"
               />
             </div>
             <div>
-              <Button type="submit" disabled={pending || projectsFull || !name.trim()}>
+              <Button type="submit" disabled={pending || !name.trim()}>
                 Create project
               </Button>
-              {projectsFull && (
-                <UpgradeNote reason={`${limitReason(billing, "projects")}${billing.usage.archivedProjects ? " Archived projects count." : ""}`} gain={`unlimited ${countNoun("projects", 2)}`} />
-              )}
             </div>
           </form>
         </Row>

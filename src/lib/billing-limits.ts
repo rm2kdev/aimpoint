@@ -1,52 +1,27 @@
 /**
- * Free plan enforcement (VEC-224). The plan rules and messages live in billing-core / billing; this module counts
- * what an org has and refuses the write that would take it past its plan, so every path (server actions, REST
- * `/api/v1`, MCP, public routes) gets the same answer. With billing off every check passes.
+ * Plan enforcement helpers (VEC-224, reworked for paid-only hosting in VEC-262). There is no free tier and no count
+ * limit any more: Pro and self-hosted include everything, and an org without a live subscription is locked
+ * (lib/billing.ts assertOrgActive). This module adds the id-based lookups and the page-friendly forms of those checks,
+ * so every path (server actions, REST `/api/v1`, MCP, public routes) gets the same answer. With billing off every
+ * check passes.
  *
- * Counting rules (kept the same everywhere):
- * - People = memberships plus pending invites (not accepted, not expired), so a Free org can't queue invites.
- * - Projects = every project, archived ones included: archiving keeps the project's data, so it can't be used to
- *   make room for another one.
- * - Bots = every bot of the org.
- *
- * Downgrades are non-destructive: nothing here deletes or disables anything. An org over its limit after
- * cancelling keeps its members, bots, projects and forms but can't add more until it's within the limit or Pro.
- * Analytics and public forms are refused while on Free; the forms themselves stay and work again on Pro.
+ * Locking is non-destructive: nothing here deletes or disables anything. A locked org keeps its members, bots,
+ * projects and forms; they work again the moment it subscribes.
  */
 import "server-only";
 import type { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
-import { assertEntitlement, assertWithinLimit, getEntitlements, type Feature, type LimitKind } from "@/lib/billing";
+import { assertEntitlement, assertOrgActive, getEntitlements, isOrgActive, type Feature } from "@/lib/billing";
 import type { OrgDoc } from "@/lib/types";
 
-/** A refusal because of the org's plan: REST answers 402, the UI and MCP show the message (it says how to upgrade). */
-export class PlanLimitError extends UserError {
-  readonly upgrade = true;
-  constructor(message: string) {
-    super(message);
-    this.name = "PlanLimitError";
-  }
-}
+export { OrgLockedError, PlanLimitError } from "@/lib/billing";
 
 type OrgLike = Pick<OrgDoc, "_id" | "billing">;
 
-function rethrow(fn: () => void) {
-  try {
-    fn();
-  } catch (err) {
-    if (err instanceof UserError && !(err instanceof PlanLimitError)) throw new PlanLimitError(err.message);
-    throw err;
-  }
-}
-
-function limitCheck(org: OrgLike, kind: LimitKind, current: number) {
-  rethrow(() => assertWithinLimit(org, kind, current));
-}
-
 /** Throws PlanLimitError when the org's plan doesn't include `feature`. */
 export function requireFeature(org: Pick<OrgDoc, "billing">, feature: Feature): void {
-  rethrow(() => assertEntitlement(org, feature));
+  assertEntitlement(org, feature);
 }
 
 async function orgBilling(orgId: ObjectId): Promise<OrgLike> {
@@ -55,7 +30,7 @@ async function orgBilling(orgId: ObjectId): Promise<OrgLike> {
   return org ?? { _id: orgId };
 }
 
-/** The upgrade message when the plan lacks `feature`, else null (for pages that show it instead of throwing). */
+/** The lock message when the plan lacks `feature`, else null (for pages that show it instead of throwing). */
 export function featureLockMessage(org: Pick<OrgDoc, "billing">, feature: Feature): string | null {
   try {
     assertEntitlement(org, feature);
@@ -76,35 +51,12 @@ export async function hasFeature(orgId: ObjectId, feature: Feature): Promise<boo
   return getEntitlements(await orgBilling(orgId))[feature];
 }
 
-const unlimited = (org: OrgLike, kind: "maxMembers" | "maxBots" | "maxProjects") => getEntitlements(org)[kind] === null;
-
-/** People: members + pending invites. `exceptEmail` = an invite being re-sent to the same address (it replaces itself). */
-export async function assertRoomForPerson(org: OrgLike, opts: { exceptEmail?: string; accepting?: boolean } = {}): Promise<void> {
-  if (unlimited(org, "maxMembers")) return;
-  const c = await cols();
-  const members = await c.memberships.countDocuments({ orgId: org._id });
-  // Accepting turns its own (already counted) invite into a membership, so only memberships matter then: an
-  // invite sent before a downgrade can't be redeemed while the org is at or over its limit.
-  const pending = opts.accepting
-    ? 0
-    : await c.invites.countDocuments({
-        orgId: org._id,
-        acceptedAt: { $exists: false },
-        expiresAt: { $gt: new Date() },
-        ...(opts.exceptEmail ? { email: { $ne: opts.exceptEmail } } : {}),
-      });
-  limitCheck(org, "members", members + pending);
+/** assertOrgActive by id: throws OrgLockedError (REST 402) when the org has no live subscription. */
+export async function assertOrgActiveById(orgId: ObjectId, opts: { isAdmin?: boolean } = {}): Promise<void> {
+  assertOrgActive(await orgBilling(orgId), opts);
 }
 
-export async function assertRoomForBot(org: OrgLike): Promise<void> {
-  if (unlimited(org, "maxBots")) return;
-  const c = await cols();
-  limitCheck(org, "bots", await c.bots.countDocuments({ orgId: org._id }));
-}
-
-/** Archived projects count (see the module note). */
-export async function assertRoomForProject(org: OrgLike): Promise<void> {
-  if (unlimited(org, "maxProjects")) return;
-  const c = await cols();
-  limitCheck(org, "projects", await c.projects.countDocuments({ orgId: org._id }));
+/** Whether the org is usable (Pro or self-hosted), by id (no throw). */
+export async function orgActiveById(orgId: ObjectId): Promise<boolean> {
+  return isOrgActive(await orgBilling(orgId));
 }

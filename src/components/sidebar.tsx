@@ -132,7 +132,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
  */
 function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
   const { org, projects, counts, reorderProjects, statusById, statusesByProject, billing } = useOrg();
-  // VEC-256: public projects get a globe after the name (the Free plan keeps their pages unavailable, so no badge there).
+  // VEC-256: public projects get a globe after the name (an unpaid org keeps their pages unavailable, so no badge there).
   const publicOn = billing.features.publicForms;
   const pathname = usePathname();
   const router = useRouter();

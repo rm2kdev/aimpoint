@@ -154,7 +154,7 @@ export async function listProjectForms(actor: FormActor, projectId: string): Pro
 
 export async function createProjectForm(actor: FormActor, projectId: string, input: FormInput): Promise<ProjectForm> {
   assertAdmin(actor);
-  // Free plan has no public forms (VEC-224). Existing forms are kept (and stay editable); their links say unavailable.
+  // An unpaid (locked) org has no public forms (VEC-224/262). Existing forms are kept (and stay editable); their links say unavailable.
   await requireFeatureById(actor.orgId, "publicForms");
   const project = await requireProject(actor.orgId, projectId);
   if (project.archivedAt) throw new UserError(`${project.name} (${project.key}) is archived. Restore it before adding forms.`);

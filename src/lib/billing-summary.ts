@@ -1,12 +1,12 @@
 /**
- * Server loader for the client billing summary (VEC-226; type in lib/billing-view.ts). Counts follow
- * lib/billing-limits.ts (VEC-224) so the UI disables exactly what the server would refuse.
+ * Server loader for the client billing summary (VEC-226; type in lib/billing-view.ts). Usage counts are informational:
+ * there are no count limits since VEC-262, an org is either usable (Pro / self-hosted) or locked.
  */
 import "server-only";
 import { cols } from "@/lib/db";
 import { billingDebugActive, billingDebugProblem, billingOn, getEntitlements, getPlan } from "@/lib/billing";
 import { billingDebugAvailable } from "@/lib/billing-mode";
-import { PAST_DUE_GRACE_DAYS } from "@/lib/billing-core";
+import { PAST_DUE_GRACE_DAYS, planActive } from "@/lib/billing-core";
 import { canceledEndDate, hasLiveSubscription } from "@/lib/stripe-sync";
 import { UNLIMITED_SUMMARY, type BillingSummary } from "@/lib/billing-view";
 import type { OrgDoc } from "@/lib/types";
@@ -39,6 +39,7 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
     debugAvailable: billingDebugAvailable(),
     debugProblem: billingDebugProblem(),
     plan,
+    locked: !planActive(plan),
     status: b.status ?? null,
     currentPeriodEnd: iso(periodEnd),
     cancelAtPeriodEnd: !!b.cancelAtPeriodEnd,
@@ -47,7 +48,6 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
     graceEndsAt: graceFrom ? new Date(new Date(graceFrom).getTime() + PAST_DUE_GRACE_DAYS * 86_400_000).toISOString() : null,
     hasCustomer: !!b.stripeCustomerId,
     liveSubscription: hasLiveSubscription(b),
-    limits: { members: ent.maxMembers, bots: ent.maxBots, projects: ent.maxProjects, concurrentBotTasks: ent.maxConcurrentBotTasks },
     features: { analytics: ent.analytics, publicForms: ent.publicForms },
     usage: { members: members + pendingInvites, bots, projects, pendingInvites, archivedProjects },
     seats: members,

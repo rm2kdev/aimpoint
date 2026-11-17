@@ -19,7 +19,7 @@ import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
 import { deleteProjectFlow, flowStatusDeleted, flowStatusUpdated, seedOrgFlow } from "@/lib/flows";
 import { deleteProjectForms, formsStatusDeleted, formsStatusStageChanged } from "@/lib/project-forms";
 import { publicProjectArchived, publicStatusDeleted, publicStatusStageChanged } from "@/lib/project-public";
-import { assertRoomForPerson, assertRoomForProject } from "@/lib/billing-limits";
+import { assertOrgActive } from "@/lib/billing";
 import { syncSeatsSoon } from "@/lib/seat-sync";
 
 function slugify(s: string) {
@@ -99,7 +99,7 @@ export async function createProject(slug: string, input: { name: string; key?: s
     if (await c.projects.findOne({ orgId: org._id, key: keyParsed.data }, { projection: { _id: 1 } })) {
       throw new UserError(`${keyParsed.data} is already used by another project. Pick a different key.`);
     }
-    await assertRoomForProject(org);
+    assertOrgActive(org, { isAdmin: true });
     const count = await c.projects.countDocuments({ orgId: org._id });
     const id = new ObjectId();
     await c.projects.insertOne({
@@ -351,7 +351,7 @@ export async function createInvite(slug: string, email: string, role: Role): Pro
     if (existingUser && (await c.memberships.findOne({ orgId: org._id, userId: existingUser._id }))) {
       throw new UserError("That person is already a member.");
     }
-    await assertRoomForPerson(org, { exceptEmail: parsed.data });
+    assertOrgActive(org, { isAdmin: true });
     const token = nanoid(32);
     const now = new Date();
     await c.invites.deleteMany({ orgId: org._id, email: parsed.data, acceptedAt: { $exists: false } });
@@ -421,7 +421,7 @@ export async function acceptInvite(token: string): Promise<Result<{ slug: string
     const org = await c.orgs.findOne({ _id: invite.orgId });
     if (!org) throw new UserError("This organisation no longer exists.");
     if (!(await c.memberships.findOne({ orgId: org._id, userId: user._id }, { projection: { _id: 1 } }))) {
-      await assertRoomForPerson(org, { accepting: true });
+      assertOrgActive(org);
     }
     const joined = await c.memberships.updateOne(
       { orgId: org._id, userId: user._id },

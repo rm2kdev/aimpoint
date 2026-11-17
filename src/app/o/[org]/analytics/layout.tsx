@@ -6,7 +6,7 @@ import { billingPath } from "@/lib/paths";
 
 /**
  * Admins only (VEC-134). The check sits in a layout, above loading.tsx, so a member gets a real 404 status
- * before anything streams; the page and loadAnalytics check again. On the Free plan (VEC-224) admins get the
+ * before anything streams; the page and loadAnalytics check again. For an unpaid (locked) org (VEC-224/262) admins get the
  * upgrade message instead of the screen; computeAnalytics refuses too, so the CSV, REST and MCP paths match.
  */
 export default async function AnalyticsLayout({ params, children }: LayoutProps<"/o/[org]/analytics">) {

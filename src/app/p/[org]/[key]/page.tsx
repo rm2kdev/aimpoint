@@ -15,7 +15,7 @@ import { PublicProjectScreen, PublicUnavailable } from "./public-project";
  * what lib/project-public.ts's loaders return (sanitised tasks, statuses, comments when the project shows them).
  * Query: `?task=KEY` one ticket, `?view=mine` the signed-in account's own submissions, `?submit=1` the submit form
  * (signed-out visitors are sent to sign in and back), `?created=KEY` highlights a ticket just submitted.
- * Private, unknown and archived projects are a plain 404; a Free-plan org's project shows only "unavailable".
+ * Private, unknown and archived projects are a plain 404; an unpaid (locked) org's project shows only "unavailable".
  */
 export const dynamic = "force-dynamic";
 
