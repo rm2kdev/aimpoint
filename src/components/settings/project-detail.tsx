@@ -12,6 +12,7 @@ import { ProjectStatuses } from "@/components/settings/project-statuses";
 import { ProjectFlow } from "@/components/settings/flow-settings";
 import { ProjectNewTasks } from "@/components/settings/project-new-tasks";
 import { ProjectForms } from "@/components/settings/project-forms";
+import { ProjectPublic } from "@/components/settings/project-public";
 import type { ProjectFlowSettings } from "@/lib/flows";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +29,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { deleteProject, setProjectArchived, updateProject } from "@/app/actions/org";
-import type { ProjectDetail as ProjectDetailData, ProjectForm, ProjectMetaEntry } from "@/lib/types";
+import type { ProjectDetail as ProjectDetailData, ProjectForm, ProjectMetaEntry, ProjectPublicAccess } from "@/lib/types";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
 
@@ -49,6 +50,7 @@ export function ProjectDetail({
   flowCounts,
   forms,
   formCount,
+  publicAccess,
 }: {
   project: ProjectDetailData;
   taskCount: number;
@@ -58,6 +60,8 @@ export function ProjectDetail({
   /** External forms (VEC-206): admins get the list, members null. */
   forms: ProjectForm[] | null;
   formCount: number;
+  /** Public access (VEC-256): the saved settings, shown to everyone (members read-only). */
+  publicAccess: ProjectPublicAccess;
 }) {
   const { org, isAdmin, projects, counts } = useOrg();
   const router = useRouter();
@@ -185,6 +189,8 @@ export function ProjectDetail({
       <ProjectFlow projectId={project.id} projectName={project.name} flow={flow} counts={flowCounts} />
 
       <ProjectForms projectId={project.id} projectName={project.name} archived={project.archived} forms={forms} formCount={formCount} />
+
+      <ProjectPublic projectId={project.id} projectKey={project.key} projectName={project.name} archived={project.archived} access={publicAccess} />
 
       <Row
         title="Agent context"

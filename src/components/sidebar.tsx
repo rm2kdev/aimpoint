@@ -23,6 +23,7 @@ import {
   SunIcon,
   UserIcon,
   UsersIcon,
+  GlobeIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
@@ -130,7 +131,9 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
  * so they're never targets.
  */
 function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
-  const { org, projects, counts, reorderProjects, statusById, statusesByProject } = useOrg();
+  const { org, projects, counts, reorderProjects, statusById, statusesByProject, billing } = useOrg();
+  // VEC-256: public projects get a globe after the name (the Free plan keeps their pages unavailable, so no badge there).
+  const publicOn = billing.features.publicForms;
   const pathname = usePathname();
   const router = useRouter();
   const store = useDragStore();
@@ -204,6 +207,7 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
           href={href}
           active={pathname === href}
           count={projectCounts[p.id] ?? 0}
+          isPublic={p.public && publicOn}
           onNavigate={onNavigate}
           handleProps={handleProps}
           dragging={isDragging}
@@ -212,7 +216,7 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
         />
       );
     },
-    [org.slug, pathname, projectCounts, onNavigate, springs, actions],
+    [org.slug, pathname, projectCounts, publicOn, onNavigate, springs, actions],
   );
 
   return (
@@ -247,6 +251,7 @@ const ProjectRow = memo(function ProjectRow({
   href,
   active,
   count,
+  isPublic,
   onNavigate,
   handleProps,
   dragging,
@@ -257,6 +262,7 @@ const ProjectRow = memo(function ProjectRow({
   href: string;
   active: boolean;
   count: number;
+  isPublic: boolean;
   onNavigate?: () => void;
   handleProps?: SortableHandleProps;
   dragging?: boolean;
@@ -310,6 +316,13 @@ const ProjectRow = memo(function ProjectRow({
       dragging={dragging}
       targetRef={target.ref}
       dropState={blink ? "spring" : over ? "over" : undefined}
+      tag={
+        isPublic ? (
+          <span data-public-badge title="Public project" aria-label="Public" role="img" className="-ml-1 flex shrink-0 text-faint">
+            <GlobeIcon className="!size-3" />
+          </span>
+        ) : undefined
+      }
     >
       {p.name}
     </NavItem>

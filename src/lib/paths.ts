@@ -48,6 +48,12 @@ export const analyticsPath = (slug: string, search = "") => `${orgPath(slug, "an
 /** `/o/<slug>/p/<key>` */
 export const projectPath = (slug: string, projectKey: string) => orgPath(slug, "p", projectKey);
 
+/** Public project pages (VEC-254/257) live outside the member-only /o shell. */
+export const PUBLIC_PROJECT_PREFIX = "/p";
+/** A public project's page for anyone: /p/<org>/<KEY>. */
+export const publicProjectPath = (slug: string, projectKey: string) =>
+  `${PUBLIC_PROJECT_PREFIX}/${encodeURIComponent(slug)}/${encodeURIComponent(projectKey)}`;
+
 /** Task views that can host the `?task=` side pane. */
 export type TaskView = "all" | "my" | "inbox" | "archived";
 

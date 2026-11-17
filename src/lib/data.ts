@@ -95,6 +95,7 @@ export const toProject = (p: ProjectDoc): Project => ({
   color: p.color,
   archived: !!p.archivedAt,
   newTaskStatusId: p.defaults?.newTaskStatusId?.toHexString() ?? null,
+  public: !!p.publicAccess?.enabled,
 });
 export const toProjectDetail = (p: ProjectDoc): ProjectDetail => ({
   ...toProject(p),

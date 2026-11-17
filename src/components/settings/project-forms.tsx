@@ -38,7 +38,7 @@ const formPath = (publicId: string) => `/f/${encodeURIComponent(publicId)}`;
 
 /** The page origin on the client; "" during the server render so hydration matches. */
 const noop = () => () => {};
-function useOrigin() {
+export function useOrigin() {
   return useSyncExternalStore(
     noop,
     () => location.origin,
@@ -72,7 +72,7 @@ async function copyText(text: string) {
   if (!ok) throw new Error("copy failed");
 }
 
-function useCopy() {
+export function useCopy() {
   const [copied, setCopied] = useState<string | null>(null);
   const copy = (key: string, text: string, what: string) =>
     copyText(text).then(

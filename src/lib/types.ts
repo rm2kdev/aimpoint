@@ -890,6 +890,8 @@ export interface Project {
   archived: boolean;
   /** The project's new-task status override (VEC-190), one of its own statuses; null = inherits the org default. */
   newTaskStatusId: string | null;
+  /** Public project switched on (VEC-256 badge; ProjectDoc.publicAccess.enabled). The Free plan still hides the public page. */
+  public: boolean;
 }
 export interface ProjectDetail extends Project {
   metadata: ProjectMetaEntry[];

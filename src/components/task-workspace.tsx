@@ -31,6 +31,7 @@ import { projectSettingsPath } from "@/lib/paths";
 import { isClosedCategory, matchStatus, STATUS_STAGES, type Status, type StatusCategory, type Task, type TaskType } from "@/lib/types";
 import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
 import { StoppedChip } from "@/components/stop-work";
+import { PublicBadge } from "@/components/settings/project-public";
 
 export interface Scope {
   projectId?: string;
@@ -73,7 +74,7 @@ export function TaskWorkspace({
   showProject: boolean;
   emptyHint: string;
 }) {
-  const { org, me, isAdmin, projectById, statusById, statusesByProject } = useOrg();
+  const { org, me, isAdmin, projectById, statusById, statusesByProject, billing } = useOrg();
   const { newTask, setViewDefaults } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -559,6 +560,9 @@ export function TaskWorkspace({
         <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-4 sm:px-7">
           <MobileNavButton />
           <h1 className="truncate text-[15px] font-semibold tracking-[-0.01em]">{title}</h1>
+          {scope.projectId && !scope.mine && !scope.archived && projectById.get(scope.projectId)?.public && billing.features.publicForms && (
+            <PublicBadge className={cn("max-sm:hidden", selectedKey && "max-2xl:hidden")} />
+          )}
           {scope.projectId && !scope.mine && !scope.archived && (
             <ProjectSettingsCog slug={org.slug} projectId={scope.projectId} name={projectById.get(scope.projectId)?.name ?? title} isAdmin={isAdmin} />
           )}

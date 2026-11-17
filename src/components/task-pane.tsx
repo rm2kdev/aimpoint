@@ -740,7 +740,7 @@ function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null })
               submitted this via the <b className="font-medium text-foreground">{f.to ?? (source?.kind === "form" ? source.formName : null) ?? "external"}</b> form
             </>
           );
-        if (f.note === "public") return "submitted this on the public page";
+        if (f.note === "public") return "submitted this via the public project page";
         return "created this task";
       case "status":
         return (

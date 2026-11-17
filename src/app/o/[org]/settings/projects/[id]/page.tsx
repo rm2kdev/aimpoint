@@ -6,6 +6,9 @@ import { toProjectDetail } from "@/lib/data";
 import { ProjectDetail } from "@/components/settings/project-detail";
 import { loadFlowStepCounts, loadProjectFlowSettings } from "@/lib/flows";
 import { listProjectForms } from "@/lib/project-forms";
+import { toPublicAccess } from "@/lib/project-public";
+import { pruneSubmitStatuses } from "@/lib/project-public-core";
+import { loadStatuses } from "@/lib/statuses";
 
 export async function generateMetadata({ params }: PageProps<"/o/[org]/settings/projects/[id]">) {
   const { id } = await params;
@@ -21,7 +24,7 @@ export default async function ProjectSettingsPage({ params }: PageProps<"/o/[org
   const c = await cols();
   const project = await c.projects.findOne({ _id: new ObjectId(id), orgId: org._id });
   if (!project) notFound();
-  const [taskCount, archivedTaskCount, flow, flowCounts, forms, formCount] = await Promise.all([
+  const [taskCount, archivedTaskCount, flow, flowCounts, forms, formCount, statuses] = await Promise.all([
     c.tasks.countDocuments({ orgId: org._id, projectId: project._id }),
     c.tasks.countDocuments({ orgId: org._id, projectId: project._id, archivedAt: { $ne: null } }),
     loadProjectFlowSettings(org._id, project._id),
@@ -29,7 +32,14 @@ export default async function ProjectSettingsPage({ params }: PageProps<"/o/[org
     // External forms (VEC-206): the full list for admins only; members just see how many there are.
     isAdmin ? listProjectForms({ orgId: org._id, userId: user._id, isAdmin }, id) : null,
     c.projectForms.countDocuments({ orgId: org._id, projectId: project._id }),
+    loadStatuses(org._id, project._id),
   ]);
+  // Public access (VEC-256): everyone in the org may see the state (members read-only); statuses no longer allowed drop out.
+  const publicAccess = toPublicAccess(project._id, project.publicAccess);
+  publicAccess.submitStatusIds = pruneSubmitStatuses(
+    publicAccess.submitStatusIds,
+    statuses.map((s) => ({ id: s._id.toHexString(), name: s.name, category: s.category })),
+  );
   return (
     <ProjectDetail
       key={id}
@@ -40,6 +50,7 @@ export default async function ProjectSettingsPage({ params }: PageProps<"/o/[org
       flowCounts={flowCounts}
       forms={forms}
       formCount={formCount}
+      publicAccess={publicAccess}
     />
   );
 }
