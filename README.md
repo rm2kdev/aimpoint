@@ -37,6 +37,7 @@ Locally, with no Pusher or Blob variables set:
 3. **Real-time:** create a Pusher Channels app (or a Pusher-compatible service such as Soketi) and set `PUSHER_APP_ID`, `PUSHER_SECRET`, `NEXT_PUBLIC_PUSHER_KEY`, `NEXT_PUBLIC_PUSHER_CLUSTER`. Clients subscribe to `private-org-<orgId>`; `/api/realtime/pusher-auth` only authorises members of that org. (Serverless functions can't hold SSE connections or share an in-memory bus, so the local driver is dev-only.)
 4. **Images:** add a Vercel Blob store to the project; Vercel injects `BLOB_READ_WRITE_TOKEN` and uploads switch to Blob automatically.
 5. **Wake-up retries:** set `CRON_SECRET` and add a Vercel Cron Job for `GET /api/cron/wakes` (every minute or few, as your plan allows). Locally the server sweeps every 15 s by itself.
+6. **Wait-step reminders:** with the same `CRON_SECRET`, add a Vercel Cron Job for `GET /api/cron/wait-reminders` (hourly or daily). It sends the one "still waiting" notification for tasks past their flow wait step's "Remind after" days. Locally the server sweeps every minute.
 
 Drivers are picked from the environment at runtime: `src/lib/realtime/server.ts` and `src/lib/storage.ts`.
 

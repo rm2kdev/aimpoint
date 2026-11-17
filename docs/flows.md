@@ -251,6 +251,11 @@ A step with `advance: "wait"` pauses the task until an outside event:
 - `remindAfterDays`: if the task is still at the step after N days, one `waiting` notification goes to the
   step owner (person) or the task creator / admins, and the task row shows "Waiting 6d: Customer reply"
   (`flow.remindedAt` makes it once per entry). A wait step is never red Stalled.
+  As built (VEC-182): `lib/wait-reminders.ts` sweeps every minute in the server process (`/api/cron/wait-reminders`
+  on Vercel, `CRON_SECRET`); recipients are the step owner if a person, else the assignee if a person, else the
+  creator if a person, else admins. Entering a step writes a fresh `task.flow` (new `enteredAt`, no `remindedAt`), so
+  leaving and coming back re-arms it. Rows show "Waiting 6d: <label>" at any wait step (from `enteredAt`; label =
+  `wait.label`, else the step name), stronger once past the reminder; the pane's Now line says the same.
 
 ### 5.8 Stalled detection
 

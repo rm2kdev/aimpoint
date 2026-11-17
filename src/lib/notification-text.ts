@@ -15,5 +15,7 @@ export function notificationHeadline(n: Notification, actorName: string | null) 
       return `${n.taskKey} never reached ${actorName ?? "its bot"}`;
     case "stalled":
       return `${n.taskKey} is stalled: nobody is assigned to it`;
+    case "waiting":
+      return `${n.taskKey} is still waiting`;
   }
 }

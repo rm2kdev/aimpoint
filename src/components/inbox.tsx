@@ -22,6 +22,7 @@ const KIND_ICON = {
   review: EyeIcon,
   undelivered: UnplugIcon,
   stalled: OctagonAlertIcon,
+  waiting: HourglassIcon,
 } as const;
 
 export function Inbox({ initial }: { initial: Notification[] }) {

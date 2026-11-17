@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckIcon, PauseIcon, WorkflowIcon } from "lucide-react";
+import { CheckIcon, HourglassIcon, PauseIcon, WorkflowIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrgBase } from "@/components/org-provider";
 import { MemberAvatar, UnassignedAvatar } from "@/components/bits";
@@ -33,6 +33,52 @@ export function useFlowPosition(task: Pick<Task, "projectId" | "statusId" | "flo
   return { kind: "at", flow, current, index: stepIndex(flow, current.id), next: finished ? null : nextStepOf(flow, current), finished };
 }
 
+/**
+ * How long a task has sat at a wait step and on what (VEC-182, docs/flows.md 5.7): "6d" / "5h" / "12m" since it
+ * entered the step (`task.flow.enteredAt`; null when it was never positioned), the step's "Waiting for" label (else
+ * the step name), and whether it's past the step's "Remind after" days (when the one reminder goes out).
+ */
+export function waitState(step: ResolvedStep, task: Pick<Task, "flow">, now = Date.now()) {
+  const label = step.wait?.label?.trim() || step.name;
+  const days = step.wait?.remindAfterDays ?? null;
+  const entered = task.flow?.stepId === step.id && task.flow.enteredAt ? Date.parse(task.flow.enteredAt) : NaN;
+  if (Number.isNaN(entered)) return { label, waited: null, waitedLong: null, overdue: false, days };
+  const ms = Math.max(0, now - entered);
+  const d = Math.floor(ms / 86_400_000);
+  const h = Math.floor(ms / 3_600_000);
+  const waited = d >= 1 ? `${d}d` : h >= 1 ? `${h}h` : `${Math.max(1, Math.floor(ms / 60_000))}m`;
+  const waitedLong = d >= 1 ? `${d} day${d === 1 ? "" : "s"}` : h >= 1 ? `${h} hour${h === 1 ? "" : "s"}` : "under an hour";
+  return { label, waited, waitedLong, overdue: !!days && ms >= days * 86_400_000, days };
+}
+
+function waitTitle(step: ResolvedStep, w: ReturnType<typeof waitState>) {
+  const reminder = w.days ? (w.overdue ? `, past the ${w.days}-day reminder` : `, reminder after ${w.days} day${w.days === 1 ? "" : "s"}`) : "";
+  return `${w.waitedLong ? `Waiting ${w.waitedLong}` : "Waiting"} at ${step.name} for: ${w.label}${reminder}`;
+}
+
+/** "Waiting 6d: Reply received" on a row at a wait step; text turns full-strength once past the reminder. */
+function WaitingChip({ step, task, className }: { step: ResolvedStep; task: Pick<Task, "flow">; className?: string }) {
+  const w = waitState(step, task);
+  const title = waitTitle(step, w);
+  return (
+    <span
+      title={title}
+      aria-label={title}
+      data-waiting={w.overdue ? "overdue" : "waiting"}
+      className={cn(
+        "inline-flex h-5 max-w-[160px] min-w-0 items-center gap-1 rounded-[5px] bg-chip px-1.5 text-[12px] whitespace-nowrap",
+        w.overdue ? "font-medium text-foreground" : "text-muted-foreground",
+        className,
+      )}
+    >
+      <HourglassIcon aria-hidden className="size-3 shrink-0" />
+      <span className="truncate">
+        {w.waited ? `Waiting ${w.waited}` : "Waiting"}: {w.label}
+      </span>
+    </span>
+  );
+}
+
 interface Owner {
   member?: Member;
   id?: string;
@@ -58,6 +104,26 @@ function OwnerLine({ owner }: { owner: Owner }) {
       {owner.id ? <MemberAvatar member={owner.member} id={owner.id} size={16} /> : <UnassignedAvatar size={14} />}
       <span className={cn("truncate", !owner.id && "text-muted-foreground")}>{owner.label}</span>
     </span>
+  );
+}
+
+function PaneWaiting({ step, task }: { step: ResolvedStep; task: Pick<Task, "flow"> }) {
+  const w = waitState(step, task);
+  return (
+    <>
+      <dt className="text-faint">Waiting</dt>
+      <dd title={waitTitle(step, w)} data-waiting={w.overdue ? "overdue" : "waiting"} className="flex min-w-0 items-center gap-1.5">
+        <HourglassIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className={cn("truncate", w.overdue && "font-medium")}>
+          {w.waited ? `${w.waitedLong} for` : "For"} {w.label}
+        </span>
+        {w.days && (
+          <span className="shrink-0 text-muted-foreground">
+            · {w.overdue ? `past the ${w.days}d reminder` : `reminder after ${w.days}d`}
+          </span>
+        )}
+      </dd>
+    </>
   );
 }
 
@@ -115,14 +181,14 @@ export function FlowStepper({ task, className }: { task: Pick<Task, "projectId" 
         })}
       </ol>
       {!finished && (
-        <dl className="mt-2.5 grid grid-cols-[40px_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
+        <dl className="mt-2.5 grid grid-cols-[52px_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
           <dt className="text-faint">Now</dt>
           <dd className="flex min-w-0 items-center gap-1.5">
             <span className="shrink-0 font-medium">{current.name}</span>
-            {current.advance === "wait" && current.wait?.label && <span className="shrink-0 text-muted-foreground">waiting: {current.wait.label}</span>}
             <span className="text-faint">·</span>
             <OwnerLine owner={assignee ? { member: assignee, id: assignee.id, label: assignee.name } : { label: "Unassigned" }} />
           </dd>
+          {current.advance === "wait" && <PaneWaiting step={current} task={task} />}
           {next && (
             <>
               <dt className="text-faint">Next</dt>
@@ -145,12 +211,14 @@ export function FlowStepper({ task, className }: { task: Pick<Task, "projectId" 
 
 /**
  * The list row's step chip: the step name when it says more than the status already shown (two steps sharing
- * In Progress, a Develop step in Todo). Nothing on a finished, paused or off-flow task.
+ * In Progress, a Develop step in Todo); at a wait step, how long it has waited and on what. Nothing on a
+ * finished, paused or off-flow task.
  */
 export function FlowStepChip({ task, className }: { task: Pick<Task, "projectId" | "statusId" | "flow">; className?: string }) {
   const { statusById } = useOrgBase();
   const pos = useFlowPosition(task);
   if (!pos || pos.kind !== "at" || pos.finished) return null;
+  if (pos.current.advance === "wait") return <WaitingChip step={pos.current} task={task} className={className} />;
   const status = statusById.get(task.statusId);
   if (status && pos.current.name.trim().toLowerCase() === status.name.trim().toLowerCase()) return null;
   const label = `Flow step: ${pos.current.name} (step ${pos.index + 1} of ${pos.flow.steps.length})`;

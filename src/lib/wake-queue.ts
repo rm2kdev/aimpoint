@@ -5,6 +5,8 @@ import { isPush } from "@/lib/bot-connect";
 import { deliver, markHandedOver, type WakeReason } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { notify } from "@/lib/notifications";
+// Starts the wait-step reminder sweeper (VEC-182) alongside this one: every server path that writes tasks loads this module.
+import "@/lib/wait-reminders";
 import { isClosedCategory, type BotDoc, type BotWakeDoc, type OrgDoc, type QueuedWakeKind } from "@/lib/types";
 
 /**

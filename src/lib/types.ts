@@ -479,8 +479,9 @@ export interface BotMentionDoc {
 /** Something a person should look at. Bots get wake-ups and check_for_work instead. */
 /** "review": a bot finished a task but left it open (e.g. In Review) while other tasks wait on it.
  * "undelivered": Vector couldn't hand a task to its push bot after retrying (actorId = the bot).
- * "stalled": an open, ready task nobody is assigned to is holding other open tasks up (VEC-108). */
-export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered" | "stalled";
+ * "stalled": an open, ready task nobody is assigned to is holding other open tasks up (VEC-108).
+ * "waiting": a task has sat at a flow wait step longer than its `remindAfterDays` (VEC-182, once per entry). */
+export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered" | "stalled" | "waiting";
 export interface NotificationDoc {
   _id: ObjectId;
   orgId: ObjectId;
