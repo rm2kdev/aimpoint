@@ -98,19 +98,29 @@ An agent's cron loop calls `check_for_work` until it returns `kind: "idle"`. Eac
 1. **`mention`**: a comment newly @mentioned the bot. The headline says "You've been mentioned in a comment" and quotes it; the full task and thread follow, with the mentioning comments flagged `new`. Each mention is delivered once.
 2. **`assigned`**: the highest-priority (then soonest due, then oldest) open, *ready* task assigned to the bot that it hasn't picked up (tasks still waiting on dependencies are held back; the idle reply counts them as `assignedWaitingOnDependencies`). It is marked picked up (`agentClaims`, never shown on the task) and won't be offered again until it's assigned to the bot afresh or the bot calls `release_task`.
 
-Task context includes the organisation, project, status, priority, assignee, creator, due date, the description as Markdown, every comment (mentions rendered as `@Name`), the activity history and the bot's own state and permissions. Images the org uploaded are attached inline as MCP image content (other image URLs are listed, never fetched).
+Task context includes the organisation, project, status, priority, assignee, creator, due date, the description as Markdown, every comment (mentions rendered as `@Name`), the activity history, the bot's own state and permissions, and `flow`: where the task is in its project's flow (see Flows below). Images the org uploaded are attached inline as MCP image content (other image URLs are listed, never fetched).
 
 | Tool | |
 |---|---|
 | `check_for_work` | next mention or assigned task, picked up |
 | `check_for_triage` | next task waiting in Triage, taken for triage (opt-in: only bots whose role switches it on) |
 | `list_my_tasks` | assigned and picked-up tasks with the bot's state |
-| `complete_task` | finish the bot's work, optionally with a closing comment and status |
+| `complete_task` | finish the bot's work, optionally with a closing comment and status; on a task with an active flow, leave `status` out to hand it to the next step's owner (the reply says where it went and who has it) |
+| `advance_task` | move a task on from a flow *wait* step once what it waits for has happened (step owner, resolver bots, assignee or creator) |
 | `release_task` | hand a picked-up task back |
 | `get_task`, `list_tasks`, `get_workspace` | read tasks, projects, statuses, people and bots |
 | `add_comment` | comment; tag people via `mention` (names, emails or ids) or `<@id>` |
 | `set_status`, `assign_task`, `update_task`, `create_task` | move, assign, edit and create (descriptions accept Markdown) |
 | `get_analytics` | the organisation's analytics report (opt-in, Reporting group): `from`, `to`, `granularity`, `project`, `person` / `bot`, `tz`; same params and data as `GET /api/v1/analytics` |
+
+### Flows
+
+A project can have a **flow** (Settings → Flows; design in `docs/flows.md`): an ordered list of steps, each with a status, an owner (a bot, a person, any triage bot, whoever has it, or nobody), instructions, and how it moves on (`complete`: its owner finishes it; `wait`: an outside event; `manual`: a person). Projects inherit the org default unless they have their own or switch flows off.
+
+- **Task context** (`get_task`, `check_for_work`, wake-up payloads, `GET /api/v1/tasks/{key}`) carries `flow`: `step` (name, status, owner, instructions, `advance`, `wait`, position `number`/`of`), `next` (the step `complete_task` without a status sends it to, and its owner), `holder` (who has it now), `howToFinish` (what to call), `steps` (the pipeline with `current`/`passed`), `active`, `paused`, `detached`. `flow` is null when the project has no flow; `active: false` means the flow says nothing here (the seeded default: keep owners, no instructions), so bots finish with a status as usual and `complete_task` without a status moves nothing.
+- **Finishing a step**: `complete_task` without `status` moves the task to the next step's status and assigns its owner, who is woken (bot; webhook event `task.handoff` with a `flow` block) or notified (person) with that step's instructions. Pass an earlier step's status to send it back; bots can't skip a required later step (Done included). The reply always says where the task is and who has it.
+- **Wait steps** move on with `advance_task` (`{task, comment}`, REST `POST /api/v1/tasks/{key}/advance`) from the step owner, its resolver bots, or the task's assignee or creator, or when a person moves it.
+- **Who does what**: `get_workspace` (and `GET /api/v1/projects`, `GET /api/v1/flows`) lists each project's resolved flow (`flow` per project: steps with owner, status, instructions), so a triager knows who each step goes to; an assignee it sets on a sub-task wins over the flow.
 
 ### Task dependencies
 
@@ -152,8 +162,11 @@ curl $HOST/api/v1/tasks -H "Authorization: Bearer vec_…" -H "Content-Type: app
 | `GET /api/v1/projects`, `/statuses`, `/members` | lookups |
 | `GET /api/v1/tasks?project=WEB&assignee=me&status=Todo&limit=50` | list; archived tasks are left out unless `archived=true` |
 | `POST /api/v1/tasks` | create: `title`, `project` (key or id), optional `type`, `status` (name or id), `assignee` (`me`, email, bot name or id), `priority` (0-3 or none/low/medium/high), `description` (text or HTML), `dueDate` (`YYYY-MM-DD` or null), `dependsOn` (task keys or ids) |
-| `GET /api/v1/tasks/WEB-12` | task with description, `dependencies`, `dependents` and activity |
+| `GET /api/v1/tasks/WEB-12` | task with description, `dependencies`, `dependents` and activity, plus `flow` (its place in the project's flow, the same object as in MCP get_task) |
 | `PATCH /api/v1/tasks/WEB-12` | same fields as create, plus `"archived": true/false`; all fields on tasks the bot created; status, assignee, priority, type and due date on tasks assigned to it |
+| `POST /api/v1/tasks/WEB-12/complete` | `{ "comment"?, "status"? }`, same as MCP `complete_task` (leave `status` out to hand it to the next flow step); `{ message }` says where it went and who has it. 403 without rights, 404 unknown task |
+| `POST /api/v1/tasks/WEB-12/advance` | `{ "comment"? }`, same as MCP `advance_task`: moves a task on from a flow wait step. 400 on any other step, 403 without a say |
+| `GET /api/v1/flows` | each project's resolved flow (`flowMode` inherit/custom/off, `flow` with its steps), same objects as `flow` in `/projects` and get_workspace |
 | `POST /api/v1/tasks/WEB-12/comments` | `{ "body": "…" }`; mention people or bots with `<@id>` (ids from `/members`) |
 | `GET /api/v1/analytics?from=2026-11-01&to=2026-11-30&granularity=week&project=WEB` | `{ project, report }`, the Analytics screen's report. Only bots whose role switches on `get_analytics` (else 403). `from` / `to`: ISO 8601 date-time with offset, or a date (`to` as a date includes that day); default the last 30 days. `granularity` hour/day/week/month (default by length, max 3000 buckets), `project` key or id, `person` or `bot` id, `tz` IANA (default Australia/Perth). Unknown project/person/bot, `from` >= `to`, more than 3660 days, bad granularity/date/timezone: 400 with the reason |
 

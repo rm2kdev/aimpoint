@@ -4,6 +4,7 @@ import { cols } from "@/lib/db";
 import { readLocalImage, MAX_IMAGE_BYTES } from "@/lib/storage";
 import { projectContext, toTask, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
+import { botTaskFlow } from "@/lib/flow-bot-view";
 import { taskUrl as orgTaskUrl } from "@/lib/paths";
 import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
@@ -325,6 +326,9 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     stalled: stalledOut,
   };
 
+  // Where it is in its project's flow (VEC-176): the step, its instructions, what comes next and who has it.
+  const flow = await botTaskFlow(task, project.key, task.assigneeId ? personRef(dir, task.assigneeId)!.name : null);
+
   const isCreator = task.createdBy.equals(bot._id);
   const isAssignee = !!task.assigneeId?.equals(bot._id);
   const triaging = claim?.kind === "triage" && claim.state === "in_progress";
@@ -341,6 +345,13 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     dueDate: task.dueDate ? task.dueDate.toISOString().slice(0, 10) : null,
     archived: !!task.archivedAt,
     dependencies,
+    /**
+     * The task's place in its project's flow (null = the project has no flow). `step` = the step it's at (owner,
+     * instructions, how it moves on), `next` = where complete_task without a status sends it and who gets it,
+     * `holder` = who has it now, `howToFinish` = what to call when this step's work is done, `steps` = the pipeline.
+     * `active` false = the flow says nothing here (the seeded default): finish with a status as usual.
+     */
+    flow,
     /**
      * `context` is the project's admin-set key/value metadata: repos, environments, conventions and the like.
      * `statuses` is this project's own workflow in order (statuses are per project): the only names set_status,

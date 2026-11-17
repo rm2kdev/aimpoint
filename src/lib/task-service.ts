@@ -425,7 +425,12 @@ export interface TaskPatch {
  * `internal` carries fields no client patch may set directly: `rank` comes only from moveTask, which computes
  * it from the neighbours itself.
  */
-export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPatch, internal: { rank?: string; flowTo?: string } = {}): Promise<Task> {
+export async function updateTaskAs(
+  actor: Actor,
+  taskId: ObjectId,
+  patch: TaskPatch,
+  internal: { rank?: string; flowTo?: string; /** advance_task resolving a wait step (VEC-176): the caller already checked the bot may. */ flowResolver?: boolean } = {},
+): Promise<Task> {
   const c = await cols();
   const before = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
   if (!before) throw new UserError("This task no longer exists.");
@@ -434,7 +439,9 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
     actor.id.toHexString(),
     actor.isAdmin,
   );
-  if (access !== "full") {
+  // A wait step's resolver (advance_task) moves only the task's flow on, nothing else, whatever its access.
+  const resolving = !!internal.flowResolver && !!internal.flowTo && Object.keys(patch).every((k) => k === "statusId" || patch[k as keyof TaskPatch] === undefined);
+  if (access !== "full" && !resolving) {
     const triaging = actor.isBot && (await isTriaging(actor.id, taskId));
     // The bot that triaged it may close it out (but nothing more) when it otherwise only gets to comment.
     const closingOut = access === "comment" && !triaging && actor.isBot && !!before.triagedBy?.equals(actor.id);

@@ -10,7 +10,9 @@ import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { taskAccess } from "@/lib/access";
-import { advanceTarget, flowBriefing, type AdvanceTarget } from "@/lib/flow-engine";
+import { advanceTarget, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
+import { nextStepOf } from "@/lib/flow-engine-core";
+import { botOrgFlows } from "@/lib/flow-bot-view";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
 import { computeAnalytics } from "@/lib/analytics";
@@ -122,6 +124,10 @@ async function resolveProject(ctx: McpCtx, ref: string) {
 async function resolveStatus(ctx: McpCtx, ref: string, projectId: ObjectId) {
   return resolveProjectStatus(ctx.org._id, projectId, ref);
 }
+
+/** How flows work, said once in get_workspace / check_for_triage (VEC-176). */
+const FLOWS_NOTE =
+  "A project's `flow` lists, in order, who handles a task at each step (a bot, a person, any triage bot, whoever has it, or nobody), the status it sits in and the step's instructions. On a task with an active flow, the step's owner finishes its part with complete_task WITHOUT a status: Vector moves the task to the next step's status and hands it to that step's owner (wakes the bot or notifies the person). Pass an earlier step's status to send it back; bots can't skip a required step. A wait step moves on with advance_task once what it waits for has happened. A task's own context (`flow` in get_task) says which step it's at and what to call. When triaging, assign a sub-task only if its step's owner shouldn't decide: an assignee you set wins over the flow.";
 
 /** How the stages work, said once in get_workspace / check_for_triage (VEC-116). */
 const STAGES_NOTE =
@@ -241,10 +247,11 @@ async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
 /** Projects (with their context and their own statuses in workflow order), and people and bots: what get_workspace returns. */
 async function workspaceSummary(ctx: McpCtx) {
   const c = await cols();
-  const [projects, statuses, dir] = await Promise.all([
+  const [projects, statuses, dir, flows] = await Promise.all([
     c.projects.find({ orgId: ctx.org._id }).sort({ createdAt: 1 }).toArray(),
     c.statuses.find({ orgId: ctx.org._id }).sort({ order: 1 }).toArray(),
     loadDirectory(ctx.org._id),
+    botOrgFlows(ctx.org._id),
   ]);
   const byProject = groupStatusesByProject(statuses);
   return {
@@ -258,7 +265,13 @@ async function workspaceSummary(ctx: McpCtx) {
       context: projectContext(p),
       /** This project's statuses in workflow order. Tasks in this project only take these names. */
       statuses: (byProject.get(p._id.toHexString()) ?? []).map((s) => ({ id: s._id.toHexString(), name: s.name, stage: s.category })),
+      /**
+       * This project's resolved flow (VEC-176): who handles a task at each step, in order (owner, status, instructions,
+       * how it moves on). Null = flows are off for it. `active` false = no step names an owner or instructions.
+       */
+      flow: flows.get(p._id.toHexString()) ?? null,
     })),
+    flows: FLOWS_NOTE,
     people: [...dir.values()],
   };
 }
@@ -304,14 +317,16 @@ async function openDeps(orgId: ObjectId, ids: ObjectId[]): Promise<ObjectId[]> {
  */
 async function flowAdvanceFor(ctx: McpCtx, task: TaskDoc, triaging: boolean): Promise<AdvanceTarget | null> {
   const access = taskAccess({ createdBy: task.createdBy.toHexString(), assigneeId: task.assigneeId?.toHexString() ?? null }, ctx.bot._id.toHexString(), false);
-  if (access === "comment" && !triaging) return null;
   const t = await advanceTarget(task);
+  // A wait step moves nothing either way, so anyone finishing there is told how it moves on (advance_task).
+  if (t.kind === "wait") return t;
+  if (access === "comment" && !triaging) return null;
   return t.kind === "none" ? null : t;
 }
 
 /** What the flow did, for the complete_task reply: " Moved to In Review and handed to Testing Verification for Test." */
 async function flowReplyNote(ctx: McpCtx, taskId: ObjectId, step: AdvanceTarget): Promise<string> {
-  if (step.kind === "wait") return ` It's at the ${step.step.name} step, which waits for "${step.step.wait?.label ?? "an outside event"}"; it moves on when that happens, not on complete_task.`;
+  if (step.kind === "wait") return ` It's at the ${step.step.name} step, which waits for "${step.step.wait?.label ?? "an outside event"}"; it moves on when that happens (advance_task, or a person moves it), not on complete_task.`;
   if (step.kind !== "advance") return "";
   const c = await cols();
   const after = await c.tasks.findOne({ _id: taskId }, { projection: { assigneeId: 1, flow: 1 } });
@@ -320,6 +335,17 @@ async function flowReplyNote(ctx: McpCtx, taskId: ObjectId, step: AdvanceTarget)
   const self = after?.assigneeId?.equals(ctx.bot._id);
   if (step.to.status.category === "done") return ` The flow closed it as ${step.to.status.name}.`;
   return ` Moved to ${step.to.status.name} for the ${step.to.name} step${owner ? (self ? " (you own that step too: you'll be handed it again)" : ` and handed to ${owner}`) : ", with nobody assigned"}.`;
+}
+
+/** " It's in In Review (the Test step of its flow), assigned to Tester." for tool replies (VEC-176). */
+async function whereNow(ctx: McpCtx, taskId: ObjectId): Promise<string> {
+  const c = await cols();
+  const t = await c.tasks.findOne({ _id: taskId });
+  if (!t) return "";
+  const [st, dir, flow] = await Promise.all([c.statuses.findOne({ _id: t.statusId }, { projection: { name: 1 } }), loadDirectory(ctx.org._id), t.flow?.paused ? null : loadTaskFlow(t)]);
+  const step = flow?.current && flow.status ? ` (the ${flow.current.name} step of its flow)` : "";
+  const who = t.assigneeId ? (t.assigneeId.equals(ctx.bot._id) ? "assigned to you" : `assigned to ${personName(dir, t.assigneeId)}`) : "with nobody assigned";
+  return ` It's in ${st?.name ?? "its status"}${step}, ${who}.`;
 }
 
 /** The task sits on a flow step that someone other than `botId` now owns (VEC-175). */
@@ -552,13 +578,17 @@ const TOOLS: Record<string, ToolImpl> = {
 
   complete_task: {
     description:
-      "Say you've finished your work on a task. Optionally post a final comment and move it to a status. (When you picked the task up, Vector already moved it to a started status for you, so pass the status it should end in.) Statuses are per project: pass a name from the task's own project (\`project.statuses\` in get_task, or get_workspace); the default names are used below, and a project may have renamed them. Use Done (a done-stage status) when the work meets its acceptance criteria: only a done (or cancelled) status releases the tasks that depend on it. In Review (an open status) leaves them waiting until a person closes it, so use it only when a person really has to check or decide something, and @mention that person in the comment. The task won't be offered again by check_for_work unless someone assigns it to you afresh. Mentions on it still reach you. For a task you're triaging, this ends the triage: pass a `status` that moves it out of Triage. You stay its triager afterwards: once everything it depends on is done you're called back (push wake-up, or `kind: \"closeout\"` on check_for_work) and close it out with complete_task and a closing status (e.g. Done, or In Review if something was cancelled or left open).",
+      "Say you've finished your work on a task. Optionally post a final comment and move it to a status. On a task whose project has an active flow (its context's `flow.active` is true; `flow.howToFinish` says what to do), omit `status` to hand it on: Vector moves it to the next step's status and assigns that step's owner (waking the bot or notifying the person, with the step's instructions), or closes it if the next step is Done; the reply says where it went and who has it now. Pass an earlier step's status to send it back (say what failed in the comment); a bot can't skip a required later step, Done included. A wait step doesn't move on with complete_task: use advance_task once what it waits for has happened. Without an active flow, omitting `status` moves nothing. (When you picked the task up, Vector already moved it to a started status for you, so pass the status it should end in.) Statuses are per project: pass a name from the task's own project (\`project.statuses\` in get_task, or get_workspace); the default names are used below, and a project may have renamed them. Use Done (a done-stage status) when the work meets its acceptance criteria: only a done (or cancelled) status releases the tasks that depend on it. In Review (an open status) leaves them waiting until a person closes it, so use it only when a person really has to check or decide something, and @mention that person in the comment. The task won't be offered again by check_for_work unless someone assigns it to you afresh (a flow hand-off back to you counts). Mentions on it still reach you. For a task you're triaging, this ends the triage: pass a `status` that moves it out of Triage. You stay its triager afterwards: once everything it depends on is done you're called back (push wake-up, or `kind: \"closeout\"` on check_for_work) and close it out with complete_task and a closing status (e.g. Done, or In Review if something was cancelled or left open).",
     inputSchema: {
       type: "object",
       properties: {
         task: TASK_ARG,
         comment: { type: "string", description: "Optional closing comment, e.g. a summary of what you did. Mention people with <@id>." },
-        status: { type: "string", description: "Optional status name (or stage) of the task's own project to move it to (needs you to be its creator or assignee; as its triager, a closing status once it's ready). A name only another project has is refused." },
+        status: {
+          type: "string",
+          description:
+            "Optional status name (or stage) of the task's own project to move it to (needs you to be its creator or assignee; as its triager, a closing status once it's ready). A name only another project has is refused. Leave it out on a task with an active flow to hand it to the next step.",
+        },
       },
       required: ["task"],
       additionalProperties: false,
@@ -621,7 +651,9 @@ const TOOLS: Record<string, ToolImpl> = {
       const handoff = step?.kind === "advance" || (moved && (await handedOnByFlow(task._id, ctx.bot._id))) ? "" : await reviewHandoff(ctx, task._id, key, comment);
       // Parked behind open dependencies nobody owns (the status didn't change, or no status was given): take them (VEC-107).
       const owned = [...assignedBlockersOf(moved), ...(await ownUnownedBlockers(ctx.actor, task._id))];
-      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${flowNote}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
+      // Where it is now and who has it (VEC-176), unless the flow note already said so.
+      const where = step?.kind === "advance" ? "" : await whereNow(ctx, task._id);
+      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${flowNote}${where}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
     },
   },
 
@@ -650,9 +682,57 @@ const TOOLS: Record<string, ToolImpl> = {
     },
   },
 
+  advance_task: {
+    description:
+      "Move a task on from a flow step that waits for an outside event (`flow.step.advance` is \"wait\", e.g. \"Customer reply\"), once that event has happened: Vector moves it to the next step's status and hands it to that step's owner, with your comment as the hand-off note. Say what happened in `comment` (e.g. \"Reply received from J. Smith: wants a quote for 2 bathrooms\"). Allowed for the step's owner, its resolver bots (`flow.step.wait.resolvers`), and the task's assignee or creator; you don't need to be assigned. Any other step moves on with complete_task (without a status) from its owner instead, so this is refused there.",
+    inputSchema: {
+      type: "object",
+      properties: { task: TASK_ARG, comment: { type: "string", description: "What happened, posted on the task before it moves on. Plain text; mention people with <@id>." } },
+      required: ["task"],
+      additionalProperties: false,
+    },
+    run: async (args, ctx) => {
+      const { task, project } = await findTask(ctx, str(args, "task", true)!);
+      const comment = str(args, "comment");
+      const key = `${project.key}-${task.number}`;
+      const flow = task.flow?.paused ? null : await loadTaskFlow(task);
+      const step = flow?.current;
+      if (!flow || !step || !flow.status) throw new ToolInputError(`${key} isn't at a step of a flow${task.flow?.paused ? " (its flow is paused)" : ""}, so there's nothing to advance. Use complete_task or set_status.`);
+      if (step.advance !== "wait") {
+        throw new ToolInputError(`${key} is at the ${step.name} step, which doesn't wait for an outside event: its owner (${ownerName(flow.dir, step)}) hands it on with complete_task without a status.`);
+      }
+      const me = ctx.bot._id.toHexString();
+      const may =
+        (step.owner.kind === "bot" && step.owner.id === me) ||
+        (step.wait?.resolvers ?? []).includes(me) ||
+        task.assigneeId?.equals(ctx.bot._id) ||
+        task.createdBy.equals(ctx.bot._id);
+      if (!may) {
+        const resolvers = (step.wait?.resolvers ?? []).map((id) => flow.dir.bots.get(id) ?? id);
+        const who = [
+          step.owner.kind === "bot" || step.owner.kind === "person" ? `the ${step.name} step's owner (${ownerName(flow.dir, step)})` : null,
+          resolvers.length ? `its resolver bots (${resolvers.join(", ")})` : null,
+          "the task's assignee or creator",
+        ].filter(Boolean);
+        throw new ToolInputError(`Only ${who.join(", ")}, or a person can move ${key} on from ${step.name}. You can still comment.`);
+      }
+      const to = nextStepOf(flow.flow, step);
+      if (!to) throw new ToolInputError(`${key} is at the last step of its flow; nothing comes after ${step.name}.`);
+      if (comment) await addCommentAs(ctx.actor, task._id, comment);
+      const target: AdvanceTarget = { kind: "advance", from: step, to, statusChanges: to.status.id !== flow.status.id };
+      // The waiting bot isn't working on it any more: finish its round before the move, so a hand-off back to it (it
+      // owns the next step too) starts a fresh one and the move's broadcast shows the working ring cleared.
+      await (await cols()).agentClaims.updateMany({ botId: ctx.bot._id, taskId: task._id, kind: { $ne: "triage" }, state: "in_progress" }, { $set: { state: "done", finishedAt: new Date() } });
+      const t = await updateTaskAs(ctx.actor, task._id, target.statusChanges ? { statusId: to.status.id } : {}, { flowTo: to.id, flowResolver: true });
+      const note = await flowReplyNote(ctx, task._id, target);
+      return { content: [text(`${step.wait?.label ?? step.name}: resolved on ${key}.${note}${comment ? " Comment posted." : ""}${blockersNote(assignedBlockersOf(t))}`)] };
+    },
+  },
+
   get_task: {
     readOnly: true,
-    description: "Everything about one task: project, status, priority, assignee, due date, description (Markdown), images (attached inline), every comment and the activity history. Doesn't change any state.",
+    description:
+      "Everything about one task: project, status, priority, assignee, due date, description (Markdown), images (attached inline), every comment and the activity history, and its place in its project's flow (`flow`: the current step with its owner and instructions, the next step and who gets it, who has it now, and `howToFinish`). Doesn't change any state.",
     inputSchema: { type: "object", properties: { task: TASK_ARG, include_images: IMAGES_ARG }, required: ["task"], additionalProperties: false },
     run: async (args, ctx) => {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
@@ -694,7 +774,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   get_workspace: {
     readOnly: true,
-    description: "Who you are, the tools your role allows, the organisation's projects (each with its context: admin-set key/value notes such as repos and conventions, and its own statuses in workflow order with their stage; statuses are per project and a task only takes its own project's), how the stages work, and people and bots with their ids, for assigning and @mentioning.",
+    description: "Who you are, the tools your role allows, the organisation's projects (each with its context: admin-set key/value notes such as repos and conventions, and its own statuses in workflow order with their stage; statuses are per project and a task only takes its own project's), each project's resolved flow (`flow`: who handles a task at each step, in order, with the step's status and instructions; null when flows are off), how the stages and flows work, and people and bots with their ids, for assigning and @mentioning.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     run: async (_args, ctx) => {
       const c = await cols();
@@ -961,4 +1041,5 @@ While you work an assigned task (or one a mention handed back to you), keep its 
 Call check_for_work again until it says idle. Use get_workspace for project keys, each project's statuses and people's ids.
 Statuses are per project: every project has its own list, a task only takes a status of its own project (by that project's names; a task's context lists them under \`project.statuses\`), and Vector acts on each status's stage (backlog, triage, unstarted, started, done, cancelled), not its name. The names used here (Todo, In Progress, In Review, Done, Cancelled) are the defaults; a project may have renamed them.
 If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task, chain them with \`depends_on\` so they run in a logical order, make the original depend on them, then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
+Projects can have a flow: an ordered list of steps, each with an owner (a bot, a person, any triage bot, whoever has it, or nobody), a status and instructions (\`flow\` per project in get_workspace, and in each task's context: the step it's at, what comes next, who has it, \`howToFinish\`). On a task whose flow is active, finish your step with complete_task WITHOUT a status: Vector moves it to the next step's status and hands it to that step's owner, and the reply says where it went. Pass an earlier step's status to send it back (say why in the comment); bots can't skip a required step, Done included. A wait step (\`flow.step.advance\` "wait") moves on with advance_task once what it waits for has happened. Where the flow isn't active (\`flow.active\` false or \`flow\` null), finish with a status as described above.
 Tasks can depend on other tasks (\`depends_on\` on create_task / update_task). A task isn't offered or pushed to its assignee until everything it depends on is closed (a done or cancelled status; the ready message says which were cancelled); moving your task to a done or cancelled status (set_status or complete_task with a status) releases the tasks waiting on it. A task you file that blocks your own work needs an owner: create it with \`assignee\` ("me" by default, or whoever should do it). If you send your task back to wait on new blockers, every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you.\nComments are plain text: write add_comment and complete_task comments without Markdown (no **bold**, headings or tables); plain "- " lists are fine. Task descriptions do accept Markdown.`;

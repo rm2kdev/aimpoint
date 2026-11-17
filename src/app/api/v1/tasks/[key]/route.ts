@@ -3,14 +3,23 @@ import { findTaskByKey, loadFeed, toTaskDetail, withWorkingBots } from "@/lib/da
 import { loadTaskRefs } from "@/lib/dependencies";
 import { UserError } from "@/lib/result";
 import { assignedBlockersOf, moveTask, updateTaskAs } from "@/lib/task-service";
+import { botTaskFlow } from "@/lib/flow-bot-view";
+import { loadDirectory, personName } from "@/lib/mcp/context";
 
-/** GET /api/v1/tasks/WEB-12: the task with its description and activity. */
+/**
+ * GET /api/v1/tasks/WEB-12: the task with its description and activity, plus `flow` (VEC-176): its place in its
+ * project's flow, the same object as `flow` in MCP get_task (current step with owner and instructions, `next` step
+ * and who gets it, `holder`, `howToFinish`, the pipeline). Null when the project has no flow.
+ */
 export const GET = botRoute<{ key: string }>(async (_req, ctx, { key }) => {
   const found = await findTaskByKey(ctx.org._id, key);
   if (!found) throw new UserError(`Unknown task "${key}".`);
-  const [refs, activity] = await Promise.all([loadTaskRefs(ctx.org._id, found.task), loadFeed(found.task._id)]);
-  const [task] = await withWorkingBots([toTaskDetail(found.task, found.project.key, refs)]);
-  return { task, activity };
+  const [refs, activity, dir] = await Promise.all([loadTaskRefs(ctx.org._id, found.task), loadFeed(found.task._id), loadDirectory(ctx.org._id)]);
+  const [[task], flow] = await Promise.all([
+    withWorkingBots([toTaskDetail(found.task, found.project.key, refs)]),
+    botTaskFlow(found.task, found.project.key, found.task.assigneeId ? personName(dir, found.task.assigneeId) : null),
+  ]);
+  return { task, flow, activity };
 }, "get_task");
 
 /** Fields that may go with `before` / `after` in one move (VEC-57). */

@@ -270,34 +270,44 @@ or is hidden. Any new claim/wake state the engine adds must be cleared there too
 
 ## 6. Bot API / MCP changes (VEC-176)
 
-- **Task context** (`buildTaskContext`, REST detail, webhook payload) gains:
+As built (`lib/flow-bot-view.ts` builds every JSON shape below; `lib/bot-api-tools.ts` runs MCP tools for REST).
+
+- **Task context** (`buildTaskContext`: MCP get_task, check_for_work, wake-up payloads incl. the webhook `task`;
+  REST `GET /api/v1/tasks/{key}` returns the same object as top-level `flow`):
   ```json
   "flow": {
-    "source": "project",
-    "paused": false,
-    "step": { "id": "dev1", "name": "Develop", "status": "Todo", "owner": "Hermes", "instructions": "...",
-              "advance": "complete", "wait": null },
-    "next": { "name": "Test", "status": "In Review", "owner": "Testing Verification" },
-    "steps": [ { "name": "Triage", "status": "Triage", "owner": "any triage bot", "current": false }, ... ]
+    "source": "project", "version": 3, "active": true, "paused": false, "detached": false,
+    "step": { "id": "develop", "name": "Develop", "status": "Todo", "stage": "unstarted",
+              "owner": { "kind": "bot", "id": "…", "name": "Dev" }, "advance": "complete", "required": true,
+              "instructions": "…", "wait": null, "next": null, "number": 1, "of": 4 },
+    "next": { "id": "test", "name": "Test", "status": "In Review", "stage": "started", "owner": { "kind": "bot", "id": "…", "name": "Tester" } },
+    "holder": "Dev",
+    "howToFinish": "When your part is done, call complete_task without a status: that moves it to In Review and hands it to Tester …",
+    "steps": [ { "id": "develop", "name": "Develop", "status": "Todo", "owner": "Dev", "current": true, "passed": false }, … ]
   }
   ```
-- **complete_task**: `status` becomes optional for flow tasks; without it the task advances to the next
-  step. The reply says where it went ("Moved to In Review and handed to Testing Verification for Test").
-  The description is rewritten: "On a task with a flow, call complete_task without a status to hand it to
-  the next step; pass an earlier step's status to send it back; Done is refused while a required later step
-  remains." The "use Done, In Review only for a named person" guidance stays for tasks without a flow.
-- **advance_task** (new, `{task, comment?}`): resolves a wait step (resolvers, step owner, creator, admins).
-  On a non-wait step it is refused with "use complete_task".
-- **Wake-up prompt** for `assigned` / `ready` / `handoff`: "You're the Develop step of VEC's flow. <instructions>.
-  When done, complete_task without a status hands it to Testing Verification (Test)." Instruction text goes
-  through `loadStatusWords` like every other agent-facing status word (VEC-116).
-- **check_for_work** unchanged in shape; hand-offs are ordinary assigned work (the claim was reset). Its item
-  includes the `flow` block.
-- **get_workspace** lists each project's resolved flow (step names, statuses, owners), so triage bots know who
-  to assign sub-tasks to.
-- **REST**: `GET /api/v1/flows` (resolved flows per project), `POST /api/v1/tasks/{key}/advance`. Editing
-  flows stays admin-only in the UI (no bot write API in v1).
-- Webhook event `task.handoff` (and `retry: true` for retries), through the wake queue.
+  `flow` is null when the project has no flow. `active` false (the seeded default, or no owner/instructions on this
+  step and the next) = the flow says nothing here: `next` is null and `howToFinish` says to finish with a status as
+  usual. `paused` (triage umbrella) and `detached` (status is no step's) also say to finish as usual.
+- **complete_task**: without `status` on an active flow it advances to the next step; the reply says where it went
+  and who has it ("Moved to In Review for the Test step and handed to Tester"), and with an explicit status (or when
+  nothing moved) it adds "It's in Done (the Done step of its flow), assigned to you." The description explains the
+  flow case first, then keeps the "Done releases dependents, In Review only for a named person" guidance. On an
+  **inactive** flow it moves nothing (VEC-176 gate in `advanceTarget`; before it, the default flow's optional
+  Review step caught every finished task in In Review). On a wait step it moves nothing and points at advance_task.
+- **advance_task** `{task, comment?}` (catalog group work, not opt-in; existing roles must switch it on): resolves a
+  wait step for the step owner, its `wait.resolvers`, or the task's assignee/creator (`updateTaskAs` internal
+  `flowResolver` skips the comment-only refusal for exactly that move). Comment first, then the move, so the next
+  owner's hand-off sees it; the caller's in-progress claim is finished before the move. Other steps are refused
+  ("hands it on with complete_task without a status"). REST `POST /api/v1/tasks/{key}/advance`.
+- **Wake-up prompt / check_for_work**: unchanged from VEC-175 (`flowBriefing`), plus the wait text names advance_task.
+- **get_workspace** (and check_for_triage's workspace): `projects[].flow` = the resolved flow (`source`, `version`,
+  `active`, `steps` with owner/status/stage/instructions/advance/required/wait/next, `skipped`), and a `flows` note
+  on how flows work. `SERVER_INSTRUCTIONS` carry the same rules.
+- **REST**: `GET /api/v1/flows` (per project: `flowMode`, `flow`), `GET /api/v1/projects` (`flow` per project),
+  `GET /api/v1/tasks/{key}` (`flow`), `POST /api/v1/tasks/{key}/complete` (= complete_task) and `/advance`
+  (= advance_task), both answering `{message}` or `{error}` with 400/403/404. Editing flows stays admin-only in the UI.
+- Webhook event `task.handoff` (and `retry: true` for retries), through the wake queue (VEC-175).
 
 ## 7. UI (VEC-177, VEC-178), briefly
 

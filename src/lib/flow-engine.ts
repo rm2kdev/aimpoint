@@ -260,6 +260,9 @@ export async function advanceTarget(task: TaskDoc): Promise<AdvanceTarget> {
   if (ctx.status.category === "done" || ctx.status.category === "cancelled") return { kind: "none" };
   const from = ctx.current;
   if (from.advance === "wait") return { kind: "wait", step: from };
+  // A flow that says nothing here (the seeded default: keep owners, no instructions) moves nothing on complete_task,
+  // as before flows (VEC-176): otherwise Build -> its optional Review step would park every finished task in In Review.
+  if (!flowIsActive(ctx.flow, from)) return { kind: "none" };
   const to = nextStepOf(ctx.flow, from);
   if (!to) return { kind: "none" };
   return { kind: "advance", from, to, statusChanges: to.status.id !== ctx.status.id };
@@ -297,9 +300,9 @@ export interface FlowBriefing {
 }
 
 /** The briefing for whoever holds the task's current step; null when the flow has nothing to say (no flow, paused, the default). */
-export async function flowBriefing(task: TaskDoc, projectKey: string): Promise<FlowBriefing | null> {
+export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: TaskFlowContext | null): Promise<FlowBriefing | null> {
   if (task.flow?.paused) return null;
-  const ctx = await loadTaskFlow(task);
+  const ctx = loaded !== undefined ? loaded : await loadTaskFlow(task);
   const step = ctx?.current;
   if (!ctx || !step || step.status.category === "done" || !flowIsActive(ctx.flow, step)) return null;
   const { flow, dir } = ctx;
@@ -309,7 +312,7 @@ export async function flowBriefing(task: TaskDoc, projectKey: string): Promise<F
   const later = flow.steps.slice(i + 1).filter((s) => s.required && s.status.category !== "done");
   let finish: string;
   if (step.advance === "wait") {
-    finish = `This step waits for "${step.wait?.label ?? "an outside event"}": it moves on when that happens (a person moves it on), not when you call complete_task.`;
+    finish = `This step waits for "${step.wait?.label ?? "an outside event"}": it moves on when that happens, not when you call complete_task. When it has happened, call advance_task with a comment saying what happened (the step owner and its resolver bots may), or a person moves it on.`;
   } else if (!next) {
     finish = "Finish with complete_task.";
   } else if (next.status.category === "done") {

@@ -38,6 +38,12 @@ export const MCP_TOOLS: ToolInfo[] = [
   { name: "check_for_work", title: "Check for work", summary: "\"Do I have a task?\" Returns the next mention, close-out of a task it triaged, or assigned task with full context and picks it up.", group: "work" },
   { name: "list_my_tasks", title: "List my tasks", summary: "Tasks assigned to the bot, with whether it has picked each one up.", group: "work" },
   { name: "complete_task", title: "Finish task", summary: "Mark the bot's work on a task as finished, optionally with a final comment and status.", group: "work" },
+  {
+    name: "advance_task",
+    title: "Advance flow wait",
+    summary: "Move a task on from a flow step that waits for an outside event (a customer reply, a deploy) once it has happened; for the step's owner and resolver bots.",
+    group: "work",
+  },
   { name: "release_task", title: "Release task", summary: "Give a picked-up task back so it is offered again on the next check.", group: "work" },
   {
     name: "check_for_triage",
