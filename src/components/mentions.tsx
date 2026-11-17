@@ -243,7 +243,7 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           </div>,
           document.body,
         )}
-      <div ref={boxRef} className="rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+      <div ref={boxRef} data-keyboard-reveal className="scroll-mb-3 rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
         {/* The textarea's own text is transparent; this mirror draws the same text underneath with the
             picked @mentions highlighted. Both share font, padding, line height and wrapping exactly. */}
         <div className="relative">

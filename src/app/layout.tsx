@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ServiceWorker } from "@/components/service-worker";
 import { ZoomLock } from "@/components/zoom-lock";
+import { KeyboardInset } from "@/components/keyboard-inset";
 import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
@@ -49,6 +50,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} h-full`}>
       <body className="h-full">
         <ZoomLock />
+        <KeyboardInset />
         <ServiceWorker />
         <ThemeProvider>
           <TooltipProvider delayDuration={400}>{children}</TooltipProvider>

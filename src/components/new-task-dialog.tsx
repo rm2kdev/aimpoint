@@ -225,7 +225,8 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
             </button>
           </TaskSearchPicker>
         </div>
-        <div className="flex items-center gap-3 border-t border-border px-5 py-3">
+        {/* sticky: with the phone keyboard up the dialog fits the visible area and scrolls, Create stays in reach (VEC-165) */}
+        <div className="sticky bottom-0 flex items-center gap-3 rounded-b-xl border-t border-border bg-popover px-5 py-3">
           <p role="alert" aria-live="polite" className="min-w-0 flex-1 truncate text-[13px] text-destructive">
             {error}
           </p>

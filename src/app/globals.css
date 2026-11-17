@@ -240,6 +240,23 @@
   }
 }
 
+/* ---------- on-screen keyboard (VEC-165) ----------
+   iOS keeps the layout viewport (100dvh, env(safe-area-inset-bottom), fixed dialogs) at full screen size
+   while the keyboard is up and only pans the visible area, so KeyboardInset sets data-keyboard plus
+   --vv-height / --vv-top (the visible area) on <html>. The keyboard covers the home indicator, so the
+   bot tray drops its inset band, and dialogs fit to what's visible instead of centring behind the
+   keyboard (they scroll inside, and footers are sticky). Unlayered to beat the utilities. */
+html[data-keyboard] [data-bot-status-tray] {
+  height: 30px;
+  padding-bottom: 0;
+}
+html[data-keyboard] [data-slot="dialog-content"],
+html[data-keyboard] [data-slot="alert-dialog-content"] {
+  top: calc(var(--vv-top, 0px) + 0.5rem);
+  translate: -50% 0;
+  max-height: calc(var(--vv-height, 100dvh) - 1rem);
+}
+
 /* ---------- status ring: "a bot is working" = the ring's own progress bit travels round ---------- */
 /* The spinning part is its own outer <svg> (StatusRing in bits.tsx), so this is a box transform the
    compositor runs: no per-frame style/layout/paint, and it keeps turning while the main thread is
