@@ -16,7 +16,8 @@
 import "server-only";
 import type { ObjectId } from "mongodb";
 import { cols, getDb } from "@/lib/db";
-import { billingEnabled, stripeConfig } from "@/lib/billing";
+import { billingEnabled, billingEnvEnabled, stripeConfig } from "@/lib/billing";
+import { billingDebugAvailable } from "@/lib/billing-mode";
 import { billableSeats, seatQuantity } from "@/lib/billing-core";
 import { stripe } from "@/lib/stripe";
 import { hasLiveSubscription } from "@/lib/stripe-sync";
@@ -170,10 +171,13 @@ export async function sweepSeatSyncs(): Promise<{ due: number; failed: number }>
   return { due: due.length, failed };
 }
 
-/** Sweeps every SWEEP_MS in a long-running server (not on Vercel, not during a build, not with billing off). */
+/**
+ * Sweeps every SWEEP_MS in a long-running server (not on Vercel, not during a build, not when billing can't turn on).
+ * With the VEC-240 debug toggle available the timer runs and each sweep checks billingEnabled() itself.
+ */
 function startSeatSweeper() {
   state.run = sweepSeatSyncs;
-  if (state.timer || !billingEnabled() || process.env.VERCEL || process.env.NEXT_PHASE === "phase-production-build") return;
+  if (state.timer || !(billingEnvEnabled() || billingDebugAvailable()) || process.env.VERCEL || process.env.NEXT_PHASE === "phase-production-build") return;
   state.timer = setInterval(async () => {
     if (state.running) return;
     state.running = true;

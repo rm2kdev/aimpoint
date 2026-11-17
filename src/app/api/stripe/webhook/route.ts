@@ -1,8 +1,9 @@
-import { billingEnabled } from "@/lib/billing";
+import { billingDebugProblem, billingOn } from "@/lib/billing";
 import { processEvent, verifyEvent } from "@/lib/stripe";
 
 /**
- * Stripe webhook (VEC-223). 404 unless BILLING_ENABLED is on. Verifies the signature against
+ * Stripe webhook (VEC-223). 404 unless billing is on (BILLING_ENABLED, or the VEC-240 debug toggle; 503 naming the
+ * problem when debug billing has a missing var or a non-test key). Verifies the signature against
  * STRIPE_WEBHOOK_SECRET (400 on a missing/bad/stale one), then hands the event to `processEvent`,
  * which is idempotent per event id. 409 while another delivery of the same event is mid-flight and
  * 500 when handling fails, so Stripe retries both.
@@ -13,7 +14,9 @@ export const dynamic = "force-dynamic";
 const notFound = () => new Response("Not found", { status: 404 });
 
 export async function POST(req: Request) {
-  if (!billingEnabled()) return notFound();
+  if (!(await billingOn())) return notFound();
+  const problem = billingDebugProblem();
+  if (problem) return Response.json({ error: problem }, { status: 503 });
   const payload = await req.text();
   let event;
   try {
@@ -32,6 +35,6 @@ export async function POST(req: Request) {
 }
 
 export async function GET() {
-  if (!billingEnabled()) return notFound();
+  if (!(await billingOn())) return notFound();
   return new Response("Method not allowed", { status: 405, headers: { Allow: "POST" } });
 }

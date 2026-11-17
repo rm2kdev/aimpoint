@@ -5,6 +5,10 @@ import {
   planFor,
   entitlementsFor,
   billingEnabledIn,
+  debugToggleAvailableIn,
+  stripeKeyMode,
+  debugStripeProblems,
+  debugBillingError,
   missingStripeEnv,
   billingConfigError,
   limitMessage,
@@ -146,4 +150,38 @@ test("Free plan limits unchanged by per-seat pricing", () => {
   assert.equal(entitlementsFor("free").maxBots, 1);
   assert.equal(entitlementsFor("free").maxProjects, 1);
   assert.equal(entitlementsFor("pro").maxMembers, null);
+});
+
+test("debug toggle (VEC-240) only exists with AIMPOINT_DEBUG on and BILLING_ENABLED off", () => {
+  assert.equal(debugToggleAvailableIn({}), false);
+  assert.equal(debugToggleAvailableIn({ AIMPOINT_DEBUG: "0" }), false);
+  for (const v of ["1", "true", " yes ", "ON"]) assert.equal(debugToggleAvailableIn({ AIMPOINT_DEBUG: v }), true, v);
+  assert.equal(debugToggleAvailableIn({ AIMPOINT_DEBUG: "1", BILLING_ENABLED: "true" }), false);
+  assert.equal(debugToggleAvailableIn({ AIMPOINT_DEBUG: "1", BILLING_ENABLED: "false" }), true);
+  // Debug never makes the startup check demand Stripe vars.
+  assert.deepEqual(missingStripeEnv({ AIMPOINT_DEBUG: "1" }), []);
+});
+
+test("Stripe key modes", () => {
+  assert.equal(stripeKeyMode("sk_test_abc"), "test");
+  assert.equal(stripeKeyMode(" rk_test_abc "), "test");
+  assert.equal(stripeKeyMode("sk_live_abc"), "live");
+  assert.equal(stripeKeyMode("rk_live_abc"), "live");
+  assert.equal(stripeKeyMode("pk_test_abc"), "unknown");
+  assert.equal(stripeKeyMode(""), "unknown");
+  assert.equal(stripeKeyMode(undefined), "unknown");
+});
+
+test("debug billing accepts only a complete test-mode Stripe setup", () => {
+  const ok = { STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_x", STRIPE_PRICE_ID: "price_x" };
+  assert.deepEqual(debugStripeProblems(ok), []);
+  assert.deepEqual(debugStripeProblems({ ...ok, STRIPE_SECRET_KEY: "rk_test_x" }), []);
+  const live = debugStripeProblems({ ...ok, STRIPE_SECRET_KEY: "sk_live_x" });
+  assert.equal(live.length, 1);
+  assert.match(live[0], /live key/);
+  assert.match(debugStripeProblems({ ...ok, STRIPE_SECRET_KEY: "pk_test_x" })[0], /test-mode/);
+  const missing = debugStripeProblems({ STRIPE_SECRET_KEY: "sk_test_x" });
+  assert.deepEqual(missing, ["STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID are not set."]);
+  assert.match(debugStripeProblems({})[0], /STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID are not set/);
+  assert.match(debugBillingError(live), /^Test billing \(debug\) can't use this Stripe setup: STRIPE_SECRET_KEY is a live key/);
 });

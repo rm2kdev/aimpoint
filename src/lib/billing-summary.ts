@@ -4,7 +4,8 @@
  */
 import "server-only";
 import { cols } from "@/lib/db";
-import { billingEnabled, getEntitlements, getPlan } from "@/lib/billing";
+import { billingDebugActive, billingDebugProblem, billingOn, getEntitlements, getPlan } from "@/lib/billing";
+import { billingDebugAvailable } from "@/lib/billing-mode";
 import { PAST_DUE_GRACE_DAYS } from "@/lib/billing-core";
 import { canceledEndDate, hasLiveSubscription } from "@/lib/stripe-sync";
 import { UNLIMITED_SUMMARY, type BillingSummary } from "@/lib/billing-view";
@@ -13,7 +14,8 @@ import type { OrgDoc } from "@/lib/types";
 const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : null);
 
 export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): Promise<BillingSummary> {
-  if (!billingEnabled()) return UNLIMITED_SUMMARY;
+  // Re-reads the VEC-240 debug toggle when stale, so a switch shows on the next page load / org.changed.
+  if (!(await billingOn())) return { ...UNLIMITED_SUMMARY, debugAvailable: billingDebugAvailable() };
   const c = await cols();
   // members = billable seats (VEC-238, billableSeats in billing-core: human memberships, one each).
   const [members, pendingInvites, bots, projects, archivedProjects] = await Promise.all([
@@ -33,6 +35,9 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
   const graceFrom = b.status === "past_due" ? (b.pastDueSince ?? b.currentPeriodEnd ?? null) : null;
   return {
     enabled: true,
+    debug: billingDebugActive(),
+    debugAvailable: billingDebugAvailable(),
+    debugProblem: billingDebugProblem(),
     plan,
     status: b.status ?? null,
     currentPeriodEnd: iso(periodEnd),

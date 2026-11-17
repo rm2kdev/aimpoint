@@ -188,6 +188,18 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
 
   return (
     <>
+      {b.debug && (
+        <p
+          className="mb-4 flex items-start gap-2 rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground"
+          data-test-billing-banner
+        >
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+          <span>
+            <span className="font-medium text-foreground">Test billing (debug).</span> Billing is on through Settings &gt; Debug on this self-hosted instance, with Stripe test-mode keys only, so
+            no real card is charged.{b.debugProblem ? ` ${b.debugProblem}` : ""}
+          </span>
+        </p>
+      )}
       {checkout && <CheckoutBanner checkout={checkout} pro={pro} />}
       <div>
         <SettingsRow

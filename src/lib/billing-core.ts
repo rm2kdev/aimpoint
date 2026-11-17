@@ -108,6 +108,44 @@ export function missingStripeEnv(env: Env): string[] {
   return STRIPE_ENV_VARS.filter((name) => !(env[name] ?? "").trim());
 }
 
+/**
+ * `AIMPOINT_DEBUG` on (1/true/yes/on) AND `BILLING_ENABLED` off = a self-hosted instance where the Settings > Debug
+ * billing toggle (VEC-240) exists. With BILLING_ENABLED on (managed hosting) the toggle never applies.
+ */
+export function debugToggleAvailableIn(env: Env): boolean {
+  return ["1", "true", "yes", "on"].includes((env.AIMPOINT_DEBUG ?? "").trim().toLowerCase()) && !billingEnabledIn(env);
+}
+
+export type StripeKeyMode = "test" | "live" | "unknown";
+
+/** Test-mode keys start sk_test_ / rk_test_, live ones sk_live_ / rk_live_. */
+export function stripeKeyMode(key: string | undefined): StripeKeyMode {
+  const k = (key ?? "").trim();
+  if (/^(sk|rk)_test_/.test(k)) return "test";
+  if (/^(sk|rk)_live_/.test(k)) return "live";
+  return "unknown";
+}
+
+/**
+ * Why debug billing can't use this Stripe config (empty = fine): missing STRIPE_* vars, and any key that isn't a
+ * test-mode key, since debug billing must never charge real cards.
+ */
+export function debugStripeProblems(env: Env): string[] {
+  const problems: string[] = [];
+  const missing = STRIPE_ENV_VARS.filter((name) => !(env[name] ?? "").trim());
+  if (missing.length) problems.push(`${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set.`);
+  if ((env.STRIPE_SECRET_KEY ?? "").trim()) {
+    const mode = stripeKeyMode(env.STRIPE_SECRET_KEY);
+    if (mode === "live") problems.push("STRIPE_SECRET_KEY is a live key. Debug billing only accepts test-mode keys (sk_test_ or rk_test_).");
+    else if (mode === "unknown") problems.push("STRIPE_SECRET_KEY isn't a Stripe test-mode key (sk_test_ or rk_test_).");
+  }
+  return problems;
+}
+
+export function debugBillingError(problems: string[]): string {
+  return `Test billing (debug) can't use this Stripe setup: ${problems.join(" ")}`;
+}
+
 export function billingConfigError(missing: string[]): string {
   return (
     `Billing is enabled (BILLING_ENABLED) but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} not set. ` +

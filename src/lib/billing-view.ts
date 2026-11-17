@@ -16,6 +16,12 @@ export type CountKind = "members" | "bots" | "projects";
 export interface BillingSummary {
   /** BILLING_ENABLED on this deployment. Off = self-hosted: no Billing page, no prompts, everything on. */
   enabled: boolean;
+  /** Billing is on only through the Settings > Debug toggle (VEC-240): test mode, show the banner. */
+  debug: boolean;
+  /** This instance shows Settings > Debug to admins (AIMPOINT_DEBUG on, BILLING_ENABLED off). */
+  debugAvailable: boolean;
+  /** Debug billing can't reach Stripe (missing vars, a non-test key): the message, else null. */
+  debugProblem: string | null;
   plan: Plan;
   /** Stripe subscription status, null when the org never subscribed. */
   status: BillingStatus | null;
@@ -45,6 +51,9 @@ export interface BillingSummary {
 /** Billing off: what the self-hosted UI sees (nothing limited). */
 export const UNLIMITED_SUMMARY: BillingSummary = {
   enabled: false,
+  debug: false,
+  debugAvailable: false,
+  debugProblem: null,
   plan: "unlimited",
   status: null,
   currentPeriodEnd: null,

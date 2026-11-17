@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
-import { billingEnabled } from "@/lib/billing";
+import { billingOn } from "@/lib/billing";
 import { TZ_COOKIE } from "@/lib/analytics-range";
 import { DEFAULT_ANALYTICS_TZ } from "@/lib/types";
 import { BillingSettings } from "@/components/settings/billing";
@@ -24,7 +24,7 @@ function cookieTz(raw: string | undefined): string {
  * `?checkout=success|cancelled` is Stripe Checkout's return (lib/stripe.ts).
  */
 export default async function BillingPage({ searchParams }: PageProps<"/o/[org]/settings/billing">) {
-  if (!billingEnabled()) notFound();
+  if (!(await billingOn())) notFound();
   const { checkout } = await searchParams;
   const tz = cookieTz((await cookies()).get(TZ_COOKIE)?.value);
   return <BillingSettings checkout={checkout === "success" ? "success" : checkout === "cancelled" ? "cancelled" : null} tz={tz} />;

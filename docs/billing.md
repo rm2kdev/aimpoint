@@ -76,3 +76,23 @@ until all three `STRIPE_*` variables are set.
 For local testing against the sandbox, put the staging values in `.env.local` and forward events with
 `stripe listen --forward-to localhost:3200/api/stripe/webhook` (its printed `whsec_...` is the local
 `STRIPE_WEBHOOK_SECRET`).
+
+## Test billing on a self-hosted instance (debug toggle)
+
+To try billing on a self-hosted instance without redeploying (VEC-240):
+
+1. Leave `BILLING_ENABLED` unset and set `AIMPOINT_DEBUG=1`.
+2. Set the three `STRIPE_*` variables with the **staging** (sandbox) values above. Only test-mode keys
+   (`sk_test_` / `rk_test_`) are accepted; a live key is refused. `STRIPE_API_BASE` can point at
+   stripe-mock instead of Stripe.
+3. Restart once so the server sees the env, then as an org admin open Settings > Debug and switch
+   **Test billing** on.
+
+It applies to the whole instance straight away (stored in MongoDB `instanceSettings`, re-read every
+5 s): plans, limits, Checkout, the Customer Portal and `POST /api/stripe/webhook` behave as with
+`BILLING_ENABLED`, at US$4.95 per user/month, and Settings > Billing shows a "Test billing (debug)"
+banner. A missing variable or a non-test key never stops startup: the Debug tab lists it, the toggle
+refuses to turn on, and if it is already on, Checkout/Portal refuse with the reason and the webhook
+answers 503. Switching it off returns every organisation to unlimited at once (Billing tab and webhook
+404, no Stripe calls); their billing data is kept. The Debug tab is absent (404) for members, without
+`AIMPOINT_DEBUG`, and whenever `BILLING_ENABLED` is set, and a stored toggle is ignored then.
