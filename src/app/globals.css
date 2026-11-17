@@ -48,6 +48,8 @@
   --color-chart-5: var(--chart-5);
   --color-chart-6: var(--chart-6);
   --color-positive: var(--positive);
+  --color-positive-ink: var(--positive-ink);
+  --color-destructive-ink: var(--destructive-ink);
   --color-type-issue: var(--type-issue);
   --color-type-feature: var(--type-feature);
   --color-type-task: var(--type-task);
@@ -93,6 +95,9 @@
   --chart-5: #e5641a;
   --chart-6: #8b8d98;
   --positive: #218358;
+  /* KPI delta chip text on its 10% tint (VEC-163): darker than the base hues so it clears 4.5:1 (4.9:1). */
+  --positive-ink: #1a7650;
+  --destructive-ink: #c4282e;
   /* Task type colours (TypeSquare and the Open by type donut, VEC-149); same values in both themes. */
   --type-issue: #e5484d;
   --type-feature: #30a46c;
@@ -141,6 +146,8 @@
   --chart-5: #f07a30;
   --chart-6: #7d808c;
   --positive: #3dd68c;
+  --positive-ink: var(--positive);
+  --destructive-ink: var(--destructive);
   --sidebar: #111111;
   --sidebar-foreground: #ededed;
   --sidebar-border: #1f1f1f;

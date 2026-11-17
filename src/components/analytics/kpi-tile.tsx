@@ -108,8 +108,8 @@ export function KpiTile({
                   aria-hidden
                   className={cn(
                     "inline-flex h-5 shrink-0 items-center gap-0.5 rounded-[5px] px-1.5 tabular-nums",
-                    tone === "good" && "bg-positive/10 text-positive",
-                    tone === "bad" && "bg-destructive/10 text-destructive",
+                    tone === "good" && "bg-positive/10 text-positive-ink",
+                    tone === "bad" && "bg-destructive/10 text-destructive-ink",
                     tone === "neutral" && "bg-chip text-muted-foreground",
                   )}
                 >
