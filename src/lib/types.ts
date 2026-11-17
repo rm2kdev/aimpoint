@@ -345,8 +345,50 @@ export interface BotDoc {
   connection?: BotConnectionDoc | null;
   /** How many tasks the bot works on at once (display only for now). Unset on older bots: read as BOT_MAX_TASKS_DEFAULT. */
   maxTasks?: number;
+  /** The latest "install Vector's MCP server" run sent to a Hermes connection (VEC-169, lib/bot-mcp-install.ts). */
+  mcpInstall?: BotMcpInstallDoc | null;
   createdBy: ObjectId;
   createdAt: Date;
+}
+
+/**
+ * Vector asked the bot's Hermes to add Vector's MCP server to its own config (VEC-169). `phase`: the install run is
+ * going (`install`), waiting before a check run (`waiting`, until `nextAt`), or a check run is going (`check`).
+ * Never holds the key: that only travels in the install run's input.
+ */
+export interface BotMcpInstallDoc {
+  id: string;
+  state: McpInstallState;
+  phase: "install" | "waiting" | "check";
+  startedAt: Date;
+  updatedAt: Date;
+  /** The Hermes run being watched (install or check) and when Vector sent it. */
+  runId: string | null;
+  runStartedAt: Date | null;
+  /** When the install run finished, and the tool count it reported. */
+  installedAt: Date | null;
+  tools: number | null;
+  /** Check runs sent so far, and when the next one is due (phase `waiting`). */
+  checks: number;
+  nextAt: Date | null;
+  /** Vector issued the bot a new key for this install (the old one stopped working). */
+  keyRerolled: boolean;
+  reason: string | null;
+  finishedAt: Date | null;
+  /** One stepper at a time (after() driver and wizard polls). */
+  leaseUntil: Date | null;
+}
+export type McpInstallState = "pending" | "installed" | "failed";
+/** What the wizard polls. */
+export interface BotMcpInstall {
+  state: McpInstallState;
+  phase: BotMcpInstallDoc["phase"];
+  startedAt: string;
+  finishedAt: string | null;
+  tools: number | null;
+  checks: number;
+  keyRerolled: boolean;
+  reason: string | null;
 }
 
 export const BOT_MAX_TASKS_DEFAULT = 3;

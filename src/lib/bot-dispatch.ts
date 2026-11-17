@@ -170,7 +170,7 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
   return out;
 }
 
-function friendlyNetworkError(e: Error) {
+export function friendlyNetworkError(e: Error) {
   const code = (e.cause as { code?: string } | undefined)?.code;
   if (code === "ECONNREFUSED") return "Connection refused. Is the agent running and listening on that address?";
   if (code === "ENOTFOUND") return "That host name doesn't resolve.";
@@ -534,7 +534,7 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
   return { ok: false, status: res.status, error: await httpError(res, "The endpoint") };
 }
 
-async function httpError(res: Response, who: string) {
+export async function httpError(res: Response, who: string) {
   let detail = "";
   try {
     const t = (await res.text()).slice(0, 300);

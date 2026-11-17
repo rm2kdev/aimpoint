@@ -13,7 +13,8 @@ import { METHOD_IDS, backendFor } from "@/lib/bot-connect";
 import { deliver, hermesProbe, providerProbe } from "@/lib/bot-dispatch";
 import { seal, secretHint, unseal } from "@/lib/secrets";
 import { BOT_MAX_TASKS_DEFAULT, BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
-import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMethod } from "@/lib/types";
+import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMcpInstall, BotMethod } from "@/lib/types";
+import { advanceMcpInstall, installRunning, preflightHermes, recordFailedInstall, startMcpInstall, toMcpInstall } from "@/lib/bot-mcp-install";
 import { orgPath } from "@/lib/paths";
 import { flowOwnerRemoved } from "@/lib/flows";
 
@@ -272,5 +273,60 @@ export async function getBotPulse(slug: string, id: string): Promise<Result<Pick
     if (!bot) throw new UserError("This bot no longer exists.");
     const b = toBot(bot);
     return { lastUsedAt: b.lastUsedAt, connection: b.connection };
+  });
+}
+
+/* ---------------- MCP install (VEC-169) ---------------- */
+
+/**
+ * Asks the bot's Hermes (Agent API connection) to add Vector's MCP server to its own config, then checks that it
+ * loaded it. Pass the bot's plaintext key when the wizard holds it (just created or rerolled); without one Vector
+ * rerolls the key for the install, and the old key stops working. Poll getBotMcpInstall for the outcome:
+ * pending -> installed | failed (with a reason). The key is never stored, logged or returned.
+ */
+export async function installBotMcp(slug: string, id: string, input: { key?: string; vectorUrl?: string } = {}): Promise<Result<BotMcpInstall>> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug, { admin: true });
+    const c = await cols();
+    const bot = await c.bots.findOne({ _id: botId(id), orgId: org._id });
+    if (!bot) throw new UserError("This bot no longer exists.");
+    if (bot.connection?.method !== "hermes-api") throw new UserError("Connect this bot to Hermes over the Agent API first.");
+    if (installRunning(bot.mcpInstall)) throw new UserError("An install is already running for this bot. Wait for it to finish.");
+    let vectorUrl = bot.connection.vectorUrl ?? null;
+    try {
+      const v = new URL(String(input.vectorUrl ?? ""));
+      if (v.protocol === "http:" || v.protocol === "https:") vectorUrl = v.origin;
+    } catch {}
+    if (!vectorUrl) throw new UserError("Vector doesn't know its own address for this connection. Run setup again.");
+
+    let key = typeof input.key === "string" ? input.key.trim() : "";
+    if (key && hashKey(key) !== bot.keyHash) throw new UserError("That isn't this bot's current key.");
+    // Check Hermes answers before rerolling, so an unreachable Hermes doesn't cost the bot its working key.
+    const down = await preflightHermes(bot);
+    if (down) return toMcpInstall(await recordFailedInstall(bot, `Vector couldn't reach Hermes: ${down}`));
+    let rerolled = false;
+    if (!key) {
+      const issued = generateKey();
+      await c.bots.updateOne({ _id: bot._id }, { $set: { keyHash: issued.hash, keyHint: issued.hint, keyRotatedAt: new Date() } });
+      key = issued.key;
+      rerolled = true;
+    }
+    const doc = await startMcpInstall(bot, org, key, { keyRerolled: rerolled, vectorUrl });
+    key = "";
+    if (rerolled) revalidatePath(orgPath(slug, "settings", "bots", id));
+    return toMcpInstall(doc);
+  });
+}
+
+/** The latest install attempt (null = never), advanced one step if it's still pending. */
+export async function getBotMcpInstall(slug: string, id: string): Promise<Result<BotMcpInstall | null>> {
+  return guard(async () => {
+    const { org } = await requireOrg(slug, { admin: true });
+    const c = await cols();
+    const bot = await c.bots.findOne({ _id: botId(id), orgId: org._id }, { projection: { mcpInstall: 1 } });
+    if (!bot) throw new UserError("This bot no longer exists.");
+    if (!bot.mcpInstall) return null;
+    const d = bot.mcpInstall.state === "pending" ? await advanceMcpInstall(bot._id, bot.mcpInstall.id) : bot.mcpInstall;
+    return d ? toMcpInstall(d) : null;
   });
 }
