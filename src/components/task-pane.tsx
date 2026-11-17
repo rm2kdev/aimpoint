@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PlusIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -23,6 +23,7 @@ import { CommentBody, MentionComposer } from "@/components/mentions";
 import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
+import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,6 +59,15 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const [descSync, setDescSync] = useState(0);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const canRetry = useCanRetry(task);
+  const retry = useRetryTask();
+  const [retrying, setRetrying] = useState(false);
+  const onRetry = async () => {
+    if (!task || retrying) return;
+    setRetrying(true);
+    await retry(task);
+    setRetrying(false);
+  };
 
   const load = useCallback(async () => {
     const r = await getTaskDetail(org.slug, taskKey);
@@ -239,6 +249,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             >
               <LinkIcon className="size-4" /> Copy link
             </DropdownMenuItem>
+            {canRetry && (
+              <DropdownMenuItem className="gap-2.5" disabled={retrying} onSelect={() => void onRetry()}>
+                <RotateCcwIcon className="size-4" /> {waiting.length ? "Retry the chain" : "Retry hand-off"}
+              </DropdownMenuItem>
+            )}
             {canEdit && (
               <>
                 <DropdownMenuItem className="gap-2.5" onSelect={() => setArchived(!task.archivedAt)}>
@@ -283,18 +298,24 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </div>
           )}
           {task.stalled && isStalledReason(task.stalled.reason) && !closed && !task.archivedAt && (
-            <p role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-[12.5px] text-destructive">
+            <div role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 py-2 pr-2 pl-3 text-[12.5px] text-destructive">
               <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
-              <span>
+              <span className="min-w-0 flex-1">
                 <span className="font-medium">Stalled, needs attention.</span>{" "}
                 {stalledText(task.stalled, task.stalled.botId ? (memberById.get(task.stalled.botId)?.name ?? null) : null)}
               </span>
-            </p>
+              {canRetry && task.stalled.botId && (
+                <RetryButton busy={retrying} onClick={onRetry} className="-my-1 border-destructive/30 text-destructive hover:text-destructive" />
+              )}
+            </div>
+          )}
+          {canRetry && !closed && !task.archivedAt && !waiting.length && !(task.stalled && isStalledReason(task.stalled.reason)) && assignee?.kind === "bot" && (
+            <QuietHint botName={assignee.name} working={task.workingBotIds.includes(assignee.id)} since={lastPostBy(feed, assignee.id) ?? task.updatedAt} busy={retrying} onRetry={onRetry} />
           )}
           {waiting.length > 0 && !closed && !task.archivedAt && (
-            <p className="mt-3 flex items-start gap-2 rounded-lg border border-live-border bg-live px-3 py-2 text-[12.5px] text-foreground/80">
+            <div className="mt-3 flex items-start gap-2 rounded-lg border border-live-border bg-live py-2 pr-2 pl-3 text-[12.5px] text-foreground/80">
               <HourglassIcon className="mt-px size-3.5 shrink-0" />
-              <span>
+              <span className="min-w-0 flex-1">
                 Waiting on {waiting.map((d) => d.key).join(", ")}.{" "}
                 {assignee
                   ? assignee.id === me.id
@@ -304,7 +325,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                       : `${assignee.name} will be notified when it's ready.`
                   : `Whoever it's assigned to hears about it once ${waiting.length === 1 ? "that's" : "they're"} done.`}
               </span>
-            </p>
+              {canRetry && <RetryButton busy={retrying} onClick={onRetry} label="Retry chain" title={`Hand the open tasks at the front of ${task.key}'s chain to their bots again`} className="-my-1 bg-background" />}
+            </div>
           )}
           {!canEdit && (
             <p className="mt-3 flex items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground">
@@ -717,6 +739,12 @@ function Feed({ feed }: { feed: FeedItem[] }) {
             removed the dependency on <b className="font-medium text-foreground">{f.to ?? "another task"}</b>
           </>
         );
+      case "retried":
+        return (
+          <>
+            asked <b className="font-medium text-foreground">{name(f.to)}</b> to {f.note === "closeout" ? "retry the close-out" : "retry this"}
+          </>
+        );
       case "unblocked":
         return f.from ? (
           <>
@@ -772,5 +800,47 @@ function Feed({ feed }: { feed: FeedItem[] }) {
         })}
       </ol>
     </section>
+  );
+}
+
+/**
+ * The latest comment or change by bot `id` in the feed, or the latest retry handed to it (VEC-159: how long a working
+ * bot has been quiet; a fresh retry restarts the clock).
+ */
+function lastPostBy(feed: FeedItem[], id: string): string | null {
+  for (let i = feed.length - 1; i >= 0; i--) {
+    const f = feed[i];
+    if (f.actorId === id || (f.kind === "retried" && f.to === id)) return f.createdAt;
+  }
+  return null;
+}
+
+function RetryButton({ busy, onClick, label = "Retry", title, className }: { busy: boolean; onClick: () => void; label?: string; title?: string; className?: string }) {
+  return (
+    <Button size="sm" variant="outline" disabled={busy} onClick={onClick} title={title ?? "Hand it to its bot again"} className={cn("h-7 shrink-0 gap-1.5 px-2.5", className)}>
+      <RotateCcwIcon className={cn("size-3.5", busy && "animate-spin [animation-direction:reverse]")} /> {label}
+    </Button>
+  );
+}
+
+/**
+ * VEC-159: a bot is on the task (or should be) but hasn't posted for QUIET_HINT_MS. Its run may have stopped without
+ * failing, which nothing else detects, so offer a retry. Re-checked every minute.
+ */
+function QuietHint({ botName, working, since, busy, onRetry }: { botName: string; working: boolean; since: string; busy: boolean; onRetry: () => void }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000);
+    return () => clearInterval(t);
+  }, []);
+  if (!working || msSince(since) < QUIET_HINT_MS) return null;
+  return (
+    <div role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-sidebar py-2 pr-2 pl-3 text-[12.5px] text-muted-foreground">
+      <HourglassIcon className="mt-px size-3.5 shrink-0" />
+      <span className="min-w-0 flex-1">
+        {botName} is on this but last posted <time dateTime={since} title={new Date(since).toLocaleString()}>{timeAgo(since)}</time>. If its run stopped, retry to hand it over again.
+      </span>
+      <RetryButton busy={busy} onClick={onRetry} className="-my-1 bg-background" />
+    </div>
   );
 }

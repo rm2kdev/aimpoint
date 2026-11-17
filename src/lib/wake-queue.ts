@@ -57,6 +57,7 @@ function storedReason(r: QueuedReason): BotWakeDoc["reason"] {
     by: r.by,
     ...("detail" in r ? { detail: r.detail } : {}),
     ...("commentId" in r ? { commentId: r.commentId } : {}),
+    ...("retry" in r && r.retry ? { retry: true } : {}),
   };
 }
 
@@ -65,12 +66,13 @@ function toReason(w: BotWakeDoc): QueuedReason {
   const base = { taskId: r.taskId, taskKey: r.taskKey, title: r.title, by: r.by };
   switch (r.kind) {
     case "ready":
-    case "closeout":
       return { kind: r.kind, ...base, detail: r.detail ?? "Nothing it depends on is open any more" };
+    case "closeout":
+      return { kind: r.kind, ...base, detail: r.detail ?? "Nothing it depends on is open any more", ...(r.retry ? { retry: true } : {}) };
     case "mentioned":
       return { kind: "mentioned", ...base, commentId: r.commentId ?? new ObjectId() };
     default:
-      return { kind: "assigned", ...base };
+      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}) };
   }
 }
 

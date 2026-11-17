@@ -211,7 +211,7 @@ export interface CommentDoc {
   mentions?: ObjectId[];
   createdAt: Date;
 }
-export type ActivityNote = "started_work" | "resumed_work" | "auto_owner";
+export type ActivityNote = "started_work" | "resumed_work" | "auto_owner" | "closeout";
 
 export interface ActivityDoc {
   _id: ObjectId;
@@ -233,7 +233,10 @@ export interface ActivityDoc {
     | "dependency_added"
     | "dependency_removed"
     /** Every dependency is done. `from` holds the key(s) of the one(s) that finished it, comma-separated. */
-    | "unblocked";
+    | "unblocked"
+    /** VEC-159: the actor asked Vector to hand the task to its bot again (`to` = the bot's id). `note` "closeout"
+     * when it re-sent a triager's close-out rather than the work itself. */
+    | "retried";
   from?: string | null;
   to?: string | null;
   /**
@@ -344,7 +347,7 @@ export interface BotWakeDoc {
   taskId: ObjectId;
   kind: QueuedWakeKind;
   /** The WakeReason to send (task key, title, who, detail; commentId for mentions). */
-  reason: { kind: QueuedWakeKind; taskId: ObjectId; taskKey: string; title: string; by: string; detail?: string; commentId?: ObjectId };
+  reason: { kind: QueuedWakeKind; taskId: ObjectId; taskKey: string; title: string; by: string; detail?: string; commentId?: ObjectId; retry?: boolean };
   /** Attempts made so far. */
   attempts: number;
   /** When the next attempt is due; also a lease while an attempt is in flight. */
@@ -586,6 +589,16 @@ export interface FeedItem {
   note?: ActivityNote;
   waiter?: string | null;
   createdAt: string;
+}
+/**
+ * What a Retry (lib/retry-handoff.ts, VEC-159) did. `retried`: handed to their bot again. `busy`: left alone because
+ * the bot was working on it and posted within the last few minutes (retry again with force). `skipped`: couldn't be
+ * retried, with why (nobody assigned, a person's task, in Triage...).
+ */
+export interface RetryOutcome {
+  retried: { key: string; botId: string }[];
+  busy: { key: string; botId: string; lastAt: string }[];
+  skipped: { key: string; why: string }[];
 }
 export interface Counts {
   my: number;

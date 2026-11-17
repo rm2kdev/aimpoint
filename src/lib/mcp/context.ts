@@ -286,6 +286,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       case "restored": return "restored it from the archive";
       case "dependency_added": return `made it depend on ${a.to ?? "another task"}`;
       case "dependency_removed": return `removed its dependency on ${a.to ?? "another task"}`;
+      case "retried": return `asked ${name(a.to)} to ${a.note === "closeout" ? "retry the close-out" : "retry it (its earlier run stopped)"}`;
       case "unblocked": return a.from ? `closed ${a.from}, so it became ready to work on` : "cleared what it was waiting on, so it became ready to work on";
     }
   };

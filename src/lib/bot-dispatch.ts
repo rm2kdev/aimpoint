@@ -24,14 +24,15 @@ import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type Bot
  */
 
 export type WakeReason =
-  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string }
+  /** `retry`: a person asked Vector to hand it over again (VEC-159), because an earlier run stopped or never started. */
+  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean }
   | { kind: "mentioned"; taskId: ObjectId; commentId: ObjectId; taskKey: string; title: string; by: string }
   /** An assigned task's last dependency closed. `detail` says which, e.g. "WEB-1 is done". */
   | { kind: "ready"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string }
   /** A task landed in Triage and this bot (its role allows check_for_triage) now holds it to break down. */
   | { kind: "triage"; taskId: ObjectId; taskKey: string; title: string; by: string }
   /** A task this bot triaged is ready (its sub-tasks are closed: done or cancelled): summarise the work and close it out. */
-  | { kind: "closeout"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string }
+  | { kind: "closeout"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string; retry?: boolean }
   | { kind: "test" };
 
 interface WakeMessage {
@@ -48,13 +49,13 @@ export const reasonLabel = (r: WakeReason) =>
   r.kind === "test"
     ? "test"
     : r.kind === "assigned"
-      ? `assigned ${r.taskKey}`
+      ? `${r.retry ? "retry" : "assigned"} ${r.taskKey}`
       : r.kind === "ready"
         ? `${r.taskKey} ready`
         : r.kind === "triage"
           ? `triage ${r.taskKey}`
           : r.kind === "closeout"
-            ? `close out ${r.taskKey}`
+            ? `${r.retry ? "retry close-out" : "close out"} ${r.taskKey}`
             : `mentioned on ${r.taskKey}`;
 
 /** Schedules wake-ups after the response is sent. Never throws into the caller. */
@@ -262,6 +263,10 @@ export const PROGRESS_HINT =
 export const BLOCKER_NOTE =
   "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Vector assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
 
+/** A retried hand-off (VEC-159): the earlier run stopped part way (or never started), so carry on rather than redo. */
+const RETRY_NOTE = (by: string) =>
+  `${by} asked Vector to hand this to you again: your last run on it stopped before it finished (or never started). Read the task's comments, yours included, to see how far it got, check any work already in progress (files, branches, tasks you created), and carry on from there rather than starting over. Post a short comment saying where you're picking up.\n\n`;
+
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
 const STARTED_NOTE = (w: StatusWords, current: string) =>
   `${
@@ -306,13 +311,16 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
     });
     context = built.data;
   }
+  const retried = (reason.kind === "assigned" || reason.kind === "closeout") && reason.retry;
   const head =
     reason.kind === "triage"
       ? `${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Vector (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
       : reason.kind === "closeout"
-      ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
+      ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
       : reason.kind === "assigned"
-      ? `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
+      ? retried
+        ? `${RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
+        : `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
         ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
@@ -474,6 +482,8 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     org: { slug: org.slug, name: org.name },
     task: msg.task,
     by: reason.kind === "test" ? null : reason.by,
+    // VEC-159: a person asked for this hand-off again (the bot's earlier run on it stopped).
+    ...((reason.kind === "assigned" || reason.kind === "closeout") && reason.retry ? { retry: true } : {}),
     prompt: msg.prompt,
     sentAt: new Date().toISOString(),
   });

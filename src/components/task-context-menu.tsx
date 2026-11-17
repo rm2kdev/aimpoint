@@ -1,9 +1,10 @@
 "use client";
 
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, RotateCcwIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useOrgBase } from "@/components/org-provider";
+import { useCanRetry, useRetryTask } from "@/components/retry-task";
 import { PRIORITY_OPTIONS, TYPE_OPTIONS, useAssigneeOptions, useStatusOptions, type Option } from "@/components/pickers";
 import {
   ContextMenu,
@@ -164,6 +165,8 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
   const creator = memberById.get(task.createdBy);
   const statusOptions = useStatusOptions(task.projectId);
   const assigneeOptions = useAssigneeOptions();
+  const canRetry = useCanRetry(task);
+  const retry = useRetryTask();
 
   const copy = (text: string, what: string) => {
     navigator.clipboard.writeText(text).then(
@@ -239,6 +242,12 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
           <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">
             Only {creator?.name ?? "the creator"}, the assignee or an admin can change this task.
           </p>
+        )}
+        {canRetry && (
+          <ContextMenuItem onSelect={() => void retry(task)}>
+            <RotateCcwIcon />
+            {task.waitingOn.length ? "Retry the chain" : "Retry hand-off"}
+          </ContextMenuItem>
         )}
 
         <ContextMenuSeparator />

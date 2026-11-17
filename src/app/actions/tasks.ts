@@ -17,7 +17,8 @@ import {
   type NewTaskInput,
   type TaskPatch,
 } from "@/lib/task-service";
-import type { Counts, FeedItem, Task, TaskDetail, TaskDoc } from "@/lib/types";
+import { retryHandOff } from "@/lib/retry-handoff";
+import type { Counts, FeedItem, RetryOutcome, Task, TaskDetail, TaskDoc } from "@/lib/types";
 
 export type { MoveInput, NewTaskInput, TaskPatch };
 
@@ -37,6 +38,14 @@ export async function updateTask(slug: string, taskId: string, patch: TaskPatch)
  */
 export async function moveTaskAction(slug: string, taskKey: string, move: MoveInput): Promise<Result<Task>> {
   return guard(async () => moveTask(actorOf(await requireOrg(slug)), taskKey, move ?? {}));
+}
+
+/**
+ * Hand a stalled task to its bot again, or, for a task waiting on others, the open ready tasks at the front of its
+ * chain (VEC-159). Creator, assignee or admin. Without `force`, a bot that posted in the last few minutes is left be.
+ */
+export async function retryTask(slug: string, taskId: string, force = false): Promise<Result<RetryOutcome>> {
+  return guard(async () => retryHandOff(actorOf(await requireOrg(slug)), oid(taskId, "task"), { force: force === true }));
 }
 
 export async function deleteTask(slug: string, taskId: string): Promise<Result> {
