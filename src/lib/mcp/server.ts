@@ -9,6 +9,8 @@ import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveT
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
+import { taskAccess } from "@/lib/access";
+import { advanceTarget, flowBriefing, type AdvanceTarget } from "@/lib/flow-engine";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
 import { computeAnalytics } from "@/lib/analytics";
@@ -296,6 +298,36 @@ async function openDeps(orgId: ObjectId, ids: ObjectId[]): Promise<ObjectId[]> {
  * Not when the task is itself waiting on open dependencies (the bot parked it behind them): that isn't a
  * stall, and the task is handed on again when they close (VEC-90), so the reply only says so.
  */
+/**
+ * complete_task without a status on a flow task (VEC-175): the step to hand it to, when this bot may move the task
+ * (its assignee, creator, or triager right now). Null when there's no flow step to advance from.
+ */
+async function flowAdvanceFor(ctx: McpCtx, task: TaskDoc, triaging: boolean): Promise<AdvanceTarget | null> {
+  const access = taskAccess({ createdBy: task.createdBy.toHexString(), assigneeId: task.assigneeId?.toHexString() ?? null }, ctx.bot._id.toHexString(), false);
+  if (access === "comment" && !triaging) return null;
+  const t = await advanceTarget(task);
+  return t.kind === "none" ? null : t;
+}
+
+/** What the flow did, for the complete_task reply: " Moved to In Review and handed to Testing Verification for Test." */
+async function flowReplyNote(ctx: McpCtx, taskId: ObjectId, step: AdvanceTarget): Promise<string> {
+  if (step.kind === "wait") return ` It's at the ${step.step.name} step, which waits for "${step.step.wait?.label ?? "an outside event"}"; it moves on when that happens, not on complete_task.`;
+  if (step.kind !== "advance") return "";
+  const c = await cols();
+  const after = await c.tasks.findOne({ _id: taskId }, { projection: { assigneeId: 1, flow: 1 } });
+  if (after?.flow?.paused) return ` Its flow is paused (it waits on the sub-tasks it was split into), so it moved to ${step.to.status.name} and nobody new was assigned.`;
+  const owner = after?.assigneeId ? ((await loadDirectory(ctx.org._id)).get(after.assigneeId.toHexString())?.name ?? "its owner") : null;
+  const self = after?.assigneeId?.equals(ctx.bot._id);
+  if (step.to.status.category === "done") return ` The flow closed it as ${step.to.status.name}.`;
+  return ` Moved to ${step.to.status.name} for the ${step.to.name} step${owner ? (self ? " (you own that step too: you'll be handed it again)" : ` and handed to ${owner}`) : ", with nobody assigned"}.`;
+}
+
+/** The task sits on a flow step that someone other than `botId` now owns (VEC-175). */
+async function handedOnByFlow(taskId: ObjectId, botId: ObjectId): Promise<boolean> {
+  const t = await (await cols()).tasks.findOne({ _id: taskId }, { projection: { flow: 1, assigneeId: 1 } });
+  return !!t?.flow?.stepId && !t.flow.paused && !!t.assigneeId && !t.assigneeId.equals(botId);
+}
+
 async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment: string | undefined | null): Promise<string> {
   const c = await cols();
   const orgId = ctx.org._id;
@@ -416,12 +448,17 @@ const TOOLS: Record<string, ToolImpl> = {
         const key = `${project.key}-${task.number}`;
         const w = await loadStatusWords(ctx.org._id, task.projectId);
         const deps = task.dependsOn?.length ? ` Everything it depends on is done (see \`dependencies.dependsOn\`); their comments may hold results you need.` : "";
+        // A flow step (VEC-175): its instructions and how to hand it on replace the generic finishing advice.
+        const flow = await flowBriefing(task, project.key);
+        const finish = flow
+          ? ` ${flow.text}`
+          : ` Finish with ${w.done} when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use ${reviewWord(w)} only when a named person must check or decide something, and @mention them.`;
         return taskResult(
           ctx,
           task,
           project,
-          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to ${w.started ?? "a started status"} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back). Finish with ${w.done} when the work meets its acceptance criteria: only a done status releases the tasks waiting on it. Use ${reviewWord(w)} only when a named person must check or decide something, and @mention them. Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
-          { includeImages, extra: { kind: "assigned", queue: await queueCounts(ctx) } },
+          `You have a task: ${key} "${task.title}" in project ${project.name}, assigned to you.${deps}${moved ? ` It's now picked up by you, and Vector moved it to ${w.started ?? "a started status"} for you (no need to set that yourself).` : ` It's now picked up by you.`} Work on it and call complete_task when you're done (or release_task to hand it back).${finish} Statuses are per project: use ${project.key}'s names (\`project.statuses\` below). ${BLOCKER_NOTE}\n\n${PROGRESS_HINT}`,
+          { includeImages, extra: { kind: "assigned", queue: await queueCounts(ctx), ...(flow ? { flow: flow.payload } : {}) } },
         );
       }
 
@@ -530,11 +567,29 @@ const TOOLS: Record<string, ToolImpl> = {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
       const status = str(args, "status");
       const comment = str(args, "comment");
-      const moved = status ? await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status, task.projectId))._id.toHexString() }) : null;
-      if (comment) await addCommentAs(ctx.actor, task._id, comment);
       const c = await cols();
       const now = new Date();
       const claim = await c.agentClaims.findOne({ botId: ctx.bot._id, taskId: task._id });
+      const triageClaim = claim?.kind === "triage";
+      // Without a status, a task on a flow step is handed to the next step (VEC-175); an explicit status always wins.
+      const step = !status ? await flowAdvanceFor(ctx, task, triageClaim) : null;
+      if (!triageClaim) {
+        // Finish this bot's round first, so a flow hand-off back to the same bot (it owns the next step too) can start
+        // a fresh one, and the move's broadcast already shows the working ring cleared.
+        await c.agentClaims.updateOne(
+          { botId: ctx.bot._id, taskId: task._id },
+          { $set: { state: "done", finishedAt: now }, $setOnInsert: { _id: new ObjectId(), orgId: ctx.org._id, claimedAt: now } },
+          { upsert: true },
+        );
+        if (comment) await addCommentAs(ctx.actor, task._id, comment);
+      }
+      const moved = status
+        ? await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status, task.projectId))._id.toHexString() })
+        : step?.kind === "advance"
+          ? await updateTaskAs(ctx.actor, task._id, step.statusChanges ? { statusId: step.to.status.id } : {}, { flowTo: step.to.id })
+          : null;
+      const flowNote = step ? await flowReplyNote(ctx, task._id, step) : "";
+      if (triageClaim && comment) await addCommentAs(ctx.actor, task._id, comment);
       if (claim?.kind === "triage") {
         const after = await c.tasks.findOne({ _id: task._id }, { projection: { statusId: 1 } });
         const st = after && (await c.statuses.findOne({ _id: after.statusId }, { projection: { category: 1, name: 1 } }));
@@ -554,22 +609,19 @@ const TOOLS: Record<string, ToolImpl> = {
         // Out of Triage: the triage is over. Drop the claim so the task is ordinary work again (also for you, if you assigned it to yourself).
         await c.agentClaims.deleteOne({ _id: claim._id });
         if (claim.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
-        return { content: [text(`Finished triaging ${key}.${status ? ` Moved to ${status}.` : ""}${comment ? " Comment posted." : ""}`)] };
+        return { content: [text(`Finished triaging ${key}.${status ? ` Moved to ${status}.` : ""}${flowNote}${comment ? " Comment posted." : ""}`)] };
       }
-      await c.agentClaims.updateOne(
-        { botId: ctx.bot._id, taskId: task._id },
-        { $set: { state: "done", finishedAt: now }, $setOnInsert: { _id: new ObjectId(), orgId: ctx.org._id, claimedAt: now } },
-        { upsert: true },
-      );
       // Finishing is also the end of its close-out, if one was pending: the task can show as "finished" Stalled now (VEC-89).
       const resolved = await resolveCloseout(task._id, ctx.bot._id);
       // A new done claim (none before, or in progress) can also make it Stalled, so republish then as well.
       if (claim?.state !== "done" || resolved) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
       const key = `${project.key}-${task.number}`;
-      const handoff = await reviewHandoff(ctx, task._id, key, comment);
+      // A flow hand-off gave the task its next owner (an advance, or an explicit status that sent it to another step's
+      // owner, e.g. a tester failing it back to Develop): nothing is left waiting on this bot, so no review note.
+      const handoff = step?.kind === "advance" || (moved && (await handedOnByFlow(task._id, ctx.bot._id))) ? "" : await reviewHandoff(ctx, task._id, key, comment);
       // Parked behind open dependencies nobody owns (the status didn't change, or no status was given): take them (VEC-107).
       const owned = [...assignedBlockersOf(moved), ...(await ownUnownedBlockers(ctx.actor, task._id))];
-      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
+      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${flowNote}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
     },
   },
 

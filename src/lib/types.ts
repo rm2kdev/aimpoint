@@ -256,7 +256,16 @@ export interface CommentDoc {
   mentions?: ObjectId[];
   createdAt: Date;
 }
-export type ActivityNote = "started_work" | "resumed_work" | "auto_owner" | "closeout";
+export type ActivityNote =
+  | "started_work"
+  | "resumed_work"
+  | "auto_owner"
+  | "closeout"
+  /** flow_step (VEC-175): handed on to the next step / sent back to an earlier one / followed a status edit / paused as a triage umbrella. */
+  | "advanced"
+  | "back"
+  | "synced"
+  | "umbrella";
 
 export interface ActivityDoc {
   _id: ObjectId;
@@ -281,7 +290,10 @@ export interface ActivityDoc {
     | "unblocked"
     /** VEC-159: the actor asked Vector to hand the task to its bot again (`to` = the bot's id). `note` "closeout"
      * when it re-sent a triager's close-out rather than the work itself. */
-    | "retried";
+    | "retried"
+    /** VEC-175: the flow moved it to another step. `from`/`to` = step names, `flowStatus` = the step's status name,
+     * `flowOwner` = who it was handed to (id hex, null = nobody), `note` = advanced | back | synced | umbrella. */
+    | "flow_step";
   from?: string | null;
   to?: string | null;
   /**
@@ -293,6 +305,10 @@ export interface ActivityDoc {
   note?: ActivityNote;
   /** With note "auto_owner": key of the task that was waiting on this one. */
   waiter?: string | null;
+  /** flow_step: name of the status the new step sits in. */
+  flowStatus?: string | null;
+  /** flow_step: who the step handed it to (id hex), null = nobody. */
+  flowOwner?: string | null;
   createdAt: Date;
 }
 export interface InviteDoc {
@@ -392,7 +408,18 @@ export interface BotWakeDoc {
   taskId: ObjectId;
   kind: QueuedWakeKind;
   /** The WakeReason to send (task key, title, who, detail; commentId for mentions). */
-  reason: { kind: QueuedWakeKind; taskId: ObjectId; taskKey: string; title: string; by: string; detail?: string; commentId?: ObjectId; retry?: boolean };
+  reason: {
+    kind: QueuedWakeKind;
+    taskId: ObjectId;
+    taskKey: string;
+    title: string;
+    by: string;
+    detail?: string;
+    commentId?: ObjectId;
+    retry?: boolean;
+    /** An assigned wake-up from a flow hand-off (VEC-175). */
+    handoff?: { fromStep: string | null; toStep: string };
+  };
   /** Attempts made so far. */
   attempts: number;
   /** When the next attempt is due; also a lease while an attempt is in flight. */
@@ -633,6 +660,8 @@ export interface FeedItem {
   to?: string | null;
   note?: ActivityNote;
   waiter?: string | null;
+  flowStatus?: string | null;
+  flowOwner?: string | null;
   createdAt: string;
 }
 /**

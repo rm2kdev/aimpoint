@@ -12,7 +12,8 @@ import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, tas
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
-import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type Task, type TaskDoc, type TaskType } from "@/lib/types";
+import { planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
+import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskType } from "@/lib/types";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -89,11 +90,15 @@ const STARTABLE = new Set<StatusCategory>(["backlog", "unstarted", "started"]);
 export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId: ObjectId, note: ActivityNote = "started_work"): Promise<boolean> {
   try {
     const c = await cols();
-    const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1, projectId: 1 } });
+    const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { statusId: 1, projectId: 1, orgId: 1, flow: 1 } });
     if (!task) return false;
     // The task's own project's workflow (VEC-114).
     const statuses = await c.statuses.find({ orgId, projectId: task.projectId }, { projection: { category: 1, order: 1 } }).sort({ order: 1 }).toArray();
-    const target = statuses.find((s) => s.category === "started");
+    // On a flow step (VEC-175) pickup stays within the step: a Todo step goes to its working status (a started status
+    // no later step uses), a step that already sits in a started status (the tester's In Review) isn't moved at all.
+    const flowPick = await pickupTarget(task);
+    if (flowPick.kind === "stay") return false;
+    const target = flowPick.kind === "move" ? statuses.find((s) => s._id.equals(flowPick.statusId)) : statuses.find((s) => s.category === "started");
     const current = statuses.find((s) => s._id.equals(task.statusId));
     if (!target || !current || current._id.equals(target._id) || !STARTABLE.has(current.category)) return false;
     const now = new Date();
@@ -205,7 +210,7 @@ const parseIds = (ids: unknown, what: string) => {
  * new work, and push bots never poll for it. Only a task the bot already holds (it's working on or
  * triaging it right now) is skipped. People assigning themselves aren't notified.
  */
-async function announceAssignment(actor: Actor, task: TaskDoc, key: string) {
+async function announceAssignment(actor: Actor, task: TaskDoc, key: string, handoff?: FlowHandoff) {
   const assigneeId = task.assigneeId;
   if (!assigneeId) return;
   const self = assigneeId.equals(actor.id);
@@ -217,16 +222,55 @@ async function announceAssignment(actor: Actor, task: TaskDoc, key: string) {
     // A closed task is no work: check_for_work never hands it out, so push doesn't wake for it either.
     if (task.archivedAt || (await isClosedTask(task))) return;
     if (self && (await c.agentClaims.findOne({ botId: assigneeId, taskId: task._id, state: "in_progress" }, { projection: { _id: 1 } }))) return;
-    if (!waiting.length) wakeBots(actor.orgId, [assigneeId], { kind: "assigned", taskId: task._id, taskKey: key, title: task.title, by: await actorName(actor) });
+    if (!waiting.length) {
+      wakeBots(actor.orgId, [assigneeId], {
+        kind: "assigned",
+        taskId: task._id,
+        taskKey: key,
+        title: task.title,
+        by: await actorName(actor),
+        ...(handoff ? { handoff: { fromStep: handoff.fromStep, toStep: handoff.toStep } } : {}),
+      });
+    }
     return;
   }
   const keys = waiting.length ? await taskKeys(actor.orgId, waiting) : new Map<string, string>();
-  await notify(actor.orgId, [assigneeId], {
-    kind: "assigned",
-    taskId: task._id,
-    actorId: actor.id,
-    detail: waiting.length ? `Waiting on ${waiting.map((id) => keys.get(id.toHexString()) ?? "another task").join(", ")}` : null,
-  });
+  const parts = [
+    handoff ? `${handoff.toStep} step is yours${handoff.fromStep ? ` (after ${handoff.fromStep})` : ""}` : "",
+    waiting.length ? `Waiting on ${waiting.map((id) => keys.get(id.toHexString()) ?? "another task").join(", ")}` : "",
+  ].filter(Boolean);
+  await notify(actor.orgId, [assigneeId], { kind: "assigned", taskId: task._id, actorId: actor.id, detail: parts.length ? parts.join(". ") : null });
+}
+
+/** The flow_step activity doc for a flow move (VEC-175). */
+const flowActivityDoc = (actor: Actor, taskId: ObjectId, a: FlowActivity, at: Date): ActivityDoc => ({
+  _id: new ObjectId(),
+  orgId: actor.orgId,
+  taskId,
+  actorId: actor.id,
+  kind: "flow_step",
+  from: a.from,
+  to: a.to,
+  note: a.note,
+  flowStatus: a.status,
+  flowOwner: a.owner,
+  createdAt: at,
+});
+
+/**
+ * A flow step handed the task to the owner who already had it (the same bot or person owns consecutive steps): no
+ * assignee change, so announceAssignment never runs. A bot is woken again for the new step (its finished claim was
+ * dropped before the broadcast, reopenForNextStep); a person is notified.
+ */
+async function handOverSameOwner(actor: Actor, task: TaskDoc, key: string, handoff: FlowHandoff) {
+  if (!handoff.sameOwner || !task.assigneeId?.equals(handoff.ownerId)) return;
+  if (handoff.ownerKind === "bot") {
+    if (task.archivedAt || (task.waitingOn ?? []).length || (await isClosedTask(task))) return;
+    wakeBots(actor.orgId, [handoff.ownerId], { kind: "assigned", taskId: task._id, taskKey: key, title: task.title, by: await actorName(actor), handoff: { fromStep: handoff.fromStep, toStep: handoff.toStep } });
+    return;
+  }
+  if (handoff.ownerId.equals(actor.id)) return;
+  await notify(actor.orgId, [handoff.ownerId], { kind: "assigned", taskId: task._id, actorId: actor.id, detail: `${handoff.toStep} step is yours${handoff.fromStep ? ` (after ${handoff.fromStep})` : ""}` });
 }
 
 /** The task's status is done or cancelled. */
@@ -319,6 +363,9 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
   }
   const dependsOn = input.dependsOn?.length ? await checkDependencies(actor.orgId, null, parseIds(input.dependsOn, "`dependsOn`")) : [];
   const waitingOn = await openDependencies(actor.orgId, dependsOn);
+  // It enters its project's flow at the step of its status; that step's owner applies unless an assignee was given (VEC-175).
+  const flowPlan = await planFlowForCreate(actor.orgId, projectId, status, !!assigneeId);
+  if (flowPlan.assigneeId) assigneeId = flowPlan.assigneeId;
   const now = new Date();
   const priority = input.priority ?? 0;
   const rank = await topRank(actor.orgId);
@@ -339,15 +386,17 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput): Promise<T
     dependsOn,
     waitingOn,
     rank,
+    ...(flowPlan.flow !== undefined ? { flow: flowPlan.flow } : {}),
     createdBy: actor.id,
     createdAt: now,
     updatedAt: now,
   };
   await c.tasks.insertOne(doc);
   await c.activity.insertOne({ _id: new ObjectId(), orgId: actor.orgId, taskId: doc._id, actorId: actor.id, kind: "created", createdAt: now });
+  if (flowPlan.activity) await c.activity.insertOne(flowActivityDoc(actor, doc._id, flowPlan.activity, now));
   const task = toTask(doc, project.key);
   await publish(actor.orgId.toHexString(), { type: "task.upsert", actorId: actor.id.toHexString(), task });
-  await announceAssignment(actor, doc, task.key);
+  await announceAssignment(actor, doc, task.key, flowPlan.handoff);
   if (status.category === "triage") await enterTriage(actor, doc, task.key);
   // A bot creating a task for itself that waits on unowned work takes that work too (VEC-107).
   if (waitingOn.length) ownedBlockers.set(task, await ownUnownedBlockers(actor, doc._id));
@@ -376,7 +425,7 @@ export interface TaskPatch {
  * `internal` carries fields no client patch may set directly: `rank` comes only from moveTask, which computes
  * it from the neighbours itself.
  */
-export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPatch, internal: { rank?: string } = {}): Promise<Task> {
+export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPatch, internal: { rank?: string; flowTo?: string } = {}): Promise<Task> {
   const c = await cols();
   const before = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
   if (!before) throw new UserError("This task no longer exists.");
@@ -435,6 +484,8 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   const destProjectId = patch.projectId && ObjectId.isValid(patch.projectId) ? new ObjectId(patch.projectId) : before.projectId;
   const statusChanges = !!patch.statusId && patch.statusId !== before.statusId.toHexString();
   const s = statusChanges ? await requireProjectStatus(actor.orgId, destProjectId, oid(patch.statusId!, "status").toHexString()) : null;
+  // The task's status after this write, for the flow engine (VEC-175).
+  let finalStatus: StatusDoc | null = s;
   if (s && !s._id.equals(before.statusId)) {
     set.statusId = s._id;
     acts.push({ kind: "status", from: before.statusId.toHexString(), to: s._id.toHexString() });
@@ -499,11 +550,43 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
       const mapped = await statusInProject(actor.orgId, p._id, before.statusId);
       if (!mapped) throw new UserError(`${p.key} has no statuses to move this task into.`);
       if (!mapped._id.equals(before.statusId)) set.statusId = mapped._id;
+      finalStatus = mapped;
     }
     acts.push({ kind: "project", from: before.projectId.toHexString(), to: p._id.toHexString() });
   }
   // A reorder alone writes no activity, only the new rank.
   if (internal.rank !== undefined && internal.rank !== before.rank) set.rank = internal.rank;
+
+  // The flow (VEC-175): a status change re-positions the task (and applies the step's owner unless this write names
+  // an assignee), complete_task without a status advances it (internal.flowTo), an assignee-only edit is an override.
+  let flowPlan: FlowPlan = {};
+  if (set.statusId || set.projectId || internal.flowTo || set.assigneeId !== undefined) {
+    finalStatus ??= await c.statuses.findOne({ _id: set.statusId ?? before.statusId });
+    if (finalStatus) {
+      flowPlan = await planFlowForUpdate({
+        actor,
+        before,
+        projectId: set.projectId ?? before.projectId,
+        status: finalStatus,
+        statusChanged: !!set.statusId && !set.statusId.equals(before.statusId),
+        projectMoved: !!set.projectId,
+        explicitAssignee: set.assigneeId !== undefined,
+        assigneeAfter: set.assigneeId !== undefined ? set.assigneeId : (before.assigneeId ?? null),
+        waitingAfter: set.waitingOn ?? before.waitingOn ?? [],
+        advanceTo: internal.flowTo,
+        isTriaging: () => isTriaging(actor.id, taskId),
+      });
+    }
+    if (flowPlan.flow !== undefined) set.flow = flowPlan.flow;
+    if (flowPlan.assigneeId !== undefined) {
+      set.assigneeId = flowPlan.assigneeId;
+      acts.push({ kind: "assignee", from: before.assigneeId?.toHexString() ?? null, to: flowPlan.assigneeId?.toHexString() ?? null });
+    }
+    if (flowPlan.activity) {
+      const a = flowPlan.activity;
+      acts.push({ kind: "flow_step", from: a.from, to: a.to, note: a.note, flowStatus: a.status, flowOwner: a.owner });
+    }
+  }
 
   if (!Object.keys(set).length) {
     const p = await c.projects.findOne({ _id: before.projectId });
@@ -514,6 +597,8 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId: actor.orgId }, { $set: set }, { returnDocument: "after" });
   if (!after) throw new UserError("This task no longer exists.");
   if (set.assigneeId !== undefined) await resetClaimOnAssign(taskId, set.assigneeId);
+  // The same bot owns the next step too: drop its finished claim before the broadcast, so it's handed the task afresh.
+  if (flowPlan.handoff?.sameOwner && flowPlan.handoff.ownerKind === "bot") await reopenForNextStep(taskId, flowPlan.handoff.ownerId);
   if (closed) await finishClaimsOnClose(taskId);
   // Removing its last open dependency makes it ready: hand it back to a bot that had parked it (before the upsert).
   const nowReady = !!set.waitingOn && (before.waitingOn ?? []).length > 0 && !set.waitingOn.length;
@@ -535,7 +620,9 @@ export async function updateTaskAs(actor: Actor, taskId: ObjectId, patch: TaskPa
   }
 
   if (set.assigneeId) {
-    await announceAssignment(actor, after, task.key);
+    await announceAssignment(actor, after, task.key, flowPlan.handoff);
+  } else if (flowPlan.handoff?.sameOwner) {
+    await handOverSameOwner(actor, after, task.key, flowPlan.handoff);
   } else if (nowReady) {
     // Removing the last open dependency makes it ready, just as finishing it would.
     const keys = await taskKeys(actor.orgId, removedDeps);

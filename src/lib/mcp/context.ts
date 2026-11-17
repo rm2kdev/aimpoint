@@ -288,6 +288,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       case "dependency_removed": return `removed its dependency on ${a.to ?? "another task"}`;
       case "retried": return `asked ${name(a.to)} to ${a.note === "closeout" ? "retry the close-out" : "retry it (its earlier run stopped)"}`;
       case "unblocked": return a.from ? `closed ${a.from}, so it became ready to work on` : "cleared what it was waiting on, so it became ready to work on";
+      case "flow_step": return flowStepText(a.note, a.from, a.to, a.flowStatus, a.flowOwner ? name(a.flowOwner) : null);
     }
   };
 
@@ -388,4 +389,14 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     },
   };
   return { data, images: blocks, key };
+}
+
+/** A flow_step activity line (VEC-175), e.g. "moved it to In Review and handed it to Testing Verification by flow (Develop -> Test)". */
+export function flowStepText(note: string | undefined, from: string | null | undefined, to: string | null | undefined, status: string | null | undefined, owner: string | null) {
+  const where = status ?? to ?? "the next step";
+  const steps = from ? `${from} -> ${to}` : `${to}`;
+  if (note === "umbrella") return `split it into sub-tasks, so its flow is paused while they run (it moved to ${where})`;
+  if (note === "back") return `sent it back to ${where}${owner ? ` and handed it to ${owner}` : ""} by flow (${steps})`;
+  if (note === "advanced") return `moved it to ${where}${owner ? ` and handed it to ${owner}` : ""} by flow (${steps})`;
+  return `put it at the ${to} step of its flow (${where})${owner ? `, owned by ${owner}` : ""}`;
 }

@@ -9,6 +9,7 @@ import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
+import { flowBriefing, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
 import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
@@ -25,7 +26,8 @@ import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type Bot
 
 export type WakeReason =
   /** `retry`: a person asked Vector to hand it over again (VEC-159), because an earlier run stopped or never started. */
-  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean }
+  /** `handoff`: a flow step handed it on (VEC-175): from which step (null = it entered the flow) to which. */
+  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean; handoff?: { fromStep: string | null; toStep: string } }
   | { kind: "mentioned"; taskId: ObjectId; commentId: ObjectId; taskKey: string; title: string; by: string }
   /** An assigned task's last dependency closed. `detail` says which, e.g. "WEB-1 is done". */
   | { kind: "ready"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string }
@@ -39,6 +41,8 @@ interface WakeMessage {
   prompt: string;
   /** Full task context (same shape as the MCP tools return), when the wake-up is about a task. */
   task: unknown | null;
+  /** The task's flow step and what comes next, for work wake-ups on a task with an active flow (VEC-175). */
+  flow?: (FlowBriefing["payload"] & { handoff: { fromStep: string | null; toStep: string } | null }) | null;
 }
 
 const TIMEOUT_MS = 15_000;
@@ -49,7 +53,7 @@ export const reasonLabel = (r: WakeReason) =>
   r.kind === "test"
     ? "test"
     : r.kind === "assigned"
-      ? `${r.retry ? "retry" : "assigned"} ${r.taskKey}`
+      ? `${r.retry ? "retry" : r.handoff ? "handoff" : "assigned"} ${r.taskKey}`
       : r.kind === "ready"
         ? `${r.taskKey} ready`
         : r.kind === "triage"
@@ -268,12 +272,18 @@ const RETRY_NOTE = (by: string) =>
   `${by} asked Vector to hand this to you again: your last run on it stopped before it finished (or never started). Read the task's comments, yours included, to see how far it got, check any work already in progress (files, branches, tasks you created), and carry on from there rather than starting over. Post a short comment saying where you're picking up.\n\n`;
 
 /** Assigned / ready wake-ups: the pickup moves the task for the bot, so it only sets the final status. */
-const STARTED_NOTE = (w: StatusWords, current: string) =>
+const STARTED_NOTE = (w: StatusWords, current: string, flow?: FlowBriefing | null) =>
   `${
-    w.started
-      ? `Vector moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
-      : `This project has no started status, so the task stays in ${current} while you work (nothing to set for that)`
-  }; finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something. ${BLOCKER_NOTE}`;
+    flow?.stays
+      ? `It stays in ${flow.stays} while you work on this step (nothing to set for that)`
+      : w.started
+        ? `Vector moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
+        : `This project has no started status, so the task stays in ${current} while you work (nothing to set for that)`
+  }; ${flow ? flow.finish.charAt(0).toLowerCase() + flow.finish.slice(1) : `finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something.`} ${BLOCKER_NOTE}`;
+
+/** The flow paragraph of a work wake-up: who handed it on, the step and its instructions (VEC-175). */
+const FLOW_NOTE = (flow: FlowBriefing | null | undefined, handoff: { fromStep: string | null; toStep: string } | undefined) =>
+  flow ? `${handoff?.fromStep ? `The ${handoff.fromStep} step is finished and the flow handed it to you for ${handoff.toStep}. ` : ""}${flow.text}\n\n` : "";
 
 /** Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. */
 const RESUMED_NOTE = (w: StatusWords, current: string) =>
@@ -312,6 +322,9 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
     context = built.data;
   }
   const retried = (reason.kind === "assigned" || reason.kind === "closeout") && reason.retry;
+  // Work wake-ups on a flow task carry the step and its instructions, also on retries and ready hand-offs (VEC-175).
+  const flow = task && project && (reason.kind === "assigned" || reason.kind === "ready") ? await flowBriefing(task, project.key) : null;
+  const handoff = reason.kind === "assigned" ? reason.handoff : undefined;
   const head =
     reason.kind === "triage"
       ? `${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Vector (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
@@ -319,10 +332,10 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
       : reason.kind === "assigned"
       ? retried
-        ? `${RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
-        : `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}). Do the work it asks for. ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
+        ? `${RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Vector (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
+        : `${handoff ? `${reason.taskKey} "${reason.title}" in Vector (${org.name}) was handed to you by its flow (${reason.by} finished the step before).` : `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Vector (${org.name}).`} Do the work it asks for. ${FLOW_NOTE(flow, handoff)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
-        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${STARTED_NOTE(w, current)}\n\n${PROGRESS_HINT}`
+        ? `${reason.taskKey} "${reason.title}", assigned to you in Vector (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Vector (${org.name}). The comment marked "new": true is the one that mentioned you. ${
             (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE(w, current)}\n\n${PROGRESS_HINT}` : "Reply to it."
           }`;
@@ -333,6 +346,7 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   return {
     prompt: `${head}${projectBlock}\n\n${TOOLS_HINT(w)}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
     task: context,
+    flow: flow ? { ...flow.payload, handoff: handoff ?? null } : null,
   };
 }
 
@@ -475,8 +489,10 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
   // Retries of one queued wake-up share the delivery id, so a receiver can drop a repeat of one it already handled.
   const id = wake ? `wake-${wake.wakeId.toHexString()}` : randomUUID();
   const ts = Math.floor(Date.now() / 1000).toString();
+  // A flow hand-off is its own event (VEC-175); its payload also carries the step, instructions and what's next.
+  const event = reason.kind === "test" ? "ping" : reason.kind === "assigned" && reason.handoff && !reason.retry ? "task.handoff" : `task.${reason.kind}`;
   const body = JSON.stringify({
-    type: reason.kind === "test" ? "ping" : `task.${reason.kind}`,
+    type: event,
     id,
     bot: { id: bot._id.toHexString(), name: bot.name },
     org: { slug: org.slug, name: org.name },
@@ -484,6 +500,7 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     by: reason.kind === "test" ? null : reason.by,
     // VEC-159: a person asked for this hand-off again (the bot's earlier run on it stopped).
     ...((reason.kind === "assigned" || reason.kind === "closeout") && reason.retry ? { retry: true } : {}),
+    ...(msg.flow ? { flow: msg.flow } : {}),
     prompt: msg.prompt,
     sentAt: new Date().toISOString(),
   });
@@ -493,7 +510,7 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     headers: {
       "Content-Type": "application/json",
       "User-Agent": "Vector-Webhooks/1",
-      "X-Vector-Event": reason.kind === "test" ? "ping" : `task.${reason.kind}`,
+      "X-Vector-Event": event,
       "X-Vector-Delivery": id,
       "X-Vector-Timestamp": ts,
       "X-Vector-Signature": `sha256=${sig}`,

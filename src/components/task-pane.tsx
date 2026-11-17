@@ -745,6 +745,27 @@ function Feed({ feed }: { feed: FeedItem[] }) {
             asked <b className="font-medium text-foreground">{name(f.to)}</b> to {f.note === "closeout" ? "retry the close-out" : "retry this"}
           </>
         );
+      case "flow_step": {
+        // VEC-175: the flow moved it to another step and handed it to that step's owner.
+        const owner = f.flowOwner ? <b className="font-medium text-foreground">{name(f.flowOwner)}</b> : null;
+        const where = <b className="font-medium text-foreground">{f.flowStatus ?? f.to}</b>;
+        const steps = f.from ? ` (${f.from} \u2192 ${f.to})` : "";
+        if (f.note === "umbrella") return <>split this into sub-tasks, so its flow is paused while they run</>;
+        if (f.note === "back" || f.note === "advanced") {
+          return (
+            <>
+              {f.note === "back" ? "sent this back to " : "moved this to "}
+              {where}
+              {owner ? <> and handed it to {owner}</> : null} by flow{steps}
+            </>
+          );
+        }
+        return (
+          <>
+            put this at the <b className="font-medium text-foreground">{f.to}</b> step of its flow{owner ? <>, owned by {owner}</> : null}
+          </>
+        );
+      }
       case "unblocked":
         return f.from ? (
           <>
