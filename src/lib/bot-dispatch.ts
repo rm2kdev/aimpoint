@@ -28,12 +28,14 @@ import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type Bot
 export type WakeReason =
   /** `retry`: a person asked Vector to hand it over again (VEC-159), because an earlier run stopped or never started. */
   /** `handoff`: a flow step handed it on (VEC-175): from which step (null = it entered the flow) to which. */
-  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean; handoff?: { fromStep: string | null; toStep: string } }
+  /** `resumed` (with retry): a person stopped the bot's work and has now resumed it (VEC-215). */
+  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean; resumed?: boolean; handoff?: { fromStep: string | null; toStep: string } }
   | { kind: "mentioned"; taskId: ObjectId; commentId: ObjectId; taskKey: string; title: string; by: string }
   /** An assigned task's last dependency closed. `detail` says which, e.g. "WEB-1 is done". */
   | { kind: "ready"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string }
   /** A task landed in Triage and this bot (its role allows check_for_triage) now holds it to break down. */
-  | { kind: "triage"; taskId: ObjectId; taskKey: string; title: string; by: string }
+  /** `resumed`: this bot was triaging it, a person stopped that and has now resumed it (VEC-215). */
+  | { kind: "triage"; taskId: ObjectId; taskKey: string; title: string; by: string; resumed?: boolean }
   /** A task this bot triaged is ready (its sub-tasks are closed: done or cancelled): summarise the work and close it out. */
   | { kind: "closeout"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string; retry?: boolean }
   | { kind: "test" };
@@ -54,11 +56,11 @@ export const reasonLabel = (r: WakeReason) =>
   r.kind === "test"
     ? "test"
     : r.kind === "assigned"
-      ? `${r.retry ? "retry" : r.handoff ? "handoff" : "assigned"} ${r.taskKey}`
+      ? `${r.resumed ? "resume" : r.retry ? "retry" : r.handoff ? "handoff" : "assigned"} ${r.taskKey}`
       : r.kind === "ready"
         ? `${r.taskKey} ready`
         : r.kind === "triage"
-          ? `triage ${r.taskKey}`
+          ? `${r.resumed ? "resume triage" : "triage"} ${r.taskKey}`
           : r.kind === "closeout"
             ? `${r.retry ? "retry close-out" : "close out"} ${r.taskKey}`
             : `mentioned on ${r.taskKey}`;
@@ -74,6 +76,9 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
         c.bots.find({ orgId, _id: { $in: botIds }, "connection.method": { $exists: true } }).toArray(),
       ]);
       if (!org) return;
+      // A stopped task (VEC-215) gets no work wake-up until it's resumed (Resume clears the stop, then wakes).
+      // A mention is still delivered, as a question: mentionResumesWork is false while it's stopped.
+      if (reason.kind !== "test" && reason.kind !== "mentioned" && (await c.tasks.findOne({ _id: reason.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } }))) return;
       const push = bots.filter((b) => b.connection && isPush(b.connection.method));
       await Promise.all(push.map((b) => (isQueuedWake(reason) ? dispatchWake(b, org, reason) : deliver(b, org, reason))));
     } catch (err) {
@@ -94,10 +99,14 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
  * delivery fails the claim is dropped and the next triage bot is tried. With no push triager, the task
  * waits for a polling bot's check_for_triage.
  */
-export function wakeTriage(orgId: ObjectId, task: { taskId: ObjectId; taskKey: string; title: string; by: string; exclude?: ObjectId }) {
+export function wakeTriage(
+  orgId: ObjectId,
+  task: { taskId: ObjectId; taskKey: string; title: string; by: string; exclude?: ObjectId; /** VEC-215 resume: try this bot first, with the resumed note. */ prefer?: ObjectId },
+) {
   const job = async () => {
     try {
       const c = await cols();
+      if (await c.tasks.findOne({ _id: task.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } })) return; // stopped (VEC-215)
       const roles = await c.botRoles.find({ orgId, "tools.check_for_triage": true }, { projection: { _id: 1 } }).toArray();
       if (!roles.length) return;
       const [org, bots] = await Promise.all([
@@ -108,8 +117,10 @@ export function wakeTriage(orgId: ObjectId, task: { taskId: ObjectId; taskKey: s
           .toArray(),
       ]);
       if (!org) return;
-      const reason: WakeReason = { kind: "triage", taskId: task.taskId, taskKey: task.taskKey, title: task.title, by: task.by };
-      for (const bot of bots.filter((b) => b.connection && isPush(b.connection.method))) {
+      const first = task.prefer ? bots.filter((b) => b._id.equals(task.prefer!)) : [];
+      const ordered = [...first, ...bots.filter((b) => !first.includes(b))];
+      for (const bot of ordered.filter((b) => b.connection && isPush(b.connection.method))) {
+        const reason: WakeReason = { kind: "triage", taskId: task.taskId, taskKey: task.taskKey, title: task.title, by: task.by, ...(first.includes(bot) ? { resumed: true } : {}) };
         const claimId = new ObjectId();
         try {
           await c.agentClaims.insertOne({ _id: claimId, orgId, botId: bot._id, taskId: task.taskId, kind: "triage", state: "in_progress", claimedAt: new Date(), finishedAt: null });
@@ -193,6 +204,8 @@ export async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReaso
     // claim (check_for_work wouldn't hand it out either), so no working ring and nothing left in progress.
     const task = await c.tasks.findOne({ _id: reason.taskId }, { projection: { statusId: 1, archivedAt: 1, orgId: 1, projectId: 1, flow: 1 } });
     if (!task || task.archivedAt) return;
+    // Stopped between the wake-up and its delivery (VEC-215): no claim, no move to In Progress.
+    if (await c.tasks.findOne({ _id: reason.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } })) return;
     const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
     if (isClosedCategory(st?.category)) return;
     // A wait step (design 5.7, VEC-181): the bot has been told what to watch for; it isn't working on the task while
@@ -281,6 +294,10 @@ export const BLOCKER_NOTE =
   "If you file a task that blocks your work (a bug found while verifying, a missing piece), give it an owner: assign it to yourself with \"me\" by default, or to the person or bot who should do it. If you send your task back to wait on new blockers (depends_on, then complete_task or set_status to an open status), every blocker must be assigned; Aimpoint assigns any that nobody owns to you and hands them to you, because a blocker without an owner wakes nobody.";
 
 /** A retried hand-off (VEC-159): the earlier run stopped part way (or never started), so carry on rather than redo. */
+/** The hand-back after a person stopped this bot's work and resumed it (VEC-215). */
+const STOP_RESUME_NOTE = (by: string, triage = false) =>
+  `${by} stopped your ${triage ? "triage of this task" : "work on this task"} earlier and has now resumed it. They may have changed it while it was stopped: read the description and every comment again, yours included, before you carry on, and follow anything new rather than your earlier plan. Check what your earlier run already did (files, branches, tasks you created), carry on from there rather than starting over, and post a short comment saying where you're picking up.\n\n`;
+
 const RETRY_NOTE = (by: string) =>
   `${by} asked Aimpoint to hand this to you again: your last run on it stopped before it finished (or never started). Read the task's comments, yours included, to see how far it got, check any work already in progress (files, branches, tasks you created), and carry on from there rather than starting over. Post a short comment saying where you're picking up.\n\n`;
 
@@ -340,12 +357,12 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const handoff = reason.kind === "assigned" ? reason.handoff : undefined;
   const head =
     reason.kind === "triage"
-      ? `${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Aimpoint (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
+      ? `${reason.resumed ? STOP_RESUME_NOTE(reason.by, true) : ""}${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Aimpoint (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
       : reason.kind === "closeout"
       ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
       : reason.kind === "assigned"
       ? retried
-        ? `${RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
+        ? `${reason.resumed ? STOP_RESUME_NOTE(reason.by) : RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
         : `${handoff ? `${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) was handed to you by its flow (${reason.by} finished the step before).` : `${reason.by} assigned you ${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}).`} Do the work it asks for. ${FLOW_NOTE(flow, handoff)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
       : reason.kind === "ready"
         ? `${reason.taskKey} "${reason.title}", assigned to you in Aimpoint (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
@@ -513,6 +530,8 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     by: reason.kind === "test" ? null : reason.by,
     // VEC-159: a person asked for this hand-off again (the bot's earlier run on it stopped).
     ...((reason.kind === "assigned" || reason.kind === "closeout") && reason.retry ? { retry: true } : {}),
+    // VEC-215: the hand-back after a person stopped this bot's work and resumed it.
+    ...((reason.kind === "assigned" || reason.kind === "triage") && reason.resumed ? { resumed: true } : {}),
     ...(msg.flow ? { flow: msg.flow } : {}),
     prompt: msg.prompt,
     sentAt: new Date().toISOString(),

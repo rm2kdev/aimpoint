@@ -48,6 +48,26 @@ export async function advanceStepAs(actor: Actor, taskId: ObjectId, opts: { step
   return updateTaskAs(actor, taskId, statusChanges ? { statusId: action.next.status.id } : {}, { flowTo: action.next.id, flowResolver: true });
 }
 
+type TaskFlowCtx = NonNullable<Awaited<ReturnType<typeof loadTaskFlow>>>;
+
+/**
+ * The task's flow state once paused / resumed (shared with Stop / Resume, lib/stop-work.ts). Pausing keeps the
+ * position; resuming re-syncs it by the task's status. Load `ctx` with `{ ignoreRecorded: !paused }`.
+ */
+export function flowPauseState(task: TaskDoc, ctx: TaskFlowCtx, paused: boolean, now: Date) {
+  const at = paused ? ctx.current : ctx.status ? locateStep(ctx.flow, ctx.status, null) : null;
+  const flow: TaskFlowState = paused
+    ? { ...(task.flow ?? { stepId: at?.id ?? null, source: ctx.flow.source, version: ctx.flow.version, enteredAt: now }), paused: true }
+    : {
+        stepId: at?.id ?? null,
+        source: ctx.flow.source,
+        version: ctx.flow.version,
+        enteredAt: at && at.id === task.flow?.stepId ? task.flow.enteredAt : now,
+        paused: false,
+      };
+  return { flow, at };
+}
+
 /**
  * Pause / Resume flow (creator, assignee, admin). Paused, the flow is out of the way: status and assignee edits and
  * complete_task behave as without flows. Resuming re-syncs the position by the task's status (the step of that
@@ -64,16 +84,7 @@ export async function setFlowPausedAs(actor: Actor, taskId: ObjectId, paused: bo
   if (!!task.flow?.paused === paused) return (await withWorkingBots([toTask(task, key)]))[0];
 
   const now = new Date();
-  const at = paused ? ctx.current : ctx.status ? locateStep(ctx.flow, ctx.status, null) : null;
-  const flow: TaskFlowState = paused
-    ? { ...(task.flow ?? { stepId: at?.id ?? null, source: ctx.flow.source, version: ctx.flow.version, enteredAt: now }), paused: true }
-    : {
-        stepId: at?.id ?? null,
-        source: ctx.flow.source,
-        version: ctx.flow.version,
-        enteredAt: at && at.id === task.flow?.stepId ? task.flow.enteredAt : now,
-        paused: false,
-      };
+  const { flow, at } = flowPauseState(task, ctx, paused, now);
   const after = await c.tasks.findOneAndUpdate(
     { _id: taskId, orgId: actor.orgId, "flow.paused": paused ? { $ne: true } : true },
     { $set: { flow, updatedAt: now } },

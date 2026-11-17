@@ -279,7 +279,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const pr = (v?: string | null) => PRIORITY_LABEL[Number(v)] ?? v;
     switch (a.kind) {
       case "created": return a.note === "form" ? `submitted it via the external form "${a.to ?? task.source?.formName ?? "?"}"` : "created the task";
-      case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : ""}`;
+      case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : a.note === "stopped_work" ? " (stopped the bot's work)" : ""}`;
       case "assignee": return a.to ? `assigned it to ${name(a.to)}${a.note === "auto_owner" ? ` (nobody owned it and ${a.waiter ?? "a task it assigned to itself"} was waiting on it)` : ""}` : `unassigned ${name(a.from)}`;
       case "priority": return `changed priority from ${pr(a.from)} to ${pr(a.to)}`;
       case "type": return `changed type from ${a.from} to ${a.to}`;
@@ -291,6 +291,8 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       case "dependency_added": return `made it depend on ${a.to ?? "another task"}`;
       case "dependency_removed": return `removed its dependency on ${a.to ?? "another task"}`;
       case "retried": return `asked ${name(a.to)} to ${a.note === "closeout" ? "retry the close-out" : "retry it (its earlier run stopped)"}`;
+      case "stopped": return `stopped ${name(a.to)}'s ${a.note === "triage" ? "triage" : "work"} on it (paused until resumed)`;
+      case "resumed": return a.to ? `resumed it and handed it back to ${name(a.to)}` : "resumed it";
       case "unblocked": return a.from ? `closed ${a.from}, so it became ready to work on` : "cleared what it was waiting on, so it became ready to work on";
       case "flow_step": return flowStepText(a.note, a.from, a.to, a.flowStatus, a.flowOwner ? name(a.flowOwner) : null);
     }

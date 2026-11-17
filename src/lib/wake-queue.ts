@@ -50,6 +50,12 @@ export const isQueuedWake = (r: WakeReason): r is QueuedReason => r.kind === "as
 
 const hex = (id: ObjectId) => id.toHexString();
 
+/** A person stopped the bot's work on this task (VEC-215) and hasn't resumed it. */
+async function isStopped(taskId: ObjectId) {
+  const c = await cols();
+  return !!(await c.tasks.findOne({ _id: taskId, stopped: { $ne: null } }, { projection: { _id: 1 } }));
+}
+
 function storedReason(r: QueuedReason): BotWakeDoc["reason"] {
   return {
     kind: r.kind,
@@ -60,6 +66,7 @@ function storedReason(r: QueuedReason): BotWakeDoc["reason"] {
     ...("detail" in r ? { detail: r.detail } : {}),
     ...("commentId" in r ? { commentId: r.commentId } : {}),
     ...("retry" in r && r.retry ? { retry: true } : {}),
+    ...("resumed" in r && r.resumed ? { resumed: true } : {}),
     ...("handoff" in r && r.handoff ? { handoff: r.handoff } : {}),
   };
 }
@@ -75,7 +82,7 @@ function toReason(w: BotWakeDoc): QueuedReason {
     case "mentioned":
       return { kind: "mentioned", ...base, commentId: r.commentId ?? new ObjectId() };
     default:
-      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}), ...(r.handoff ? { handoff: r.handoff } : {}) };
+      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}), ...(r.resumed ? { resumed: true } : {}), ...(r.handoff ? { handoff: r.handoff } : {}) };
   }
 }
 
@@ -85,6 +92,8 @@ function toReason(w: BotWakeDoc): QueuedReason {
  */
 export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReason) {
   const c = await cols();
+  // A stopped task (VEC-215) gets no work hand-off until it's resumed; Resume sends its own. Mentions still go out.
+  if (reason.kind !== "mentioned" && (await isStopped(reason.taskId))) return;
   await c.botWakes.deleteMany({ botId: bot._id, taskId: reason.taskId, kind: reason.kind });
   const now = new Date();
   const wake: BotWakeDoc = {
@@ -164,6 +173,7 @@ async function stillOwed(wake: BotWakeDoc): Promise<"send" | "landed" | "drop"> 
   const c = await cols();
   const task = await c.tasks.findOne({ _id: wake.taskId, orgId: wake.orgId }, { projection: { description: 0 } });
   if (!task || task.archivedAt) return "drop";
+  if (task.stopped && wake.kind !== "mentioned") return "drop"; // VEC-215: Resume sends a fresh one
   const status = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
   if (!status || isClosedCategory(status.category)) return "drop";
   if (wake.kind === "closeout") {
@@ -257,7 +267,7 @@ async function reconcile(): Promise<number> {
 
   // Work hand-offs (ready / assigned).
   const tasks = await c.tasks
-    .find({ assigneeId: { $in: botIds }, archivedAt: null, "waitingOn.0": { $exists: false }, updatedAt: { $gte: since } }, { projection: { description: 0 } })
+    .find({ assigneeId: { $in: botIds }, archivedAt: null, stopped: null, "waitingOn.0": { $exists: false }, updatedAt: { $gte: since } }, { projection: { description: 0 } })
     .toArray();
   if (tasks.length) {
     const taskIds = tasks.map((t) => t._id);
@@ -294,7 +304,7 @@ async function reconcile(): Promise<number> {
   // Close-outs recorded for a push triager but never delivered.
   const umbrellas = await c.tasks
     .find(
-      { "closeout.botId": { $in: botIds }, "closeout.deliveredAt": null, "closeout.resolvedAt": null, "closeout.requestedAt": { $lte: cutoff, $gte: since }, archivedAt: null },
+      { "closeout.botId": { $in: botIds }, "closeout.deliveredAt": null, "closeout.resolvedAt": null, "closeout.requestedAt": { $lte: cutoff, $gte: since }, archivedAt: null, stopped: null },
       { projection: { description: 0 } },
     )
     .toArray();

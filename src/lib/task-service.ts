@@ -143,7 +143,9 @@ export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId:
  */
 export async function mentionResumesWork(orgId: ObjectId, botId: ObjectId, taskId: ObjectId): Promise<boolean> {
   const c = await cols();
-  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { assigneeId: 1, statusId: 1, archivedAt: 1, waitingOn: 1 } });
+  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { assigneeId: 1, statusId: 1, archivedAt: 1, waitingOn: 1, stopped: 1 } });
+  // Stopped by a person (VEC-215): a mention is a question until they resume it.
+  if (task?.stopped) return false;
   // Still waiting on dependencies: it isn't ready, so a mention can't start work on it (the ready hand-off will).
   if (!task || task.archivedAt || task.waitingOn?.length || !task.assigneeId?.equals(botId)) return false;
   const st = await c.statuses.findOne({ _id: task.statusId, orgId }, { projection: { category: 1 } });

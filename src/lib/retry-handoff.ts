@@ -38,6 +38,7 @@ export async function retryHandOff(actor: Actor, taskId: ObjectId, opts: { force
   const allowed = actor.isAdmin || task.createdBy.equals(actor.id) || !!task.assigneeId?.equals(actor.id);
   if (!allowed) throw new UserError("Only the task's creator, its assignee or an admin can retry it.");
   if (task.archivedAt) throw new UserError("This task is archived. Restore it to hand it out again.");
+  if (task.stopped) throw new UserError("Its bot's work is stopped. Resume it to hand it back.");
   const status = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1, name: 1 } });
   if (status && isClosedCategory(status.category)) throw new UserError(`This task is ${status.name}. Reopen it to hand it out again.`);
 

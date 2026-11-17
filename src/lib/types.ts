@@ -294,9 +294,32 @@ export interface TaskDoc {
   flow?: TaskFlowState | null;
   /** Set when the task was submitted through an external form (VEC-205); `createdBy` is then the form's id. */
   source?: TaskSourceDoc | null;
+  /**
+   * VEC-215: a person stopped the bot working on it (lib/stop-work.ts). While set, no assigned / ready / handoff /
+   * close-out / triage wake-up goes out for it and the bot's claim sits in state "stopped". Resume clears it.
+   */
+  stopped?: TaskStopDoc | null;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
+}
+/** Who stopped which bot's work on a task, and what Resume has to undo (VEC-215). */
+export interface TaskStopDoc {
+  by: ObjectId;
+  at: Date;
+  /** The bot whose work was stopped. */
+  botId: ObjectId;
+  /** It was working on the task as its assignee, or triaging it. */
+  kind: "assigned" | "triage";
+  /** Stop paused the task's flow (it wasn't paused already), so Resume resumes it. */
+  pausedFlow: boolean;
+}
+/** Client-safe TaskStopDoc. */
+export interface TaskStop {
+  by: string;
+  at: string;
+  botId: string;
+  kind: "assigned" | "triage";
 }
 /** A task's place in its flow (written by the flow engine, VEC-175). */
 export interface TaskFlowState {
@@ -361,8 +384,12 @@ export type ActivityNote =
   /** flow_step (VEC-183): a person paused the task's flow / resumed it (re-synced by status). */
   | "paused"
   | "resumed"
+  /** stopped (VEC-215): the bot was triaging the task, not working on it as assignee. */
+  | "triage"
   /** created (VEC-205): submitted through an external form; `to` holds the form's name at the time. */
-  | "form";
+  | "form"
+  /** status (VEC-215): a person stopped the bot's work, so it moved back to the first not-started status. */
+  | "stopped_work";
 
 export interface ActivityDoc {
   _id: ObjectId;
@@ -388,6 +415,10 @@ export interface ActivityDoc {
     /** VEC-159: the actor asked Vector to hand the task to its bot again (`to` = the bot's id). `note` "closeout"
      * when it re-sent a triager's close-out rather than the work itself. */
     | "retried"
+    /** VEC-215: the actor stopped a bot's work on the task (`to` = the bot's id; `note` "triage" when it was triaging). */
+    | "stopped"
+    /** VEC-215: the actor resumed it (`to` = the bot handed it, null = nobody to hand it to yet). */
+    | "resumed"
     /** VEC-175: the flow moved it to another step. `from`/`to` = step names, `flowStatus` = the step's status name,
      * `flowOwner` = who it was handed to (id hex, null = nobody), `note` = advanced | back | synced | umbrella. */
     | "flow_step";
@@ -558,6 +589,8 @@ export interface BotWakeDoc {
     detail?: string;
     commentId?: ObjectId;
     retry?: boolean;
+    /** With retry: the hand-back after a person stopped the bot's work and resumed it (VEC-215). */
+    resumed?: boolean;
     /** An assigned wake-up from a flow hand-off (VEC-175). */
     handoff?: { fromStep: string | null; toStep: string };
   };
@@ -601,7 +634,8 @@ export interface AgentClaimDoc {
    * in progress the bot may edit the task like its creator (except archiving).
    */
   kind?: "assigned" | "triage";
-  state: "in_progress" | "done";
+  /** "stopped" (VEC-215): a person stopped this work (TaskDoc.stopped). Not working, not finished, never handed out. */
+  state: "in_progress" | "done" | "stopped";
   claimedAt: Date;
   finishedAt?: Date | null;
 }
@@ -749,6 +783,8 @@ export interface Task {
    * the public form endpoint must not hand a Task back to the submitter.
    */
   source?: TaskSource | null;
+  /** VEC-215: a person stopped the bot's work on it; Resume hands it back. Null / absent = not stopped. */
+  stopped?: TaskStop | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;

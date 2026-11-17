@@ -19,6 +19,7 @@ import {
 } from "@/lib/task-service";
 import { retryHandOff } from "@/lib/retry-handoff";
 import { advanceStepAs, setFlowPausedAs } from "@/lib/flow-actions";
+import { resumeWorkAs, stopWorkAs } from "@/lib/stop-work";
 import type { Counts, FeedItem, RetryOutcome, Task, TaskDetail, TaskDoc } from "@/lib/types";
 
 export type { MoveInput, NewTaskInput, TaskPatch };
@@ -61,6 +62,19 @@ export async function advanceTaskStep(slug: string, taskId: string, stepId: stri
 /** Pause / Resume the task's flow (VEC-183): creator, assignee or admin. Resuming re-syncs it by status. */
 export async function setTaskFlowPaused(slug: string, taskId: string, paused: boolean): Promise<Result<Task>> {
   return guard(async () => setFlowPausedAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), paused === true));
+}
+
+/**
+ * Stop the bot working on this task (VEC-215): its claim ends (state stopped), the flow pauses, an In Progress task
+ * goes back to Todo, and no wake-up goes out for it until Resume. Creator, the bot's owner or an admin.
+ */
+export async function stopTaskWork(slug: string, taskId: string): Promise<Result<Task>> {
+  return guard(async () => stopWorkAs(actorOf(await requireOrg(slug)), oid(taskId, "task")));
+}
+
+/** Resume a stopped task (VEC-215): clears the stop, resumes its flow and hands it back to its bot with one wake-up. */
+export async function resumeTaskWork(slug: string, taskId: string): Promise<Result<Task>> {
+  return guard(async () => resumeWorkAs(actorOf(await requireOrg(slug)), oid(taskId, "task")));
 }
 
 export async function deleteTask(slug: string, taskId: string): Promise<Result> {
