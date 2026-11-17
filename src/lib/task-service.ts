@@ -442,6 +442,11 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
 export interface FormSubmission {
   title: string;
   description?: string;
+  /**
+   * A rich-text form's description (VEC-234), already through `publicSanitize` with only this form's own uploads as
+   * image sources (lib/form-submit.ts). Used instead of `description` when set; createTaskAs sanitises it once more.
+   */
+  descriptionHtml?: string | null;
   /** Only used by a "choose" form, and only when it's one of the form's allowed types. Ignored by a fixed form. */
   type?: string | null;
   submitterName?: string | null;
@@ -479,7 +484,8 @@ export async function createTaskFromForm(form: Pick<ProjectFormDoc, "_id" | "org
   const title = String(input.title ?? "").trim();
   if (!title) throw new UserError("Give it a title.");
   const description = String(input.description ?? "").replace(/\r\n?/g, "\n");
-  if (description.length > FORM_DESCRIPTION_MAX) throw new UserError(`Keep the description under ${FORM_DESCRIPTION_MAX.toLocaleString()} characters.`);
+  const html = typeof input.descriptionHtml === "string" ? input.descriptionHtml : null;
+  if (html === null && description.length > FORM_DESCRIPTION_MAX) throw new UserError(`Keep the description under ${FORM_DESCRIPTION_MAX.toLocaleString()} characters.`);
   let type: TaskType = live.type;
   if (live.typeMode === "choose" && input.type !== undefined && input.type !== null && input.type !== "") {
     if (!isTaskType(input.type) || !live.allowedTypes.includes(input.type)) throw new UserError(`Pick one of: ${live.allowedTypes.join(", ")}.`);
@@ -496,7 +502,7 @@ export async function createTaskFromForm(form: Pick<ProjectFormDoc, "_id" | "org
   const actor: Actor = { orgId: live.orgId, id: live._id, isAdmin: false, isBot: false, name: live.name };
   return createTaskAs(
     actor,
-    { title, projectId: live.projectId.toHexString(), type, statusId: status._id.toHexString(), description: plainToHtml(description) },
+    { title, projectId: live.projectId.toHexString(), type, statusId: status._id.toHexString(), description: html ?? plainToHtml(description) },
     {
       source: { kind: "form", formId: live._id, formName: live.name, submitterName, submitterEmail },
       createdNote: { note: "form", to: live.name },

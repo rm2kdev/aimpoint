@@ -365,7 +365,13 @@ export function sanitizeDescription(html: string): string {
     allowedSchemes: ["http", "https", "mailto"],
     allowedSchemesByTag: { img: ["http", "https"] },
     allowProtocolRelative: false,
-    transformTags: { a: sanitizeHtml.simpleTransform("a", { target: "_blank", rel: "noopener noreferrer" }) },
+    // A public form's links (VEC-234, lib/form-rich-core.ts) arrive with nofollow added; keep it, add nothing else.
+    transformTags: {
+      a: (tagName, attribs) => ({
+        tagName: "a",
+        attribs: { ...attribs, target: "_blank", rel: /(^|\s)nofollow(\s|$)/.test(attribs.rel ?? "") ? "noopener noreferrer nofollow" : "noopener noreferrer" },
+      }),
+    },
   }).slice(0, 200_000);
 }
 
