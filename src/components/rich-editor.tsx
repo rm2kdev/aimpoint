@@ -5,6 +5,9 @@ import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
+import { NodeSelection, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import { GapCursor } from "@tiptap/pm/gapcursor";
+import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
 import {
   BoldIcon,
   CodeIcon,
@@ -34,6 +37,42 @@ export async function uploadImage(orgSlug: string, file: File): Promise<string> 
 /** Uploads one image and resolves to the URL to put in `src`; rejects with a message people can read. */
 export type ImageUploader = (file: File) => Promise<string>;
 
+/**
+ * Inserts an image at `pos` (drops), or else at the selection, and leaves the cursor after it.
+ * An image that's still selected (NodeSelection, right after an upload) is kept: the new one goes
+ * after it instead of replacing it (VEC-244).
+ */
+// GapCursor.valid exists at runtime but isn't in prosemirror-gapcursor's typings.
+const gapCursorFits = ($pos: ResolvedPos) => (GapCursor as unknown as { valid($pos: ResolvedPos): boolean }).valid($pos);
+
+function insertImageNode(tr: Transaction, node: PMNode, pos?: number) {
+  const sel = tr.selection;
+  let [from, to] = pos !== undefined ? [pos, pos] : sel instanceof NodeSelection ? [sel.to, sel.to] : [sel.from, sel.to];
+  // Like Tiptap's insertContent: an image put into an empty paragraph replaces the paragraph.
+  const $from = tr.doc.resolve(from);
+  if (from === to && $from.parent.isTextblock && !$from.parent.type.spec.code && !$from.parent.childCount && $from.depth > 0) {
+    from = $from.before();
+    to = $from.after();
+  }
+  tr.replaceRangeWith(from, to, node);
+  // End of what was inserted, in the new doc (replaceRangeWith may move the point out of a paragraph or split it).
+  let end = tr.mapping.map(to, 1);
+  tr.steps[tr.steps.length - 1]?.getMap().forEach((_os, _oe, _ns, newEnd) => (end = newEnd));
+  const $end = tr.doc.resolve(end);
+  const paragraph = node.type.schema.nodes.paragraph;
+  if ($end.parent.inlineContent) tr.setSelection(TextSelection.create(tr.doc, end));
+  else if ($end.nodeAfter?.isTextblock) tr.setSelection(TextSelection.create(tr.doc, end + 1));
+  else if (paragraph && $end.parent.canReplaceWith($end.index(), $end.index(), paragraph)) {
+    // Nothing to type into after the image (it's last): add an empty paragraph, as the trailing node would.
+    // A gap cursor here gets replaced by that trailing paragraph and the next keystroke lands at the top.
+    tr.insert(end, paragraph.create());
+    tr.setSelection(TextSelection.create(tr.doc, end + 1));
+  } else if (gapCursorFits($end)) tr.setSelection(new GapCursor($end));
+  else tr.setSelection(Selection.near($end));
+  tr.scrollIntoView();
+  return true;
+}
+
 function insertImages(editor: Editor, upload: ImageUploader, files: File[], pos?: number, onError?: (message: string) => void) {
   const images = files.filter((f) => f.type.startsWith("image/"));
   if (!images.length) return false;
@@ -41,8 +80,19 @@ function insertImages(editor: Editor, upload: ImageUploader, files: File[], pos?
     const id = toast.loading(`Uploading ${file.name || "image"}…`);
     upload(file)
       .then((src) => {
-        const chain = editor.chain().focus();
-        (pos !== undefined ? chain.insertContentAt(pos, { type: "image", attrs: { src, alt: file.name } }) : chain.setImage({ src, alt: file.name })).run();
+        editor
+          .chain()
+          .focus()
+          .command(({ tr, state }) => insertImageNode(tr, state.schema.nodes.image.create({ src, alt: file.name }), pos))
+          .run();
+        // Chrome can keep a stale native caret when the cursor lands in a paragraph whose DOM node
+        // ProseMirror reused: the state says "after the image" but typing lands where the cursor was.
+        // Re-place the caret once Tiptap's own (deferred) focus has run.
+        requestAnimationFrame(() => {
+          if (editor.isDestroyed || !editor.view.hasFocus()) return;
+          editor.view.dom.ownerDocument.getSelection()?.removeAllRanges();
+          editor.view.focus();
+        });
         toast.success("Image added", { id, duration: 1500 });
       })
       .catch((e: Error) => {
