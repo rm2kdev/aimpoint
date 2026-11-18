@@ -60,7 +60,8 @@ function CheckoutReturned({ locked }: { locked: boolean }) {
   const done = !locked && params.get("checkout") === "success" && !pathname.includes("/settings/billing");
   useEffect(() => {
     if (!done) return;
-    toast.success("You're on Pro. Thanks for subscribing.");
+    // Fixed id: the effect can run twice before the query is dropped (dev Strict Mode), which stacked two toasts.
+    toast.success("You're on Pro. Thanks for subscribing.", { id: "checkout-success" });
     router.replace(pathname, { scroll: false });
   }, [done, pathname, router]);
   return null;
