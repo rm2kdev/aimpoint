@@ -3,18 +3,20 @@
  * (human members, `billableSeats` in billing-core.ts). Pro is US$4.95 per seat per month, prorated.
  *
  * - `syncSeatsSoon(orgId)` runs after a membership change (invite accepted, member removed or left). It never
- *   blocks or fails the change itself: the sync runs in the background, serialized per org in this process.
+ *   blocks or fails the change itself: the sync runs after the response (`after`, so Vercel doesn't freeze it
+ *   mid-way), serialized per org in this process.
  * - Each sync first marks the org pending in `seatSyncs` (rev bumped), counts seats, reads the subscription
  *   item from Stripe and only calls `subscriptions.update` (items quantity, proration_behavior
  *   create_prorations) when the quantity differs. Setting an absolute quantity is idempotent, and the
  *   request carries an idempotency key per (subscription, from, to, pending entry).
  * - Success deletes the pending row (only if no newer change bumped `rev`, else it runs again). Failure logs,
  *   keeps the row and schedules a retry with backoff; the sweeper (every 30 s in a long-running server, and
- *   /api/cron/wakes on Vercel) retries due rows, so a Stripe outage reconciles later.
+ *   /api/cron/wakes on Vercel, scheduled in vercel.json) retries due rows, so a Stripe outage reconciles later.
  * - Billing off, or no live subscription: no Stripe calls, the pending row is dropped.
  */
 import "server-only";
 import type { ObjectId } from "mongodb";
+import { after } from "next/server";
 import { cols, getDb } from "@/lib/db";
 import { billingEnabled, billingEnvEnabled, stripeConfig } from "@/lib/billing";
 import { billingDebugAvailable } from "@/lib/billing-mode";
@@ -141,10 +143,19 @@ function enqueue(orgId: ObjectId): Promise<SeatSyncOutcome> {
  */
 export function syncSeatsSoon(orgId: ObjectId, reason = "membership"): void {
   if (!billingEnabled()) return;
-  void (async () => {
-    await markPending(orgId);
-    await enqueue(orgId);
-  })().catch((err) => console.error(`[seat sync] org ${orgId.toHexString()} (${reason}) failed, will retry:`, err));
+  const job = () =>
+    (async () => {
+      await markPending(orgId);
+      await enqueue(orgId);
+    })().catch((err) => console.error(`[seat sync] org ${orgId.toHexString()} (${reason}) failed, will retry:`, err));
+  // VEC-291: on Vercel a detached promise can be frozen once the response is sent, so the Stripe update
+  // may never run; after() keeps the function alive until it finishes.
+  try {
+    after(job);
+  } catch {
+    // Outside a request (scripts, the sweeper): run detached.
+    void job();
+  }
 }
 
 /** Awaitable variant for tests and the sweeper: marks pending, then syncs. */

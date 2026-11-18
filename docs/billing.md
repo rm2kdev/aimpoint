@@ -133,6 +133,11 @@ Pro team before it takes payments.
 | `STRIPE_SECRET_KEY` | sandbox secret key `sk_test_...` (Stripe Dashboard, Aimpoint sandbox, Developers > API keys) | live secret key `sk_live_...` (Stripe Dashboard, Aimpoint, Developers > API keys) |
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...` of the staging webhook endpoint | `whsec_...` of the production webhook endpoint |
 
+Seat sync on Vercel (VEC-291): a join or leave updates the subscription quantity right after the response
+(`after()` in `syncSeatsSoon`); a failed update stays in `seatSyncs` and is retried by `/api/cron/wakes`,
+which `vercel.json` schedules once a day (the Hobby plan's limit; on a Pro team it can run every few
+minutes). The route needs `CRON_SECRET` (set in Production and Preview); without it the route is off.
+
 The Stripe MCP cannot reveal secret keys, so `STRIPE_SECRET_KEY` has to be pasted from the Dashboard
 by hand. With `BILLING_ENABLED=true` the server refuses to start
 until all three `STRIPE_*` variables are set.
