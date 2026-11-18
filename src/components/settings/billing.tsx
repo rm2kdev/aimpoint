@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { countNoun, PLAN_LABEL, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { countNoun, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
 import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -24,12 +24,12 @@ function formatDate(iso: string | null, tz: string): string | null {
 function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean } {
   const end = formatDate(b.currentPeriodEnd, tz);
   switch (b.status) {
+    // Aimpoint never creates trials; a trialing subscription reads like an active one (VEC-270).
     case "active":
+    case "trialing":
       if (b.cancelAtPeriodEnd)
         return { text: `Cancels on ${end ?? "the end of the billing period"}. The organisation is locked then until it subscribes again; nothing is deleted.` };
       return { text: end ? `Renews on ${end}.` : "Active." };
-    case "trialing":
-      return { text: end ? `Trial ends on ${end}.` : "On a trial." };
     case "past_due": {
       if (b.plan === "pro") {
         const grace = formatDate(b.graceEndsAt, tz);
@@ -116,14 +116,18 @@ function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; labe
   );
 }
 
-/** Seats x price = monthly total, and that the bill follows the member count (VEC-238). */
+/**
+ * Seats x price = monthly total, and that the bill follows the member count (VEC-238). A subscription Stripe still
+ * bills (Pro, or locked while overdue/paused) already follows joins and leaves; the "now" wording is for an org
+ * that hasn't subscribed (VEC-270).
+ */
 function SeatsNote({ b, pro, billedSeats }: { b: BillingSummary; pro: boolean; billedSeats: number }) {
   const people = `${b.seats} ${b.seats === 1 ? "person" : "people"}`;
   const syncing = pro && b.liveSubscription && b.subscribedSeats !== null && b.subscribedSeats !== Math.max(1, b.seats);
   return (
     <p className="mt-1.5 text-[13px] text-muted-foreground" data-billing-seats={billedSeats}>
       <span className="tabular text-foreground">{seatTotalLabel(billedSeats)}</span>
-      {pro
+      {pro || b.liveSubscription
         ? ". Adding or removing people changes the bill; Stripe prorates the difference."
         : `, for the ${people} in this organisation now. Adding people later changes the bill.`}
       {syncing && <span className="block text-[12.5px] text-faint">Updating Stripe to {seatTotalLabel(b.seats)}.</span>}
@@ -158,8 +162,9 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
   const [going, setGoing] = useState<"checkout" | "portal" | null>(null);
   const pro = b.plan === "pro";
   const state = describe(b, tz);
-  // On Pro, the quantity Stripe bills (from the webhook); before that, or while locked, the people in the org now.
-  const billedSeats = pro && b.subscribedSeats !== null ? b.subscribedSeats : b.seats;
+  // With a live subscription (Pro, or locked while overdue/paused), the quantity Stripe bills (from the webhook);
+  // before that, or with none, the people in the org now.
+  const billedSeats = (pro || b.liveSubscription) && b.subscribedSeats !== null ? b.subscribedSeats : b.seats;
 
   const go = (which: "checkout" | "portal") =>
     start(async () => {
@@ -199,7 +204,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
           <div className="grid max-w-2xl gap-3" data-billing-plan={b.plan} data-billing-status={b.status ?? "none"}>
             <div className="rounded-[10px] border border-border px-4 py-3.5">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[15px] font-semibold">{PLAN_LABEL[b.plan]}</span>
+                <span className="text-[15px] font-semibold">{planHeading(b.plan, b.status)}</span>
                 {pro && b.cancelAtPeriodEnd && <Tag>Cancelling</Tag>}
                 {b.locked && (
                   <span className="rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive-ink" data-billing-locked>
@@ -209,7 +214,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                 {b.status === "past_due" && pro && (
                   <span className="rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive-ink">Payment failed</span>
                 )}
-                {pro && <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{`${usd(proMonthlyCents(billedSeats))}/month`}</span>}
+                {pro && <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{`${usd(proMonthlyCents(billedSeats))}/month ${TAX_NOTE}`}</span>}
               </div>
               <p
                 data-billing-note={state.warn ? "warning" : "info"}

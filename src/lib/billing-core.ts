@@ -26,7 +26,9 @@ export type Feature = "analytics" | "publicForms";
 
 /** Pro's price per seat (a human member) per month, in US cents (VEC-238). */
 export const PRO_SEAT_PRICE_CENTS = 495;
-export const PRO_PRICE_LABEL = "US$4.95 per user/month";
+/** Prices are pre-tax: Checkout adds the customer's local tax on top (docs/billing.md), so every shown price says so (VEC-270). */
+export const TAX_NOTE = "plus tax";
+export const PRO_PRICE_LABEL = `US$4.95 per user/month ${TAX_NOTE}`;
 
 /** "US$4.95", "US$14.85": a US-cent amount as shown in the UI. */
 export function usd(cents: number): string {
@@ -52,10 +54,10 @@ export function proMonthlyCents(seats: number): number {
   return seatQuantity(seats) * PRO_SEAT_PRICE_CENTS;
 }
 
-/** "3 seats x US$4.95 = US$14.85/month". */
+/** "3 seats x US$4.95 = US$14.85/month plus tax". */
 export function seatTotalLabel(seats: number): string {
   const n = seatQuantity(seats);
-  return `${n} ${n === 1 ? "seat" : "seats"} x ${usd(PRO_SEAT_PRICE_CENTS)} = ${usd(proMonthlyCents(n))}/month`;
+  return `${n} ${n === 1 ? "seat" : "seats"} x ${usd(PRO_SEAT_PRICE_CENTS)} = ${usd(proMonthlyCents(n))}/month ${TAX_NOTE}`;
 }
 
 /** How long a past_due subscription keeps Pro while Stripe retries the payment. */
@@ -68,6 +70,18 @@ const NOTHING: Entitlements = { analytics: false, publicForms: false };
 export const PLAN_ENTITLEMENTS: Record<Plan, Entitlements> = { unlimited: EVERYTHING, pro: EVERYTHING, unpaid: NOTHING };
 
 export const PLAN_LABEL: Record<Plan, string> = { unlimited: "Self-hosted", pro: "Pro", unpaid: "No subscription" };
+
+/**
+ * The plan heading on Settings > Billing (VEC-270). A locked org whose Stripe subscription still exists (past_due
+ * beyond the grace, unpaid, paused) says what is wrong with that subscription instead of "No subscription".
+ */
+export function planHeading(plan: Plan, status: OrgBilling["status"] | null | undefined): string {
+  if (plan === "unpaid") {
+    if (status === "past_due" || status === "unpaid") return "Pro, payment overdue";
+    if (status === "paused") return "Pro, paused";
+  }
+  return PLAN_LABEL[plan];
+}
 
 export const STRIPE_ENV_VARS = ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PRICE_ID"] as const;
 

@@ -116,7 +116,6 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 {isAdmin && (
                   <CommandItem onSelect={() => go(analyticsPath(org.slug))} className="gap-2.5" data-nav="analytics">
                     <ChartNoAxesColumnIcon /> Analytics
-                    {!billing.features.analytics && <span className="ml-auto text-[11px] text-faint">Locked</span>}
                   </CommandItem>
                 )}
                 <CommandItem onSelect={() => go(orgPath(org.slug, "settings", "members"))} className="gap-2.5">

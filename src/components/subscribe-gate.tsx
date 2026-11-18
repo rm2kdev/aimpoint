@@ -87,6 +87,8 @@ function SubscribeScreen() {
     return () => clearInterval(t);
   }, [waiting, router]);
 
+  // A subscription Stripe still bills (past_due after the grace, unpaid, paused) is fixed, not started (VEC-270).
+  const fix = b.liveSubscription;
   const admins = members.filter((m) => m.kind === "user" && m.role === "admin").map((m) => m.name);
   const others = orgs.filter((o) => o.id !== org.id);
 
@@ -119,10 +121,10 @@ function SubscribeScreen() {
         <p className="mb-3 flex items-center gap-1.5 font-mono text-[12.5px] text-faint">
           <LockIcon className="size-3.5" /> {org.name} is locked
         </p>
-        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Subscribe to continue</h1>
+        <h1 className="text-[22px] font-semibold tracking-[-0.02em]">{fix ? "Fix billing to continue" : "Subscribe to continue"}</h1>
         <p className="mt-2 text-[13.5px] text-muted-foreground">
-          {lockReason(b, org.name)} Hosted Aimpoint is {PRO_PRICE_LABEL}, with no free tier. Your tasks, projects and bots are all kept and unlock as soon as the
-          subscription starts.
+          {lockReason(b, org.name)} Hosted Aimpoint is {PRO_PRICE_LABEL}, with no free tier. Your tasks, projects and bots are all kept and unlock as soon as{" "}
+          {fix ? (b.status === "paused" ? "the subscription is resumed." : "the subscription is paid.") : "the subscription starts."}
         </p>
 
         {checkout === "cancelled" && !waiting && (
@@ -139,7 +141,7 @@ function SubscribeScreen() {
         ) : isAdmin ? (
           <div className="mt-6 rounded-[10px] border border-border bg-background px-4 py-3.5">
             <p className="tabular text-[13px] text-muted-foreground" data-billing-seats={b.seats}>
-              <span className="text-foreground">{seatTotalLabel(b.seats)}</span>. Each person in the organisation is a seat; bots and pending invites aren&rsquo;t.
+              <span className="text-foreground">{seatTotalLabel(fix && b.subscribedSeats !== null ? b.subscribedSeats : b.seats)}</span>. Each person in the organisation is a seat; bots and pending invites aren&rsquo;t.
             </p>
             <div className="mt-3.5 flex flex-wrap items-center gap-2">
               <Button onClick={subscribe} disabled={pending} className="gap-2" data-billing-action={b.liveSubscription ? "portal" : "checkout"}>
@@ -154,7 +156,7 @@ function SubscribeScreen() {
         ) : (
           <div className="mt-6 rounded-[10px] border border-border bg-background px-4 py-3.5 text-[13px]">
             <p>
-              Only an admin can subscribe.{" "}
+              {fix ? "Only an admin can fix billing." : "Only an admin can subscribe."}{" "}
               {admins.length ? (
                 <>
                   Ask <span className="font-medium">{listNames(admins)}</span>.

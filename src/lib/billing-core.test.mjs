@@ -16,6 +16,7 @@ import {
   planActive,
   unpaidReason,
   PLAN_LABEL,
+  planHeading,
   PAST_DUE_GRACE_DAYS,
   PRO_PRICE_LABEL,
   PRO_SEAT_PRICE_CENTS,
@@ -117,7 +118,7 @@ test("Stripe env: required only when billing is on, missing vars named", () => {
 test("lock message: admins subscribe in Settings > Billing, members ask an admin", () => {
   const admin = orgAccessMessage("unpaid", true);
   assert.match(admin, /^This organisation is locked\./);
-  assert.match(admin, /Pro subscription \(US\$4\.95 per user\/month\)/);
+  assert.match(admin, /Pro subscription \(US\$4\.95 per user\/month plus tax\)/);
   assert.match(admin, /Subscribe in Settings > Billing to unlock it; nothing has been deleted\./);
   const member = orgAccessMessage("unpaid", false);
   assert.match(member, /Ask an admin to subscribe in Settings > Billing/);
@@ -143,14 +144,24 @@ test("feature messages: only an unpaid org lacks Analytics and Public forms, wit
 
 test("per-seat price (VEC-238): US$4.95 per user per month", () => {
   assert.equal(PRO_SEAT_PRICE_CENTS, 495);
-  assert.equal(PRO_PRICE_LABEL, "US$4.95 per user/month");
+  assert.equal(PRO_PRICE_LABEL, "US$4.95 per user/month plus tax");
   assert.equal(usd(495), "US$4.95");
   assert.equal(usd(1485), "US$14.85");
   assert.equal(usd(0), "US$0.00");
   assert.equal(proMonthlyCents(3), 1485);
   assert.equal(proMonthlyCents(0), 495, "billed for at least one seat");
-  assert.equal(seatTotalLabel(1), "1 seat x US$4.95 = US$4.95/month");
-  assert.equal(seatTotalLabel(12), "12 seats x US$4.95 = US$59.40/month");
+  assert.equal(seatTotalLabel(1), "1 seat x US$4.95 = US$4.95/month plus tax");
+  assert.equal(seatTotalLabel(12), "12 seats x US$4.95 = US$59.40/month plus tax");
+});
+
+test("plan heading (VEC-270): a locked org with a live subscription isn't 'No subscription'", () => {
+  assert.equal(planHeading("pro", "active"), "Pro");
+  assert.equal(planHeading("pro", "past_due"), "Pro");
+  assert.equal(planHeading("unlimited", null), "Self-hosted");
+  assert.equal(planHeading("unpaid", "past_due"), "Pro, payment overdue");
+  assert.equal(planHeading("unpaid", "unpaid"), "Pro, payment overdue");
+  assert.equal(planHeading("unpaid", "paused"), "Pro, paused");
+  for (const s of [null, undefined, "canceled", "incomplete", "incomplete_expired"]) assert.equal(planHeading("unpaid", s), "No subscription", String(s));
 });
 
 test("billable seats: human memberships only, each person once", () => {

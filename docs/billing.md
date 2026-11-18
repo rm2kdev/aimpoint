@@ -62,7 +62,7 @@ session ("the product tax code is missing"). Both "Aimpoint Pro" products use
 
 Managed Payments adds the customer's local tax on top at Checkout (for example 10% GST for an
 Australian address), so the Customer Portal and invoices show the tax-inclusive amount while Aimpoint
-shows the pre-tax price. Any new product must get the same tax code.
+shows the pre-tax price marked "plus tax" (`TAX_NOTE` in `src/lib/billing-core.ts`, VEC-270). Any new product must get the same tax code.
 
 ## Customer Portal
 

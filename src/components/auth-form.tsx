@@ -107,7 +107,7 @@ export function AuthForm({
         </p>
         {pricing && mode === "signup" && (
           <p className="mt-2 text-[12.5px] text-faint" data-signup-pricing>
-            Accounts are free. A hosted organisation is {PRO_PRICE_LABEL} with no free tier, or{" "}
+            Accounts are free. A hosted organisation is {PRO_PRICE_LABEL}, with no free tier, or{" "}
             <a href={SELF_HOST_URL} target="_blank" rel="noreferrer" className="text-muted-foreground underline underline-offset-4 hover:text-foreground">
               self-host Aimpoint
             </a>{" "}

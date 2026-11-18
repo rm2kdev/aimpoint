@@ -8,7 +8,7 @@ import { CreditCardIcon } from "lucide-react";
 export function PlanLocked({ title, message, billingHref }: { title: string; message: string; billingHref: string }) {
   return (
     <div className="mx-auto flex max-w-sm flex-col items-center px-6 py-[18vh] text-center" data-plan-locked data-upgrade-prompt>
-      <p className="mb-3 font-mono text-[13px] text-faint">No subscription</p>
+      <p className="mb-3 font-mono text-[13px] text-faint">Locked</p>
       <h1 className="text-[15px] font-semibold">{title} isn&apos;t available</h1>
       <p className="mt-1 text-[13.5px] text-muted-foreground">{message}</p>
       <Link
