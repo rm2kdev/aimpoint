@@ -8,7 +8,14 @@ const nextConfig: NextConfig = {
   // which installs a fresh worker and drops the previous build's caches.
   env: { VECTOR_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA || Date.now().toString(36) },
   // Let other machines on the LAN (e.g. the Mac mini at 10.0.0.2) load dev JS/HMR.
-  allowedDevOrigins: ["10.0.0.2", "192.168.1.90", "*.local"],
+  allowedDevOrigins: [
+    "10.0.0.2",
+    "192.168.1.90",
+    "192.168.1.172",
+    "ryans-mac-mini",
+    "ryans-mac-mini.localdomain",
+    "*.local",
+  ],
   turbopack: {
     rules: {
       "*.css": {
