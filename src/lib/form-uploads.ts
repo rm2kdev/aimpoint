@@ -35,7 +35,8 @@ export async function uploadFormImage(publicId: string, req: Request, ip: string
   const form = await findOpenForm(publicId);
   if (!form) return { ok: false, status: 404, error: NOT_FOUND };
   if (!(await hasFeature(form.orgId, "publicForms"))) return { ok: false, status: 403, error: FORM_UNAVAILABLE };
-  if (!form.allowImages) return { ok: false, status: 403, error: "This form doesn't take images." };
+  // Images go into a rich description (allowImages) or a screenshot field (TPA-399, whatever the description allows).
+  if (!form.allowImages && !form.fields.some((f) => f.kind === "screenshot")) return { ok: false, status: 403, error: "This form doesn't take images." };
   const type = req.headers.get("content-type") ?? "";
   if (!type.toLowerCase().startsWith("multipart/form-data")) return { ok: false, status: 400, error: "Send the image as a multipart form upload in the field `file`." };
   // A declared oversize body is refused before it spends rate limit or gets read.

@@ -6,6 +6,7 @@ import { UserError } from "@/lib/result";
 import { loadStatuses, requireProjectStatus } from "@/lib/statuses";
 import { requireFeatureById } from "@/lib/billing-limits";
 import { resolveFormOptions, type FormOptions } from "@/lib/form-upload-core";
+import { checkHideDescription, cleanEmailHelp, cleanFormFields, type FormField } from "@/lib/form-fields-core";
 import {
   FORM_DESTINATION_STAGES,
   TASK_TYPES,
@@ -49,6 +50,12 @@ export interface FormInput {
   richText?: boolean;
   /** VEC-233: submitters may add images; needs richText (default false). */
   allowImages?: boolean;
+  /** TPA-399: extra fields in form order (each: id to keep, label, help, kind short|long|screenshot, required). */
+  fields?: unknown[] | null;
+  /** TPA-399: note under the optional Email field. */
+  emailHelp?: string | null;
+  /** TPA-399: leave out the generic description box (needs a text field). */
+  hideDescription?: boolean;
 }
 export type FormPatch = Partial<FormInput>;
 
@@ -66,6 +73,7 @@ export function toProjectForm(f: ProjectFormDoc): ProjectForm {
     allowedTypes: [...f.allowedTypes],
     intro: f.intro ?? null,
     ...formOptions(f),
+    ...formExtras(f),
     createdAt: f.createdAt.toISOString(),
     updatedAt: f.updatedAt.toISOString(),
   };
@@ -117,6 +125,25 @@ export function formOptions(f: Pick<ProjectFormDoc, "richText" | "allowImages">)
   return { richText, allowImages: richText && f.allowImages === true };
 }
 
+/** TPA-399 settings with defaults for forms saved before them: no fields, no email note, description shown. */
+export function formExtras(f: Pick<ProjectFormDoc, "fields" | "emailHelp" | "hideDescription">): { fields: FormField[]; emailHelp: string | null; hideDescription: boolean } {
+  const fields = Array.isArray(f.fields) ? f.fields.map((x) => ({ ...x, help: x.help ?? null, required: x.required === true })) : [];
+  return { fields, emailHelp: f.emailHelp ?? null, hideDescription: f.hideDescription === true && fields.some((x) => x.kind !== "screenshot") };
+}
+
+/** Validates fields/emailHelp/hideDescription together; ones left out keep `kept`. UserError on bad input. */
+function cleanExtras(patch: Pick<FormInput, "fields" | "emailHelp" | "hideDescription">, kept?: ReturnType<typeof formExtras>) {
+  const fields = patch.fields !== undefined ? cleanFormFields(patch.fields) : (kept?.fields ?? []);
+  if (typeof fields === "string") throw new UserError(fields);
+  const emailHelp = patch.emailHelp !== undefined ? cleanEmailHelp(patch.emailHelp) : (kept?.emailHelp ?? null);
+  if (emailHelp && typeof emailHelp === "object") throw new UserError(emailHelp.error);
+  if (patch.hideDescription !== undefined && typeof patch.hideDescription !== "boolean") throw new UserError("`hideDescription` is true or false.");
+  const hideDescription = patch.hideDescription ?? kept?.hideDescription ?? false;
+  const bad = checkHideDescription(hideDescription, fields);
+  if (bad) throw new UserError(patch.hideDescription === undefined ? "The description box is hidden, so keep at least one text field (or show the description box again)." : bad);
+  return { fields, emailHelp, hideDescription };
+}
+
 /** Validates richText/allowImages like cleanTypes: fields left out keep `kept`; images need rich text. */
 function cleanOptions(richText: unknown, allowImages: unknown, kept?: FormOptions): FormOptions {
   const r = resolveFormOptions({ richText, allowImages }, kept);
@@ -161,6 +188,7 @@ export async function createProjectForm(actor: FormActor, projectId: string, inp
   const status = await requireFormDestination(actor.orgId, project._id, input.destinationStatusId);
   const types = cleanTypes(input.typeMode ?? "fixed", input.type, input.allowedTypes);
   const options = cleanOptions(input.richText, input.allowImages);
+  const extras = cleanExtras(input);
   const now = new Date();
   const doc: ProjectFormDoc = {
     _id: new ObjectId(),
@@ -174,6 +202,7 @@ export async function createProjectForm(actor: FormActor, projectId: string, inp
     ...types,
     intro: cleanIntro(input.intro),
     ...options,
+    ...extras,
     createdBy: actor.userId,
     createdAt: now,
     updatedAt: now,
@@ -204,6 +233,9 @@ export async function updateProjectForm(actor: FormActor, formId: string, patch:
   if (patch.richText !== undefined || patch.allowImages !== undefined) {
     Object.assign(set, cleanOptions(patch.richText, patch.allowImages, formOptions(form)));
   }
+  if (patch.fields !== undefined || patch.emailHelp !== undefined || patch.hideDescription !== undefined) {
+    Object.assign(set, cleanExtras(patch, formExtras(form)));
+  }
   if (patch.enabled !== undefined) {
     if (typeof patch.enabled !== "boolean") throw new UserError("`enabled` is true or false.");
     set.enabled = patch.enabled;
@@ -230,8 +262,8 @@ export async function deleteProjectForm(actor: FormActor, formId: string): Promi
   return form.projectId.toHexString();
 }
 
-/** A form taking submissions, with its editor options resolved. */
-export type OpenForm = ProjectFormDoc & FormOptions;
+/** A form taking submissions, with its editor options and TPA-399 extras resolved. */
+export type OpenForm = ProjectFormDoc & FormOptions & ReturnType<typeof formExtras>;
 
 /**
  * The form behind a public link, if it takes submissions: enabled, its project still exists and isn't archived.
@@ -244,7 +276,7 @@ export async function findOpenForm(publicId: string): Promise<OpenForm | null> {
   const form = await c.projectForms.findOne({ publicId, enabled: true });
   if (!form) return null;
   const project = await c.projects.findOne({ _id: form.projectId, orgId: form.orgId }, { projection: { archivedAt: 1 } });
-  return project && !project.archivedAt ? { ...form, ...formOptions(form) } : null;
+  return project && !project.archivedAt ? { ...form, ...formOptions(form), ...formExtras(form) } : null;
 }
 
 /* ---------------- keeping destinations valid ---------------- */

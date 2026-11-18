@@ -14,6 +14,7 @@ import { hasFeature } from "./billing-limits";
 import { rateWindow, retryAfter } from "./form-upload-core";
 import { imageSources, prepareRichDescription, publicSanitize } from "./form-rich-core";
 import { claimFormUploads, pendingFormUploads } from "./form-uploads";
+import { composeFormDescription, plainTextToHtml, readFieldValues, screenshotUrls, type FormFieldValues } from "./form-fields-core";
 
 /**
  * The public side of external forms (VEC-207): what `POST /api/forms/<publicId>` does with a submission.
@@ -24,9 +25,10 @@ import { claimFormUploads, pendingFormUploads } from "./form-uploads";
 
 /**
  * Largest request body taken, in bytes. A full description (10,000 chars) of multi-byte text fits, and so does a rich
- * one up to FORM_HTML_MAX of HTML (VEC-234, lib/form-rich-core.ts) plus the other fields; anything bigger is refused unread.
+ * one up to FORM_HTML_MAX of HTML (VEC-234, lib/form-rich-core.ts) plus the other fields, custom fields included
+ * (TPA-399, FORM_FIELDS_TEXT_MAX); anything bigger is refused unread.
  */
-export const FORM_BODY_MAX = 128 * 1024;
+export const FORM_BODY_MAX = 160 * 1024;
 export const FORM_TITLE_MAX = 300;
 /** Name of the hidden field people never see or fill in. Anything in it marks the submission as a bot's. */
 export const HONEYPOT_FIELD = "website";
@@ -52,7 +54,10 @@ export interface RawSubmission {
   type?: unknown;
   name?: unknown;
   email?: unknown;
+  /** TPA-399: custom field values by field id (text, or upload URL(s) for a screenshot). Plain posts send `field_<id>` keys. */
+  fields?: unknown;
   [HONEYPOT_FIELD]?: unknown;
+  [key: `field_${string}`]: unknown;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : null);
@@ -65,12 +70,15 @@ interface ValidSubmission {
   type: string | null;
   name: string;
   email: string;
+  /** TPA-399: custom field values (empty ones left out). */
+  values: FormFieldValues;
 }
 
 /** Shape and size checks that need no database, so bad input never uses up the submitter's rate limit. */
-function validate(raw: RawSubmission, form: Pick<OpenForm, "richText" | "allowImages">): ValidSubmission | string {
+function validate(raw: RawSubmission, form: Pick<OpenForm, "richText" | "allowImages" | "fields" | "hideDescription">): ValidSubmission | string {
   const title = str(raw.title);
-  const description = str(raw.description);
+  // A form without the description box (TPA-399) takes none, whatever is posted.
+  const description = form.hideDescription ? "" : str(raw.description);
   const type = str(raw.type);
   const name = str(raw.name);
   const email = str(raw.email);
@@ -88,7 +96,9 @@ function validate(raw: RawSubmission, form: Pick<OpenForm, "richText" | "allowIm
   } else if (d.length > FORM_DESCRIPTION_MAX) return `Keep the description under ${FORM_DESCRIPTION_MAX.toLocaleString()} characters (it's ${d.length.toLocaleString()}).`;
   if (name.trim().length > FORM_SUBMITTER_NAME_MAX) return `Keep your name under ${FORM_SUBMITTER_NAME_MAX} characters.`;
   if (email.trim().length > FORM_SUBMITTER_EMAIL_MAX) return `Keep your email under ${FORM_SUBMITTER_EMAIL_MAX} characters.`;
-  return { title: t, description: d, rich, type: type || null, name: name.trim(), email: email.trim() };
+  const fields = readFieldValues(form.fields, raw as Record<string, unknown>);
+  if ("error" in fields) return fields.error;
+  return { title: t, description: d, rich, type: type || null, name: name.trim(), email: email.trim(), values: fields.values };
 }
 
 /* ---------------- rate limiting ---------------- */
@@ -152,14 +162,24 @@ export async function submitPublicForm(publicId: string, raw: RawSubmission, ip:
   const honey = raw[HONEYPOT_FIELD];
   if (typeof honey === "string" ? honey.trim() !== "" : honey != null) return { ok: true, status: 200 };
   // Images survive only when they're this form's own pending uploads (VEC-233); every other source is dropped.
+  // Screenshot fields (TPA-399) use the same pending uploads, whether or not the description takes images.
   let descriptionHtml: string | null = null;
-  let claim: ObjectId[] = [];
+  const shots = screenshotUrls(form.fields, input.values);
+  const sources = [...(input.rich && form.allowImages ? input.rich.sources : []), ...shots];
+  const pending = sources.length ? await pendingFormUploads(form._id, sources) : [];
+  const byUrl = new Map(pending.map((u) => [u.url, u._id]));
+  const used: string[] = [];
   if (input.rich) {
-    const pending = form.allowImages ? await pendingFormUploads(form._id, input.rich.sources) : [];
-    const byUrl = new Map(pending.map((u) => [u.url, u._id]));
     descriptionHtml = publicSanitize(input.rich.html, { allowImages: form.allowImages, imageAllowed: (src) => byUrl.has(src) });
-    claim = [...new Set(imageSources(descriptionHtml))].map((u) => byUrl.get(u)).filter((id): id is ObjectId => !!id);
+    used.push(...imageSources(descriptionHtml));
   }
+  const missingShot = form.fields.find((f) => f.kind === "screenshot" && f.required && !screenshotUrls([f], input.values).some((u) => byUrl.has(u)));
+  if (missingShot) return { ok: false, status: 400, error: `The image for "${missingShot.label}" didn't upload or has expired. Add it again.` };
+  if (form.fields.length) {
+    descriptionHtml = composeFormDescription(descriptionHtml ?? plainTextToHtml(input.description), form.fields, input.values, (u) => byUrl.has(u));
+    used.push(...shots.filter((u) => byUrl.has(u)));
+  }
+  const claim = [...new Set(used)].map((u) => byUrl.get(u)).filter((id): id is ObjectId => !!id);
   let taskId: string;
   try {
     const task = await createTaskFromForm(form, {

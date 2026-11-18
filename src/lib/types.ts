@@ -1,5 +1,6 @@
 import type { ObjectId } from "mongodb";
 import type { FlowAdvance, FlowMode, FlowSource, StepOwnerKind } from "./flow-model";
+import type { FormField } from "./form-fields-core";
 
 export type Role = "admin" | "member";
 /**
@@ -294,11 +295,21 @@ export interface ProjectFormDoc {
   richText?: boolean;
   /** VEC-233: submitters may add images (public uploads). Only ever true together with `richText`. */
   allowImages?: boolean;
+  /**
+   * TPA-399: extra questions after title/description, in form order (lib/form-fields-core.ts). Missing on forms
+   * saved before it existed, which reads as none.
+   */
+  fields?: FormField[];
+  /** TPA-399: plain text shown under the optional Email field (e.g. why it's asked). */
+  emailHelp?: string | null;
+  /** TPA-399: leave out the generic description box (only with at least one text field). Missing = shown. */
+  hideDescription?: boolean;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
 export type FormTypeMode = "fixed" | "choose";
+export type { FormField, FormFieldKind } from "./form-fields-core";
 /** Stages a form may file into: never started/done/cancelled work. */
 export const FORM_DESTINATION_STAGES = ["backlog", "triage", "unstarted"] as const satisfies readonly StatusCategory[];
 export const isFormDestinationStage = (v: unknown): v is (typeof FORM_DESTINATION_STAGES)[number] =>
@@ -318,6 +329,9 @@ export interface ProjectForm {
   intro: string | null;
   richText: boolean;
   allowImages: boolean;
+  fields: FormField[];
+  emailHelp: string | null;
+  hideDescription: boolean;
   createdAt: string;
   updatedAt: string;
 }
