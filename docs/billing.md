@@ -1,11 +1,20 @@
 # Billing: Stripe environments
 
-Aimpoint Pro is US$4.95 per user per month, billed per organisation. The Stripe subscription has one
+Aimpoint Pro is US$4.95 per user per month, billed per organisation, with tax added on top. Managed hosting
+is paid only: there is no free tier and no trial, and Pro includes everything (unlimited people, bots and
+projects, concurrent bot work, Analytics, public forms and public projects). An organisation without a live
+subscription (none, cancelled, unpaid, incomplete, paused, or past due for more than 7 days) is locked, not
+deleted: members can sign in and see Settings > Billing, admins can subscribe, and everything else is
+refused. Rules: `planFor` and `PAST_DUE_GRACE_DAYS` in `src/lib/billing-core.ts`, the lock (`isOrgActive`,
+`OrgLockedError`) in `src/lib/billing.ts`.
+
+The Stripe subscription has one
 item on the price below, with quantity = billable seats (human members; bots and pending invites don't
 count). The app changes the quantity itself as people join or leave (`src/lib/seat-sync.ts`), so the
 Customer Portal does not let customers edit it.
 
-Billing is off unless `BILLING_ENABLED=true`. Self-hosted instances leave it unset and need no Stripe.
+Billing is off unless `BILLING_ENABLED=true`. Self-hosted instances leave it unset: free, everything on, no
+billing prompts and no Stripe.
 
 No secrets live in this file or anywhere in the repo. Secret keys and webhook signing secrets go only
 into the deployment's environment variables.
@@ -111,10 +120,10 @@ To try billing on a self-hosted instance without redeploying (VEC-240):
    **Test billing** on.
 
 It applies to the whole instance straight away (stored in MongoDB `instanceSettings`, re-read every
-5 s): plans, limits, Checkout, the Customer Portal and `POST /api/stripe/webhook` behave as with
+5 s): the paid-only rules (unsubscribed orgs are locked), Checkout, the Customer Portal and `POST /api/stripe/webhook` behave as with
 `BILLING_ENABLED`, at US$4.95 per user/month, and Settings > Billing shows a "Test billing (debug)"
 banner. A missing variable or a non-test key never stops startup: the Debug tab lists it, the toggle
 refuses to turn on, and if it is already on, Checkout/Portal refuse with the reason and the webhook
-answers 503. Switching it off returns every organisation to unlimited at once (Billing tab and webhook
+answers 503. Switching it off returns every organisation to self-hosted (everything on) at once (Billing tab and webhook
 404, no Stripe calls); their billing data is kept. The Debug tab is absent (404) for members, without
 `AIMPOINT_DEBUG`, and whenever `BILLING_ENABLED` is set, and a stored toggle is ignored then.
