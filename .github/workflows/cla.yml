@@ -1,0 +1,48 @@
+name: CLA
+
+# Checks that every contributor to a pull request has signed CLA.md.
+# Logic lives in .github/scripts/cla.js; signatures are stored on the `cla-signatures` branch.
+#
+# pull_request_target runs this workflow from the default branch with write access, so it must
+# never check out or execute code from the pull request. It only checks out the base branch's
+# .github/scripts directory.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write # write signatures to the cla-signatures branch
+  pull-requests: write # comment on pull requests
+  statuses: write # set the CLA commit status
+
+concurrency:
+  group: cla-signatures
+  cancel-in-progress: false
+
+jobs:
+  cla:
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event.issue.pull_request &&
+        (contains(github.event.comment.body, 'hereby sign the CLA') ||
+         contains(github.event.comment.body, 'recheck')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          # GitHub usernames that don't need to sign (comma separated). Bots are always exempt.
+          CLA_ALLOWLIST: rm2kdev
+        with:
+          script: |
+            const run = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/cla.js`);
+            await run({ github, context, core });
