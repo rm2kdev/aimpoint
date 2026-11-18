@@ -199,7 +199,7 @@ Testing billing on a self-hosted instance: set `AIMPOINT_DEBUG=1` (leave `BILLIN
 
 ## Notes
 
-- Invite links are single-use, expire after 14 days and are shared by copying the link (no email sending yet).
+- Invite links are single-use and expire after 14 days. Creating an invite emails the link to the invitee (`src/lib/invite-email.ts` through `sendEmail`; absolute link from `AUTH_URL` when set, else the admin's own origin); if the email can't be sent the invite still stands and Settings > Members says so, so the admin can copy the link instead. Re-inviting an address replaces its pending invite and emails the new link.
 - Comments are plain text with @mentions (stored as `<@id>` tokens, validated against the org on save); descriptions are sanitised HTML.
 - Not built yet: email notifications, presence avatars, drag-to-reorder within a status.
 

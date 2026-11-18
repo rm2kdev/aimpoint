@@ -86,14 +86,15 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
   const { org } = useOrg();
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
-  const [link, setLink] = useState<string>();
+  // The last invite created here: whether it was emailed, and its link for copying either way (VEC-296).
+  const [sent, setSent] = useState<{ email: string; url: string; emailed: boolean }>();
   const { pending, run } = useAction();
-  const copy = (path: string) => {
-    navigator.clipboard.writeText(`${location.origin}${path}`);
-    toast.success("Invite link copied");
+  const copy = (path: string, quiet = false) => {
+    navigator.clipboard.writeText(`${location.origin}${path}`).catch(() => {});
+    if (!quiet) toast.success("Invite link copied");
   };
   return (
-    <SettingsRow title="Invite people" desc="Creates a link that works once and expires in 14 days. Send it however you like.">
+    <SettingsRow title="Invite people" desc="Emails a link that works once and expires in 14 days. You can also copy the link and send it however you like.">
       <form
         className="flex max-w-lg flex-wrap gap-2"
         onSubmit={(e) => {
@@ -101,9 +102,13 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
           run(async () => {
             const r = await createInvite(org.slug, email, role);
             if (r.ok && r.data) {
-              setLink(r.data.url);
+              setSent(r.data);
               setEmail("");
-              copy(r.data.url);
+              if (r.data.emailed) toast.success(`Invite sent to ${r.data.email}`);
+              else {
+                copy(r.data.url, true);
+                toast.warning(`Couldn't email ${r.data.email}, copy the link`, { description: "The invite was created; its link is on your clipboard." });
+              }
             }
             return r;
           });
@@ -120,12 +125,23 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
           </SelectContent>
         </Select>
         <Button type="submit" disabled={pending || !email.trim()} className="gap-2">
-          <UserPlusIcon className="size-3.5" /> Create invite
+          <UserPlusIcon className="size-3.5" /> Send invite
         </Button>
       </form>
-      {link && (
-        <p className="mt-3 flex items-center gap-2 text-[12.5px] text-muted-foreground">
-          Link copied: <span className="truncate font-mono text-foreground">{link}</span>
+      {sent && (
+        <p className="mt-3 flex min-w-0 items-center gap-2 text-[12.5px] text-muted-foreground" role="status">
+          {sent.emailed ? (
+            <span className="truncate">
+              Invite sent to <span className="text-foreground">{sent.email}</span>
+            </span>
+          ) : (
+            <span className="truncate">
+              Couldn&apos;t email <span className="text-foreground">{sent.email}</span>, copy the link: <span className="font-mono text-foreground">{`${location.origin}${sent.url}`}</span>
+            </span>
+          )}
+          <Button variant="ghost" size="icon-sm" aria-label={`Copy invite link for ${sent.email}`} onClick={() => copy(sent.url)}>
+            <CopyIcon />
+          </Button>
         </p>
       )}
       {invites.length > 0 && (

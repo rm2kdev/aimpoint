@@ -21,6 +21,9 @@ import { deleteProjectForms, formsStatusDeleted, formsStatusStageChanged } from 
 import { publicProjectArchived, publicStatusDeleted, publicStatusStageChanged } from "@/lib/project-public";
 import { assertOrgActive, billingOn } from "@/lib/billing";
 import { requestOrigin } from "@/lib/request-origin";
+import { appBaseUrl } from "@/lib/app-url";
+import { renderEmail, sendEmail } from "@/lib/email";
+import { absoluteUrl, inviteEmail } from "@/lib/invite-email";
 import { syncSeatsSoon } from "@/lib/seat-sync";
 
 function slugify(s: string) {
@@ -354,7 +357,34 @@ export async function deleteStatus(slug: string, projectId: string, id: string, 
 
 /* ---------------- members & invites ---------------- */
 
-export async function createInvite(slug: string, email: string, role: Role): Promise<Result<{ url: string }>> {
+const INVITE_DAYS = 14;
+
+/**
+ * Emails the invite link (VEC-296). Never throws: a missing mailer setup or an SES error is logged and the admin
+ * falls back to copying the link, so the invite itself always stands.
+ */
+async function emailInvite(input: { to: string; token: string; role: Role; orgName: string; inviter: { name: string; email: string } }) {
+  try {
+    const url = absoluteUrl(await appBaseUrl(), `/invite/${input.token}`);
+    const mail = inviteEmail({
+      to: input.to,
+      orgName: input.orgName,
+      inviterName: input.inviter.name,
+      inviterEmail: input.inviter.email,
+      role: input.role === "admin" ? "admin" : "member",
+      url,
+      expiresInDays: INVITE_DAYS,
+    });
+    await sendEmail({ to: input.to, subject: mail.subject, replyTo: mail.replyTo, tag: "invite", ...renderEmail(mail.layout) });
+    return true;
+  } catch (err) {
+    console.error(`[invite] couldn't email the invite to ${input.to}:`, err);
+    return false;
+  }
+}
+
+/** `emailed` = the invite email went out; when false the UI asks the admin to copy the link instead. */
+export async function createInvite(slug: string, email: string, role: Role): Promise<Result<{ url: string; email: string; emailed: boolean }>> {
   return guard(async () => {
     const { org, user } = await requireOrg(slug, { admin: true });
     const parsed = z.string().trim().toLowerCase().email().safeParse(email);
@@ -377,10 +407,12 @@ export async function createInvite(slug: string, email: string, role: Role): Pro
       token,
       invitedBy: user._id,
       createdAt: now,
-      expiresAt: new Date(now.getTime() + 14 * 864e5),
+      expiresAt: new Date(now.getTime() + INVITE_DAYS * 864e5),
     });
     revalidatePath(orgPath(slug, "settings", "members"));
-    return { url: `/invite/${token}` };
+    // After the insert: a re-invite replaced the old pending invite above, so this is the one live link.
+    const emailed = await emailInvite({ to: parsed.data, token, role, orgName: org.name, inviter: { name: user.name, email: user.email } });
+    return { url: `/invite/${token}`, email: parsed.data, emailed };
   });
 }
 
