@@ -29,6 +29,7 @@ Locally, with no Pusher or Blob variables set:
 
 - real-time runs over **Server-Sent Events** from an in-process event bus (`/api/realtime`)
 - uploaded images are stored in `.data/uploads` and served only to members of the owning org via `/api/uploads/[name]`
+- email isn't sent: `sendEmail` prints each message to the server log (the `log` transport)
 
 ## Deploy to Vercel
 
@@ -38,6 +39,7 @@ Locally, with no Pusher or Blob variables set:
 4. **Images:** add a Vercel Blob store to the project; Vercel injects `BLOB_READ_WRITE_TOKEN` and uploads switch to Blob automatically.
 5. **Wake-up retries:** set `CRON_SECRET` and add a Vercel Cron Job for `GET /api/cron/wakes` (every minute or few, as your plan allows). Locally the server sweeps every 15 s by itself.
 6. **Wait-step reminders:** with the same `CRON_SECRET`, add a Vercel Cron Job for `GET /api/cron/wait-reminders` (hourly or daily). It sends the one "still waiting" notification for tasks past their flow wait step's "Remind after" days. Locally the server sweeps every minute.
+7. **Email:** set `EMAIL_FROM` (e.g. `Aimpoint <noreply@aimpoint.dev>`, a verified SES identity), `SES_REGION`, `SES_CONFIGURATION_SET`, `SES_ACCESS_KEY_ID` and `SES_SECRET_ACCESS_KEY` (the app's own names, so they don't collide with other AWS credentials). `EMAIL_TRANSPORT` is `ses` or `log`; unset picks `ses` when those five are set, `log` in local dev, and fails at send time in production with an error naming what's missing. `EMAIL_DEV_REDIRECT=<address>` sends every message to that one address instead (subject and body name the original recipients), for a dev deployment. All app email goes through `sendEmail` in `src/lib/email.ts`; `renderEmail` gives the shared branded HTML + text body.
 
 Drivers are picked from the environment at runtime: `src/lib/realtime/server.ts` and `src/lib/storage.ts`.
 

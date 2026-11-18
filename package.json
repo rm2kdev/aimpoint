@@ -13,6 +13,7 @@
     "test": "node --test \"src/**/*.test.mjs\""
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.1171.0",
     "@tiptap/extension-image": "^3.34.0",
     "@tiptap/extension-placeholder": "^3.34.0",
     "@tiptap/pm": "^3.34.0",
