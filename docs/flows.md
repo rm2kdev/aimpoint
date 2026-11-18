@@ -194,6 +194,20 @@ bot wake while `waitingOn` is non-empty; the blocked -> ready transition (`handO
 **current step owner** with kind `ready`, now including the step and its instructions. VEC-107
 (`ownUnownedBlockers`) is unchanged.
 
+### 5.3a Parked Backlog tasks (VEC-274/276)
+
+Rule: a task in a backlog-stage status (Backlog) is parked, not work. Assigning a bot to it records the
+assignee only. It's held: no `assigned` wake-up, no `ready` hand-off when its dependencies close, no
+same-owner flow hand-off, `check_for_work` doesn't offer it (the idle reply counts it as
+`assignedParkedInBacklog`), and pickup never moves it out of Backlog. `list_my_tasks` lists it with
+`parked: true`, `ready: false` and a `notReadyReason`; task context has `dependencies.parked`. When someone
+moves it to a not-started or started status (Todo, In Progress), its bot gets it then as an assignment (one
+`assigned` wake-up, or the next `check_for_work`). In the web app the assignee picker and task pane say
+"<Bot> will start when this leaves Backlog", and rows show the bot as assigned but parked, never working.
+The one exception is a flow whose current step sits in that Backlog status and names its owner
+(`isParked` in `src/lib/flow-engine.ts`, pure `isParkedStatus` in `flow-engine-core.ts`): then the owner is
+woken as usual.
+
 ### 5.4 Claims and `markStartedByBot`
 
 Pickup must not undo the step. New rule in `markStartedByBot`: on a flow task it only moves the task when

@@ -27,6 +27,7 @@ import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/
 import { FlowStepper, useFlowPause } from "@/components/task-flow";
 import { StopConfirm, StoppedBanner, useStopWork, WorkingStrip } from "@/components/stop-work";
 import { FormCreator, FormSubmitter, submitterLabel } from "@/components/task-source";
+import { ParkedNote, parkedPickerNote, useParkedBot, useParkedIn } from "@/components/parked";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -194,6 +195,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const assigneeOptions = useAssigneeOptions();
   const projectOptions = useProjectOptions(task?.projectId);
   const { newTask } = useShell();
+  // VEC-276: a bot assigned to a Backlog task is parked, not working, until the task leaves Backlog.
+  const parkedIn = useParkedIn(task?.projectId, task?.statusId, task?.flow);
+  const parked = useParkedBot(task);
 
   const shell = (children: React.ReactNode) => (
     <aside
@@ -341,6 +345,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               )}
             </div>
           )}
+          {parked && !task.stopped && <ParkedNote bot={parked.bot} status={parked.status} className="mt-3" />}
           {canRetry && !closed && !task.archivedAt && !waiting.length && !(task.stalled && isStalledReason(task.stalled.reason)) && assignee?.kind === "bot" && (
             <QuietHint botName={assignee.name} working={task.workingBotIds.includes(assignee.id)} since={lastPostBy(feed, assignee.id) ?? task.updatedAt} busy={retrying} onRetry={onRetry} />
           )}
@@ -390,6 +395,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 options={assigneeOptions}
                 onChange={(v) => patch({ assigneeId: v === "none" ? null : v })}
                 placeholder="Assign to…"
+                footer={parkedIn && parkedPickerNote(parkedIn)}
               >
                 <button className={propBtn}>
                   {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={18} /> : <UnassignedAvatar size={16} />}

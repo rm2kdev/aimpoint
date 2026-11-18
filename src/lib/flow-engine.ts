@@ -301,7 +301,7 @@ export async function pickupTarget(task: FlowTask): Promise<{ kind: "legacy" } |
 
 /** Why a parked task isn't offered (list_my_tasks, task context, idle check_for_work). `status` = its status name. */
 export const parkedReason = (status: string) =>
-  `Parked: it's in ${status}, a backlog status, so it isn't work yet. Assigning it to a bot only records the assignee; it's handed out once someone moves it to a not-started status (such as Todo).`;
+  `Parked: it's in ${status}, a backlog status, so it isn't work yet. Assigning it to a bot only records the assignee; it's held until someone moves it to a not-started or started status (such as Todo), which hands it out.`;
 
 /**
  * Is the task parked (VEC-274)? A backlog-stage status is parked unless the task's active flow explicitly owns that

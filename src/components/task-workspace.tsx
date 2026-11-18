@@ -16,6 +16,7 @@ import { TaskPane } from "@/components/task-pane";
 import { useTaskContextMenu } from "@/components/task-context-menu";
 import { DueBadge } from "@/components/due-date";
 import { StalledBadge, WaitingBadge } from "@/components/dependencies";
+import { ParkedChip, useParkedBot } from "@/components/parked";
 import { FlowStepChip } from "@/components/task-flow";
 import { FormSourceChip } from "@/components/task-source";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
@@ -880,6 +881,7 @@ const TaskRow = memo(function TaskRow({
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
   const project = projectById.get(task.projectId);
   const closed = status?.category === "done" || status?.category === "cancelled";
+  const parked = useParkedBot(task);
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hinted = useRef(false);
   // The row's menus and tooltip mount on first use, not with the row (VEC-81).
@@ -981,6 +983,7 @@ const TaskRow = memo(function TaskRow({
         ) : null}
         {!closed && !task.archivedAt && task.stopped && <StoppedChip task={task} />}
         {!closed && !task.archivedAt && task.stalled && <StalledBadge stalled={task.stalled} />}
+        {parked && !task.stopped && <ParkedChip bot={parked.bot} status={parked.status} className="max-sm:hidden" />}
         {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className="max-sm:hidden" />}
         {!closed && !task.archivedAt && !fresh && <FlowStepChip task={task} className="max-md:hidden" />}
         {!fresh && <FormSourceChip source={task.source} className="max-lg:hidden" />}

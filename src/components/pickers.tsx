@@ -27,6 +27,7 @@ export function Picker<V extends string>({
   searchable = true,
   label,
   disabled,
+  footer,
 }: {
   value: V | null;
   options: Option<V>[];
@@ -38,6 +39,8 @@ export function Picker<V extends string>({
   label: string;
   /** Read-only: render the trigger as a disabled button with no menu. */
   disabled?: boolean;
+  /** One line of help under the options (e.g. the parked-Backlog note on an assignee picker, VEC-276). */
+  footer?: string | null;
 }) {
   const [open, setOpen] = useState(false);
   if (disabled) {
@@ -58,6 +61,7 @@ export function Picker<V extends string>({
         placeholder={placeholder}
         align={align}
         searchable={searchable}
+        footer={footer}
       />
     </Popover>
   );
@@ -71,6 +75,7 @@ function PickerContent<V extends string>({
   placeholder,
   align,
   searchable,
+  footer,
   ...props
 }: {
   value: V | null;
@@ -80,6 +85,7 @@ function PickerContent<V extends string>({
   placeholder: string;
   align: "start" | "end" | "center";
   searchable: boolean;
+  footer?: string | null;
 } & Pick<React.ComponentProps<typeof PopoverContent>, "id" | "onInteractOutside" | "onCloseAutoFocus">) {
   return (
     <PopoverContent {...props} align={align} className="w-60 p-0" onClick={(e) => e.stopPropagation()}>
@@ -107,6 +113,7 @@ function PickerContent<V extends string>({
           </CommandGroup>
           ))}
         </CommandList>
+        {footer && <p className="border-t px-3 py-2 text-[12px] text-muted-foreground">{footer}</p>}
       </Command>
     </PopoverContent>
   );

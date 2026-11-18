@@ -22,6 +22,7 @@ import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
 import { matchStatus, newTaskStatusIn, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
+import { parkedPickerNote, useParkedIn } from "@/components/parked";
 
 export interface NewTaskDefaults {
   projectId?: string;
@@ -102,6 +103,8 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
         newTaskStatusIn(projectStatuses, project?.newTaskStatusId, orgDefaults.newTaskStage, (s) => s.id).status ??
         undefined);
   const assignee = assigneeId ? memberById.get(assigneeId) : undefined;
+  // VEC-276: creating it in Backlog with a bot assignee parks it; the bot starts when it leaves Backlog.
+  const parkedIn = useParkedIn(projectId, status?.id);
 
   const submit = () => {
     if (!title.trim()) return setError("Give the task a title.");
@@ -170,7 +173,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
               {status?.name ?? "Status"}
             </button>
           </Picker>
-          <Picker label="Assignee" value={assigneeId ?? "none"} options={assigneeOptions} onChange={(v) => setAssigneeId(v === "none" ? null : v)} placeholder="Assign to…">
+          <Picker label="Assignee" value={assigneeId ?? "none"} options={assigneeOptions} onChange={(v) => setAssigneeId(v === "none" ? null : v)} placeholder="Assign to…" footer={parkedIn && parkedPickerNote(parkedIn)}>
             <button className={chip}>
               {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={16} /> : <UnassignedAvatar size={14} />}
               {assignee?.name ?? "Assignee"}
