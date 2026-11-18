@@ -15,7 +15,7 @@ Thanks for helping improve Aimpoint. Bug reports, feature requests and pull requ
 The **CLA** workflow ([`.github/workflows/cla.yml`](.github/workflows/cla.yml), logic in [`.github/scripts/cla.js`](.github/scripts/cla.js)) runs on every pull request when it is opened, reopened or updated with new commits.
 
 1. **It works out who needs to sign.** That is the pull request's author plus the GitHub account behind every commit in it. Bots and maintainers on the allowlist (the `CLA_ALLOWLIST` repository variable) are exempt.
-2. **It reports a `CLA` commit status.** The status passes when everyone has signed and fails otherwise. While it fails, a bot comment on the pull request links the CLA, gives the exact sentence to post and lists who still has to sign. We don't merge a pull request until the `CLA` status passes.
+2. **It reports a `CLA` commit status.** The status passes when everyone has signed and fails otherwise. While it fails, a bot comment on the pull request links the CLA, gives the exact sentence to post and lists who still has to sign. `CLA` is a required status check on `main` (the "Require CLA on main" ruleset), so a pull request can't be merged until it passes.
 3. **You sign by commenting.** Read the [CLA](CLA.md), then post this exact comment on the pull request:
 
    > I have read the CLA Document and I hereby sign the CLA
