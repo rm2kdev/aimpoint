@@ -188,7 +188,7 @@ export function orgAccessMessage(plan: Plan, isAdmin: boolean, billing?: OrgBill
   return `${head} ${tail}`;
 }
 
-const FEATURE_NAME: Record<Feature, string> = { analytics: "Analytics", publicForms: "Public forms" };
+const FEATURE_NAME: Record<Feature, string> = { analytics: "Analytics isn't", publicForms: "Public forms and public projects aren't" };
 
 /**
  * Message when the plan doesn't include `feature`, or null when it does. Only an unpaid (locked) org lacks a feature,
@@ -196,5 +196,5 @@ const FEATURE_NAME: Record<Feature, string> = { analytics: "Analytics", publicFo
  */
 export function featureMessage(plan: Plan, feature: Feature, isAdmin = true): string | null {
   if (entitlementsFor(plan)[feature]) return null;
-  return `${FEATURE_NAME[feature]} isn't available. ${orgAccessMessage(plan, isAdmin)}`;
+  return `${FEATURE_NAME[feature]} available. ${orgAccessMessage(plan, isAdmin)}`;
 }

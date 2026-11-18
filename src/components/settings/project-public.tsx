@@ -135,7 +135,7 @@ export function ProjectPublic({
 
   const lockedNote = locked && enabled && (
     <p data-public-locked className="rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground">
-      Without a Pro subscription the public page shows &ldquo;unavailable&rdquo; to visitors and nobody can submit. Settings are kept.
+      While the organisation is locked (no Pro subscription), the public page shows &ldquo;unavailable&rdquo; to visitors and nobody can submit. Settings are kept.
     </p>
   );
 

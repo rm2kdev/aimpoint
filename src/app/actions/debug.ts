@@ -26,7 +26,7 @@ export async function setBillingDebugAction(slug: string, enabled: boolean): Pro
       if (problems.length) throw new UserError(debugBillingError(problems));
     }
     const state = await setBillingDebug(enabled, user._id.toHexString());
-    // Instance-wide: every org's plan, limits and Billing tab change, so refresh every open tab.
+    // Instance-wide: every org's plan, lock state and Billing tab change, so refresh every open tab.
     const c = await cols();
     const orgs = await c.orgs.find({}, { projection: { _id: 1 } }).toArray();
     await Promise.all(orgs.map((o) => publish(o._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() })));

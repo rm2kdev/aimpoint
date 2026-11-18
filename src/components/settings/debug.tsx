@@ -41,7 +41,7 @@ export function DebugSettings({ view }: { view: DebugView }) {
     start(async () => {
       const r = await setBillingDebugAction(org.slug, next);
       if (!r.ok) toast.error(r.error);
-      else toast.success(next ? "Test billing is on for this instance" : "Test billing is off. Every organisation is unlimited again.");
+      else toast.success(next ? "Test billing is on for this instance" : "Test billing is off. Every organisation is unlocked again, with everything on.");
       router.refresh();
       setOptimistic(null);
     });
@@ -65,8 +65,8 @@ export function DebugSettings({ view }: { view: DebugView }) {
         title="Test billing"
         desc={
           <>
-            Turns billing on for this instance without redeploying, as if BILLING_ENABLED were set: plans, limits, Checkout and the Stripe webhook, at {PRO_PRICE_LABEL}. Only
-            Stripe test-mode keys are accepted. Turning it off makes every organisation unlimited again at once; billing data is kept.
+            Turns billing on for this instance without redeploying, as if BILLING_ENABLED were set: Pro at {PRO_PRICE_LABEL}, organisations without a subscription locked, Checkout
+            and the Stripe webhook. Only Stripe test-mode keys are accepted. Turning it off unlocks every organisation again at once with everything on; billing data is kept.
           </>
         }
       >

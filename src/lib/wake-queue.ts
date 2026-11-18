@@ -29,7 +29,7 @@ import { isClosedCategory, type BotDoc, type BotWakeDoc, type OrgDoc, type Queue
  * - Locked orgs (VEC-263): an org without a live subscription (hosted, unpaid) wakes no bot. Its wake-ups are queued
  *   as held (`gated`, `heldAt`, no attempt) and Triage hand-offs are marked `triageHeld`; every sweep releases them
  *   (re-checked as still owed) once the org is usable again, so subscribing (or switching billing off) needs no
- *   manual step. Pro and self-hosted orgs never hold. (This reuses the VEC-225 Free-plan one-at-a-time hold queue.)
+ *   manual step. Pro and self-hosted orgs never hold.
  *
  * The sweep runs every SWEEP_MS in the long-lived server process (started when this module loads); on Vercel, where
  * nothing outlives a request, /api/cron/wakes runs it.

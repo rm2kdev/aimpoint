@@ -34,9 +34,12 @@ import {
 export type { Entitlements, Feature, Plan } from "@/lib/billing-core";
 export { PLAN_LABEL, PRO_PRICE_LABEL } from "@/lib/billing-core";
 
-/** A refusal because of the org's plan: REST answers 402, the UI and MCP show the message (it says how to subscribe). */
+/**
+ * A refusal because the org has no live subscription (only an unpaid, locked org lacks anything since VEC-262): REST
+ * answers 402 with `locked: true`, the UI and MCP show the message (it says how to subscribe).
+ */
 export class PlanLimitError extends UserError {
-  readonly upgrade = true;
+  readonly locked = true;
   constructor(message: string) {
     super(message);
     this.name = "PlanLimitError";
@@ -45,7 +48,6 @@ export class PlanLimitError extends UserError {
 
 /** The org has no live subscription, so it's locked (VEC-262). A PlanLimitError, so every 402 mapping covers it. */
 export class OrgLockedError extends PlanLimitError {
-  readonly locked = true;
   constructor(message: string) {
     super(message);
     this.name = "OrgLockedError";

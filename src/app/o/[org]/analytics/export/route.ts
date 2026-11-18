@@ -43,7 +43,7 @@ export async function GET(req: Request, ctx: RouteContext<"/o/[org]/analytics/ex
       },
     });
   } catch (err) {
-    if (err instanceof PlanLimitError) return Response.json({ error: err.message, upgrade: true }, { status: 402 });
+    if (err instanceof PlanLimitError) return Response.json({ error: err.message, locked: true }, { status: 402 });
     if (err instanceof UserError) return Response.json({ error: err.message }, { status: 400 });
     throw err;
   }

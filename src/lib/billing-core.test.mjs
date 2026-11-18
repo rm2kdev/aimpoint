@@ -134,7 +134,7 @@ test("lock message: admins subscribe in Settings > Billing, members ask an admin
 
 test("feature messages: only an unpaid org lacks Analytics and Public forms, with the lock message", () => {
   assert.match(featureMessage("unpaid", "analytics"), /^Analytics isn't available\. This organisation is locked\..*Subscribe in Settings > Billing/);
-  assert.match(featureMessage("unpaid", "publicForms", false), /^Public forms isn't available\..*Ask an admin/);
+  assert.match(featureMessage("unpaid", "publicForms", false), /^Public forms and public projects aren't available\..*Ask an admin/);
   for (const plan of ["pro", "unlimited"]) {
     assert.equal(featureMessage(plan, "analytics"), null);
     assert.equal(featureMessage(plan, "publicForms"), null);

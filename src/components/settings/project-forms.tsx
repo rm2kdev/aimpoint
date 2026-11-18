@@ -167,7 +167,7 @@ export function ProjectForms({
       <div className="grid max-w-2xl gap-3">
         {formsLocked && forms.length > 0 && (
           <p data-forms-locked className="rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground">
-            Without a Pro subscription these forms are kept but show &ldquo;Form unavailable&rdquo; to visitors.
+            While the organisation is locked (no Pro subscription), these forms are kept but show &ldquo;Form unavailable&rdquo; to visitors.
           </p>
         )}
         {forms.length === 0 ? (

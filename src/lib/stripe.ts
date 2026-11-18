@@ -114,7 +114,7 @@ export async function createCheckoutSession(org: OrgDoc, origin: string, returnT
 /** A Customer Portal session for the org's Stripe customer. */
 export async function createPortalSession(org: OrgDoc, origin: string): Promise<string> {
   const customer = org.billing?.stripeCustomerId;
-  if (!customer) throw new UserError("This organisation has no billing account yet. Upgrade to Pro first.");
+  if (!customer) throw new UserError("This organisation has no billing account yet. Subscribe to Pro first.");
   const session = await stripe().billingPortal.sessions.create({ customer, return_url: billingUrl(origin, org.slug) });
   return session.url;
 }

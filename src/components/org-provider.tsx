@@ -63,7 +63,7 @@ interface Ctx {
   /** Members who currently have this organisation open. */
   online: string[];
   /**
-   * The org's plan, limits and usage (VEC-226), refreshed with the layout on org.changed (Stripe webhooks publish
+   * The org's plan, lock state and seats (VEC-226, paid-only since VEC-262), refreshed with the layout on org.changed (Stripe webhooks publish
    * one). With billing off it is UNLIMITED_SUMMARY: no prompts anywhere.
    */
   billing: BillingSummary;
