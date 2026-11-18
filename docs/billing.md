@@ -25,9 +25,8 @@ Set up through the Stripe MCP on 2026-11-18 (VEC-239).
 
 Staging is https://dev.aimpoint.dev: the `development` branch of rm2kdev/aimpoint on the Vercel project
 `aimpoint` (team ryan-s-projects-335ad04d), env vars scoped to Preview + git branch `development`.
-Production (https://app.aimpoint.dev, branch `main`) is being switched on in VEC-259: the live webhook
-endpoint, `STRIPE_WEBHOOK_SECRET` and `STRIPE_PRICE_ID` are in place; `BILLING_ENABLED=true` goes in
-together with the confirmed `sk_live_` key (see Production go-live below).
+Production (https://app.aimpoint.dev, branch `main`) has billing on since 19 Nov 2026 (VEC-259), on the live
+Stripe account below (see Production go-live).
 
 | Object | Id |
 | --- | --- |
@@ -106,13 +105,20 @@ no organisation and is acknowledged as ignored.
 
 ## Production go-live (VEC-259)
 
-1. Live webhook endpoint and its secret in Vercel Production `STRIPE_WEBHOOK_SECRET` (done).
-2. `STRIPE_PRICE_ID=price_1Ud7eDPkMccAD7nRtmuQvbBM` in Vercel Production (done).
-3. `STRIPE_SECRET_KEY` = the live `sk_live_...` key, pasted by Ryan from the Stripe Dashboard (Aimpoint,
-   Developers > API keys).
-4. `BILLING_ENABLED=true` in Vercel Production, then redeploy `main`.
-5. Check: `POST /api/stripe/webhook` with a bad signature answers 400 (404 means billing is still off),
-   Settings > Billing shows US$4.95 per user/month plus tax, and Subscribe opens a live Checkout page.
+Done on 19 Nov 2026:
+
+1. Live webhook endpoint `we_1UdIRJPkMccAD7nRzXU70IVO`; its secret went straight into Vercel Production
+   `STRIPE_WEBHOOK_SECRET`.
+2. `STRIPE_PRICE_ID=price_1Ud7eDPkMccAD7nRtmuQvbBM` in Vercel Production.
+3. `STRIPE_SECRET_KEY` = a live key created and pasted by Ryan in the Stripe Dashboard (VEC-279).
+4. `BILLING_ENABLED=true` in Vercel Production, `main` redeployed (`dpl_5ZbuwJLesr5BRVUMMT9TvcpSFUWM`).
+5. Checked: `POST /api/stripe/webhook` answers 400 to a bad or missing signature and 200 to an event signed
+   with the endpoint secret (404 would mean billing is off); Settings > Billing shows US$4.95 per user/month
+   plus tax; creating an organisation opens a live (`cs_live_`) Checkout page for Aimpoint Pro at $4.95/month.
+
+To check again later, sign up a throwaway account, create an org (onboarding goes straight to Checkout),
+then delete the account from /account. Its Stripe customer is left behind in the live account (the Stripe
+MCP can't delete customers); delete it in the Dashboard if it matters.
 
 Turning billing on locks every production organisation without a subscription until an admin subscribes
 (nothing is deleted). Vercel's Hobby plan is for non-commercial use only, so the project should move to a
