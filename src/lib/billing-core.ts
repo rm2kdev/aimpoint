@@ -60,6 +60,30 @@ export function seatTotalLabel(seats: number): string {
   return `${n} ${n === 1 ? "seat" : "seats"} x ${usd(PRO_SEAT_PRICE_CENTS)} = ${usd(proMonthlyCents(n))}/month ${TAX_NOTE}`;
 }
 
+/** What Settings > Billing needs to show the seat line (VEC-238, VEC-303). */
+export interface SeatLineInput {
+  pro: boolean;
+  liveSubscription: boolean;
+  /** Members now. */
+  seats: number;
+  /** Quantity Stripe confirmed (stored by the subscription webhook), or null before one landed. */
+  subscribedSeats: number | null;
+}
+
+/**
+ * Seats on the plan line: with a live subscription the quantity Stripe bills (from the webhook); before that, or
+ * with none, the people in the org now.
+ */
+export function billedSeatsFor(b: SeatLineInput): number {
+  return (b.pro || b.liveSubscription) && b.subscribedSeats !== null ? b.subscribedSeats : b.seats;
+}
+
+/** The seat count Stripe is being updated to ("Updating Stripe to N seats"), or null when Stripe already agrees. */
+export function seatsUpdatingTo(b: SeatLineInput): number | null {
+  const want = seatQuantity(b.seats);
+  return b.pro && b.liveSubscription && b.subscribedSeats !== null && b.subscribedSeats !== want ? want : null;
+}
+
 /** How long a past_due subscription keeps Pro while Stripe retries the payment. */
 export const PAST_DUE_GRACE_DAYS = 7;
 const DAY_MS = 24 * 60 * 60 * 1000;

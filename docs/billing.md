@@ -138,6 +138,15 @@ Seat sync on Vercel (VEC-291): a join or leave updates the subscription quantity
 which `vercel.json` schedules once a day (the Hobby plan's limit; on a Pro team it can run every few
 minutes). The route needs `CRON_SECRET` (set in Production and Preview); without it the route is off.
 
+Because a daily cron could leave a failed update stuck for up to a day, failed rows are also retried by
+cheap triggers (VEC-303): every org page load (the `/o/<slug>` layout) and every Stripe webhook call
+`sweepSeatSyncsSoon()`, which, after the response and at most once a minute per server instance, retries
+the `seatSyncs` rows whose backoff is due (30 s, 1, 2, 5, 15, then every 30 min). So in practice a
+failed update is retried within minutes of anyone using the app. With billing off it does nothing. A
+row's `lastError` holds the last Stripe error and `[seat sync]` lines in the logs show each attempt
+(`quantity 1 -> 2` on success, `failed, will retry` on failure). The logic is in
+`src/lib/seat-sync-core.ts`, unit tested in `seat-sync-core.test.mjs` (`pnpm test`).
+
 The Stripe MCP cannot reveal secret keys, so `STRIPE_SECRET_KEY` has to be pasted from the Dashboard
 by hand. With `BILLING_ENABLED=true` the server refuses to start
 until all three `STRIPE_*` variables are set.

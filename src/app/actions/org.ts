@@ -12,7 +12,7 @@ import { requireOrg, requireUser } from "@/lib/session";
 import { guard, UserError, deriveKey, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { detachDeleted, recomputeForStatuses } from "@/lib/dependencies";
-import { isClosedCategory, isDefaultStage, type ProjectDoc, type ProjectMetaEntry, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
+import { isClosedCategory, isDefaultStage, type ProjectDoc, type ProjectMetaEntry, type MembershipDoc, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
 import { clearNewTaskStatusOverrides } from "@/lib/project-defaults";
@@ -25,6 +25,7 @@ import { appBaseUrl } from "@/lib/app-url";
 import { renderEmail, sendEmail } from "@/lib/email";
 import { absoluteUrl, inviteEmail } from "@/lib/invite-email";
 import { syncSeatsSoon } from "@/lib/seat-sync";
+import { joinMembership } from "@/lib/seat-sync-core";
 
 function slugify(s: string) {
   return (
@@ -469,14 +470,14 @@ export async function acceptInvite(token: string): Promise<Result<{ slug: string
     if (!(await c.memberships.findOne({ orgId: org._id, userId: user._id }, { projection: { _id: 1 } }))) {
       assertOrgActive(org);
     }
-    const joined = await c.memberships.updateOne(
-      { orgId: org._id, userId: user._id },
-      { $setOnInsert: { _id: new ObjectId(), orgId: org._id, userId: user._id, role: invite.role, createdAt: new Date() } },
-      { upsert: true },
+    // A new membership is a new seat on a Pro subscription (VEC-238): the sync runs after the response and never
+    // fails the join; re-accepting while already a member changes nothing (seat-sync-core.test.mjs).
+    await joinMembership<ObjectId, MembershipDoc>(
+      c.memberships,
+      { _id: new ObjectId(), orgId: org._id, userId: user._id, role: invite.role, createdAt: new Date() },
+      () => syncSeatsSoon(org._id, "invite accepted"),
     );
     await c.invites.updateOne({ _id: invite._id }, { $set: { acceptedAt: new Date() } });
-    // A new seat on a Pro subscription (VEC-238); background, never fails the join.
-    if (joined.upsertedCount) syncSeatsSoon(org._id, "invite accepted");
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     return { slug: org.slug };
   });

@@ -5,10 +5,10 @@
  * in billing-core; this only describes the result. With billing off (`enabled: false`) every check here
  * passes and the UI shows no Billing entry and no prompts.
  */
-import { orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatTotalLabel, TAX_NOTE, usd, type Plan } from "./billing-core";
+import { billedSeatsFor, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type Plan } from "./billing-core";
 import type { BillingStatus } from "./types";
 
-export { orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatTotalLabel, TAX_NOTE, usd };
+export { billedSeatsFor, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd };
 export type { Plan };
 
 export type CountKind = "members" | "bots" | "projects";

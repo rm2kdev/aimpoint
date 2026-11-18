@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { countNoun, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { billedSeatsFor, countNoun, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
 import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -123,14 +123,18 @@ function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; labe
  */
 function SeatsNote({ b, pro, billedSeats }: { b: BillingSummary; pro: boolean; billedSeats: number }) {
   const people = `${b.seats} ${b.seats === 1 ? "person" : "people"}`;
-  const syncing = pro && b.liveSubscription && b.subscribedSeats !== null && b.subscribedSeats !== Math.max(1, b.seats);
+  const updatingTo = seatsUpdatingTo({ pro, liveSubscription: b.liveSubscription, seats: b.seats, subscribedSeats: b.subscribedSeats });
   return (
     <p className="mt-1.5 text-[13px] text-muted-foreground" data-billing-seats={billedSeats}>
       <span className="tabular text-foreground">{seatTotalLabel(billedSeats)}</span>
       {pro || b.liveSubscription
         ? ". Adding or removing people changes the bill; Stripe prorates the difference."
         : `, for the ${people} in this organisation now. Adding people later changes the bill.`}
-      {syncing && <span className="block text-[12.5px] text-faint">Updating Stripe to {seatTotalLabel(b.seats)}.</span>}
+      {updatingTo !== null && (
+        <span className="block text-[12.5px] text-faint" data-seats-updating={updatingTo}>
+          Updating Stripe to {seatTotalLabel(updatingTo)}.
+        </span>
+      )}
     </p>
   );
 }
@@ -164,7 +168,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
   const state = describe(b, tz);
   // With a live subscription (Pro, or locked while overdue/paused), the quantity Stripe bills (from the webhook);
   // before that, or with none, the people in the org now.
-  const billedSeats = (pro || b.liveSubscription) && b.subscribedSeats !== null ? b.subscribedSeats : b.seats;
+  const billedSeats = billedSeatsFor({ pro, liveSubscription: b.liveSubscription, seats: b.seats, subscribedSeats: b.subscribedSeats });
 
   const go = (which: "checkout" | "portal") =>
     start(async () => {

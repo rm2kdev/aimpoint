@@ -7,6 +7,7 @@ import { loadDeletedMembers } from "@/lib/deleted-users";
 import { loadOrgDefaults } from "@/lib/org-defaults";
 import { loadClientFlows } from "@/lib/flow-view";
 import { loadBillingSummary } from "@/lib/billing-summary";
+import { sweepSeatSyncsSoon } from "@/lib/seat-sync";
 import { OrgProvider } from "@/components/org-provider";
 import { AppShell } from "@/components/app-shell";
 import { SubscribeGate } from "@/components/subscribe-gate";
@@ -14,6 +15,8 @@ import { SubscribeGate } from "@/components/subscribe-gate";
 export default async function OrgLayout({ children, params }: LayoutProps<"/o/[org]">) {
   const { org: slug } = await params;
   const { user, org, membership } = await requireOrgPage(slug);
+  // Retry failed seat syncs after the response (throttled; billing off = no-op). Production's cron is daily (VEC-303).
+  sweepSeatSyncsSoon("page");
   const c = await cols();
   const [shell, myMemberships, unread, workload, deletedMembers, defaults, flows, billing] = await Promise.all([
     loadShell(org._id, user._id),

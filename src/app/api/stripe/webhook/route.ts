@@ -1,5 +1,6 @@
 import { billingDebugProblem, billingOn } from "@/lib/billing";
 import { processEvent, verifyEvent } from "@/lib/stripe";
+import { sweepSeatSyncsSoon } from "@/lib/seat-sync";
 
 /**
  * Stripe webhook (VEC-223). 404 unless billing is on (BILLING_ENABLED, or the VEC-240 debug toggle; 503 naming the
@@ -26,6 +27,8 @@ export async function POST(req: Request) {
   }
   try {
     const result = await processEvent(event);
+    // Also retry any failed seat sync after the response (throttled), since production's cron is daily (VEC-303).
+    sweepSeatSyncsSoon("webhook");
     if (result.status === "busy") return Response.json({ received: false, status: "busy" }, { status: 409 });
     return Response.json({ received: true, ...result });
   } catch (err) {
