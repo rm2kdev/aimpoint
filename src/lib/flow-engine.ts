@@ -6,6 +6,7 @@ import { loadStatuses } from "@/lib/statuses";
 import { loadFlowDirectory, resolveFlow } from "@/lib/flows";
 import {
   flowIsActive,
+  isParkedStatus,
   locateStep,
   moveNote,
   nextStepOf,
@@ -18,7 +19,7 @@ import {
   type FlowMoveNote,
 } from "@/lib/flow-engine-core";
 import type { FlowDirectory, FlowStatusLike, ResolvedFlow, ResolvedStep } from "@/lib/flow-model";
-import type { StatusDoc, TaskDoc, TaskFlowState } from "@/lib/types";
+import type { StatusCategory, StatusDoc, TaskDoc, TaskFlowState } from "@/lib/types";
 
 /**
  * The flow engine (VEC-175, docs/flows.md section 5). It never writes on its own: task-service asks it what a write
@@ -289,11 +290,34 @@ export async function pickupTarget(task: FlowTask): Promise<{ kind: "legacy" } |
   if (task.flow?.paused) return { kind: "legacy" };
   const ctx = await loadTaskFlow(task);
   if (!ctx?.current || !ctx.status) return { kind: "legacy" };
+  // Parked in Backlog (VEC-274): pickup never moves it out unless the flow's own step there names its owner.
+  if (isParkedStatus(ctx.status, ctx.current, { ownerOverride: !!task.flow?.ownerOverride })) return { kind: "stay" };
   const target = workingStatus(ctx.flow, ctx.current, ctx.statuses);
   if (!target) return { kind: "stay" };
   // Only from the step's own (not started) status, or another not-started one; never back from a started status.
   if (ctx.status.category !== "backlog" && ctx.status.category !== "unstarted") return { kind: "stay" };
   return target.id === ctx.status.id ? { kind: "stay" } : { kind: "move", statusId: new ObjectId(target.id) };
+}
+
+/** Why a parked task isn't offered (list_my_tasks, task context, idle check_for_work). `status` = its status name. */
+export const parkedReason = (status: string) =>
+  `Parked: it's in ${status}, a backlog status, so it isn't work yet. Assigning it to a bot only records the assignee; it's handed out once someone moves it to a not-started status (such as Todo).`;
+
+/**
+ * Is the task parked (VEC-274)? A backlog-stage status is parked unless the task's active flow explicitly owns that
+ * step (its current step sits in that status and names an owner a person didn't override). Parked tasks wake no bot,
+ * aren't handed out by check_for_work and aren't moved by pickup. Pass `category` when the caller already has it.
+ */
+export async function isParked(task: FlowTask, category?: StatusCategory | null): Promise<boolean> {
+  let cat = category;
+  if (cat === undefined) {
+    const c = await cols();
+    cat = (await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } }))?.category ?? null;
+  }
+  if (cat !== "backlog") return false;
+  const ctx = task.flow?.paused ? null : await loadTaskFlow(task);
+  if (!ctx?.status) return true;
+  return isParkedStatus(ctx.status, ctx.current, { ownerOverride: !!task.flow?.ownerOverride });
 }
 
 /* ---------------- what the owner is told (wake-up prompt, webhook, check_for_work) ---------------- */

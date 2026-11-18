@@ -6,6 +6,7 @@ import { deliver, markHandedOver, wakeTriage, type WakeReason } from "@/lib/bot-
 import { publishWorking } from "@/lib/claims";
 import { billingOn, isOrgActive } from "@/lib/billing";
 import { notify } from "@/lib/notifications";
+import { isParked } from "@/lib/flow-engine";
 // Starts the wait-step reminder sweeper (VEC-182) alongside this one: every server path that writes tasks loads this module.
 import "@/lib/wait-reminders";
 import { isClosedCategory, type BotDoc, type BotWakeDoc, type OrgDoc, type QueuedWakeKind } from "@/lib/types";
@@ -285,6 +286,8 @@ async function stillOwed(wake: BotWakeDoc): Promise<"send" | "landed" | "drop"> 
     // Reassigned, blocked again (the next ready hand-off will wake it), in Triage, or already picked up / finished.
     if (!task.assigneeId?.equals(wake.botId) || task.waitingOn?.length || status.category === "triage") return "drop";
     if (await c.agentClaims.findOne({ botId: wake.botId, taskId: wake.taskId }, { projection: { _id: 1 } })) return "drop";
+    // Moved into Backlog since (VEC-274): parked, so no hand-off; leaving Backlog sends a fresh one.
+    if (await isParked(task, status.category)) return "drop";
   }
   return (await actedSince(wake.botId, wake.taskId, wake.createdAt)) ? "landed" : "send";
 }
@@ -385,6 +388,7 @@ async function reconcile(): Promise<number> {
       if (!cat || cat === "triage" || isClosedCategory(cat)) continue;
       if (t.triagedBy?.equals(bot._id)) continue; // its close-out covers it (triager == assignee)
       if (held.has(`${hex(t._id)}:${hex(bot._id)}`)) continue;
+      if (await isParked(t, cat)) continue; // parked in Backlog (VEC-274): assigned, but nothing was handed over
       // The latest hand-off: it became ready, or was assigned (or created) to this bot.
       const [ev] = await c.activity.find({ taskId: t._id, kind: { $in: ["unblocked", "assignee", "created"] } }).sort({ createdAt: -1 }).limit(1).toArray();
       if (!ev || ev.createdAt > cutoff || ev.createdAt < since) continue;

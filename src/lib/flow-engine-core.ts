@@ -13,6 +13,22 @@ export const stepIndex = (flow: ResolvedFlow, id: string | null | undefined) => 
 export const stepById = (flow: ResolvedFlow, id: string | null | undefined): ResolvedStep | null => flow.steps[stepIndex(flow, id)] ?? null;
 
 const OPEN_PICKUP: readonly StatusCategory[] = ["backlog", "unstarted"];
+
+/** The step names its owner (a bot or a person): the flow explicitly hands it to someone. */
+export const namesOwner = (step: ResolvedStep | null | undefined) => !!step && (step.owner.kind === "bot" || step.owner.kind === "person");
+
+/**
+ * A task in a backlog-stage status is parked, not work (VEC-274): assigning a bot to it records the assignee only,
+ * check_for_work doesn't hand it out and pickup never moves it out of Backlog. The one exception is a flow that
+ * explicitly owns that step: the task's current step sits in this very status and names its owner (and no person
+ * overrode that owner). `paused` = the task's flow is paused (or the project has none), so nothing owns it.
+ */
+export function isParkedStatus(status: Pick<FlowStatusLike, "id" | "category"> | null | undefined, step: ResolvedStep | null | undefined, opts: { paused?: boolean; ownerOverride?: boolean } = {}): boolean {
+  if (status?.category !== "backlog") return false;
+  if (opts.paused || opts.ownerOverride || !step) return true;
+  return !(step.status.id === status.id && namesOwner(step));
+}
+
 const closed = (c: StatusCategory) => c === "done" || c === "cancelled";
 
 /**
@@ -26,13 +42,16 @@ export function stepForStatus(flow: ResolvedFlow, statusId: string, fromStepId?:
 }
 
 /**
- * The status a bot's pickup moves a step's task to (design 5.4): only from a backlog/unstarted-stage step, to the
+ * The status a bot's pickup moves a step's task to (design 5.4): only from an unstarted-stage step or a backlog-stage
+ * step that names its owner (VEC-274), to the
  * first started-stage status that no later step uses (so the work never lands on the tester's In Review), else the
  * first started status. Null = pickup leaves the status alone (the step already sits in a started status, such as
  * In Review for the tester or Deploying for CI, or the project has no started status).
  */
 export function workingStatus(flow: ResolvedFlow, step: ResolvedStep, statuses: readonly FlowStatusLike[]): FlowStatusLike | null {
   if (!OPEN_PICKUP.includes(step.status.category)) return null;
+  // A Backlog step only starts when the flow explicitly owns it (VEC-274); otherwise the task stays parked.
+  if (step.status.category === "backlog" && !namesOwner(step)) return null;
   const started = [...statuses].filter((s) => s.category === "started").sort((a, b) => a.order - b.order);
   const later = new Set(flow.steps.slice(stepIndex(flow, step.id) + 1).map((s) => s.status.id));
   return started.find((s) => !later.has(s.id)) ?? started[0] ?? null;

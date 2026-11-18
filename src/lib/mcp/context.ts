@@ -5,6 +5,7 @@ import { readLocalImage, MAX_IMAGE_BYTES } from "@/lib/storage";
 import { projectContext, toTask, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
 import { botTaskFlow } from "@/lib/flow-bot-view";
+import { isParked, parkedReason } from "@/lib/flow-engine";
 import { botNewTaskViews } from "@/lib/project-defaults";
 import { taskUrl as orgTaskUrl } from "@/lib/paths";
 import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
@@ -224,6 +225,11 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     blocks: refs.dependents.map(refOut),
     /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open (or, waiters or not, Vector couldn't deliver the hand-off to its bot). People see it flagged as stalled. kind "needs_owner" = unassigned but still waiting on its own dependencies: people see a neutral "Needs owner" hint, not Stalled. */
     stalled: stalledOut,
+    /** Parked in a backlog-stage status (VEC-274): not work yet, so it isn't handed out or started. Null otherwise. */
+    parked: await (async () => {
+      const own = statusById.get(task.statusId.toHexString());
+      return own && (await isParked(task, own.category)) ? { reason: parkedReason(own.name) } : null;
+    })(),
   };
 
   // Where it is in its project's flow (VEC-176): the step, its instructions, what comes next and who has it.

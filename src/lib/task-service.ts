@@ -12,7 +12,7 @@ import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, tas
 import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
-import { planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
+import { isParked, planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
 import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
 import { requireFormDestination } from "@/lib/project-forms";
 import { stripMarkdownImages } from "@/lib/form-rich-core";
@@ -95,8 +95,11 @@ export async function recordTriagedBy(taskId: ObjectId, botId: ObjectId) {
   await c.tasks.updateOne({ _id: taskId }, { $set: { triagedBy: botId } });
 }
 
-/** Stages a bot's pickup moves out of. Triage, done and cancelled tasks are never touched. */
-const STARTABLE = new Set<StatusCategory>(["backlog", "unstarted", "started"]);
+/**
+ * Stages a bot's pickup moves out of. Triage, done and cancelled tasks are never touched, and neither is a parked
+ * backlog task (VEC-274): only a flow step that explicitly owns a Backlog status (pickupTarget "move") starts one.
+ */
+const STARTABLE = new Set<StatusCategory>(["unstarted", "started"]);
 
 /**
  * A bot took a (non-triage) in-progress claim on a task: the status follows the work. Moves it to the
@@ -118,7 +121,8 @@ export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId:
     if (flowPick.kind === "stay") return false;
     const target = flowPick.kind === "move" ? statuses.find((s) => s._id.equals(flowPick.statusId)) : statuses.find((s) => s.category === "started");
     const current = statuses.find((s) => s._id.equals(task.statusId));
-    if (!target || !current || current._id.equals(target._id) || !STARTABLE.has(current.category)) return false;
+    const startable = STARTABLE.has(current?.category as StatusCategory) || (flowPick.kind === "move" && current?.category === "backlog");
+    if (!target || !current || current._id.equals(target._id) || !startable) return false;
     const now = new Date();
     // Conditional on the status we read, so a concurrent move by a person wins.
     const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId, statusId: current._id }, { $set: { statusId: target._id, updatedAt: now } }, { returnDocument: "after" });
@@ -145,13 +149,15 @@ export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId:
  */
 export async function mentionResumesWork(orgId: ObjectId, botId: ObjectId, taskId: ObjectId): Promise<boolean> {
   const c = await cols();
-  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { assigneeId: 1, statusId: 1, archivedAt: 1, waitingOn: 1, stopped: 1 } });
+  const task = await c.tasks.findOne({ _id: taskId, orgId }, { projection: { assigneeId: 1, statusId: 1, archivedAt: 1, waitingOn: 1, stopped: 1, flow: 1, projectId: 1 } });
   // Stopped by a person (VEC-215): a mention is a question until they resume it.
   if (task?.stopped) return false;
   // Still waiting on dependencies: it isn't ready, so a mention can't start work on it (the ready hand-off will).
   if (!task || task.archivedAt || task.waitingOn?.length || !task.assigneeId?.equals(botId)) return false;
   const st = await c.statuses.findOne({ _id: task.statusId, orgId }, { projection: { category: 1 } });
-  return !!st && st.category !== "triage" && !isClosedCategory(st.category);
+  if (!st || st.category === "triage" || isClosedCategory(st.category)) return false;
+  // Parked in Backlog (VEC-274): a mention is a question, not a hand-over.
+  return !(await isParked({ orgId, projectId: task.projectId, statusId: task.statusId, flow: task.flow }, st.category));
 }
 
 /**
@@ -242,6 +248,8 @@ async function announceAssignment(actor: Actor, task: TaskDoc, key: string, hand
   if (isBot) {
     // A closed task is no work: check_for_work never hands it out, so push doesn't wake for it either.
     if (task.archivedAt || (await isClosedTask(task))) return;
+    // Parked in Backlog (VEC-274): the assignee is recorded only. Moving it to a not-started status hands it over.
+    if (await isParked(task)) return;
     if (self && (await c.agentClaims.findOne({ botId: assigneeId, taskId: task._id, state: "in_progress" }, { projection: { _id: 1 } }))) return;
     if (!waiting.length) {
       wakeBots(actor.orgId, [assigneeId], {
@@ -261,6 +269,19 @@ async function announceAssignment(actor: Actor, task: TaskDoc, key: string, hand
     waiting.length ? `Waiting on ${waiting.map((id) => keys.get(id.toHexString()) ?? "another task").join(", ")}` : "",
   ].filter(Boolean);
   await notify(actor.orgId, [assigneeId], { kind: "assigned", taskId: task._id, actorId: actor.id, detail: parts.length ? parts.join(". ") : null });
+}
+
+/**
+ * A task assigned to a bot left a backlog-stage status (VEC-274): assigning it there recorded the assignee only, so
+ * the bot is handed it now, through announceAssignment (ready, open and unparked only). Skipped when the bot already
+ * holds a claim on it (a flow step that owned the Backlog status already handed it over) or the assignee is a person.
+ */
+async function announceUnparked(actor: Actor, task: TaskDoc, key: string) {
+  if (!task.assigneeId) return;
+  const c = await cols();
+  if (!(await c.bots.findOne({ orgId: actor.orgId, _id: task.assigneeId }, { projection: { _id: 1 } }))) return;
+  if (await c.agentClaims.findOne({ botId: task.assigneeId, taskId: task._id }, { projection: { _id: 1 } })) return;
+  await announceAssignment(actor, task, key);
 }
 
 /** The flow_step activity doc for a flow move (VEC-175). */
@@ -286,7 +307,7 @@ const flowActivityDoc = (actor: Actor, taskId: ObjectId, a: FlowActivity, at: Da
 async function handOverSameOwner(actor: Actor, task: TaskDoc, key: string, handoff: FlowHandoff) {
   if (!handoff.sameOwner || !task.assigneeId?.equals(handoff.ownerId)) return;
   if (handoff.ownerKind === "bot") {
-    if (task.archivedAt || (task.waitingOn ?? []).length || (await isClosedTask(task))) return;
+    if (task.archivedAt || (task.waitingOn ?? []).length || (await isClosedTask(task)) || (await isParked(task))) return;
     wakeBots(actor.orgId, [handoff.ownerId], { kind: "assigned", taskId: task._id, taskKey: key, title: task.title, by: await actorName(actor), handoff: { fromStep: handoff.fromStep, toStep: handoff.toStep } });
     return;
   }
@@ -592,6 +613,7 @@ export async function updateTaskAs(
   let doneChanged = false;
   let closed = false;
   let enteredTriage = false;
+  let leftBacklog = false;
   // Statuses belong to the task's project (VEC-115): the status must be one of the destination project's
   // (the task's own unless it moves too). Another project's status is refused, never mapped. Its current status
   // sent along with a project move means "keep it": mapped below like a move without a status.
@@ -608,6 +630,7 @@ export async function updateTaskAs(
     doneChanged = isClosedCategory(prev?.category) !== isClosedCategory(s.category);
     closed = doneChanged && isClosedCategory(s.category);
     enteredTriage = s.category === "triage" && prev?.category !== "triage";
+    leftBacklog = prev?.category === "backlog" && s.category !== "backlog";
   }
   let removedDeps: ObjectId[] = [];
   if (patch.dependsOn !== undefined) {
@@ -744,6 +767,9 @@ export async function updateTaskAs(
     // Removing the last open dependency makes it ready, just as finishing it would.
     const keys = await taskKeys(actor.orgId, removedDeps);
     await handOffReady(actor.orgId, byOf(actor), after, task.key, removedDeps.flatMap((id) => keys.get(id.toHexString()) ?? []), "removed", [], closer);
+  } else if (leftBacklog) {
+    // Out of Backlog (VEC-274): a bot assigned while it was parked hears about it now.
+    await announceUnparked(actor, after, task.key);
   }
   // Closing (or reopening) this task releases (or re-blocks) the tasks that wait for it.
   if (doneChanged) await dependencyChanged(actor.orgId, byOf(actor), [taskId]);

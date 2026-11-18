@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveFlowSteps, DEFAULT_FLOW_STEPS } from "./flow-model.ts";
-import { canPauseFlow, flowIsActive, flowStepAction, locateStep, moveNote, nextStepOf, ownerPlan, requiredBetween, stepById, syncByStatus, workingStatus } from "./flow-engine-core.ts";
+import { canPauseFlow, flowIsActive, flowStepAction, isParkedStatus, locateStep, moveNote, nextStepOf, ownerPlan, requiredBetween, stepById, syncByStatus, workingStatus } from "./flow-engine-core.ts";
 
 const S = (id, name, category, order) => ({ id, name, category, order });
 const HERMES = "b".repeat(24);
@@ -225,6 +225,52 @@ test("default flow: keep/triage owners never reassign, the done step never unass
   assert.equal(workingStatus(flow, stepById(flow, "build"), std).name, "In Progress");
   // ...and a task on the review step stays put on pickup.
   assert.equal(workingStatus(flow, stepById(flow, "review"), std), null);
+});
+
+/* ---------------- parked Backlog tasks (VEC-274) ---------------- */
+
+test("backlog is parked: no wake, no hand-out, no pickup move, unless a flow step there names its owner", () => {
+  const std = [S("s0", "Backlog", "backlog", 0), S("s1", "Triage", "triage", 1), S("s2", "Todo", "unstarted", 2), S("s3", "In Progress", "started", 3), S("s4", "In Review", "started", 4), S("s5", "Done", "done", 5), S("s6", "Cancelled", "cancelled", 6)];
+  const flow = resolveFlowSteps(DEFAULT_FLOW_STEPS, std, dir, { source: "org", version: 1 });
+  const backlog = st("s0", std);
+  // The seeded default has no Backlog step: a Backlog task is parked whatever step it was last on.
+  assert.equal(locateStep(flow, backlog), null);
+  assert.equal(isParkedStatus(backlog, null), true);
+  assert.equal(isParkedStatus(backlog, stepById(flow, "build")), true);
+  // Flows off or paused: still parked.
+  assert.equal(isParkedStatus(backlog, null, { paused: true }), true);
+  // Todo / started / triage tasks keep today's behaviour (assigning a bot wakes it, check_for_work offers it).
+  for (const id of ["s1", "s2", "s3", "s4"]) assert.equal(isParkedStatus(st(id, std), stepById(flow, "build")), false, id);
+  assert.equal(isParkedStatus(st("s2", std), null), false);
+
+  // A flow whose first step sits in Backlog with a "keep" owner doesn't own it: parked, pickup leaves it alone.
+  const keepFlow = resolveFlowSteps(
+    [step("plan", "Plan", "bk", { kind: "keep" }), step("build", "Build", "todo", { kind: "keep" }), step("done", "Done", "done", { kind: "none" })],
+    dev,
+    dir,
+    { source: "project", version: 1 },
+  );
+  assert.equal(isParkedStatus(st("bk"), stepById(keepFlow, "plan")), true);
+  assert.equal(workingStatus(keepFlow, stepById(keepFlow, "plan"), dev), null);
+  const parkedTask = machine(keepFlow, dev, { statusId: "bk", stepId: "plan", assignee: HERMES }).pickup();
+  assert.equal(parkedTask.statusId, "bk");
+
+  // A Backlog step that names its bot is owned by the flow: not parked, and pickup starts it.
+  const owned = resolveFlowSteps(
+    [step("groom", "Groom", "bk", { kind: "bot", id: PLANNER }), step("build", "Build", "todo", { kind: "bot", id: HERMES }), step("done", "Done", "done", { kind: "none" })],
+    dev,
+    dir,
+    { source: "project", version: 1 },
+  );
+  const groom = stepById(owned, "groom");
+  assert.equal(isParkedStatus(st("bk"), groom), false);
+  assert.equal(workingStatus(owned, groom, dev).name, "In Progress");
+  assert.equal(machine(owned, dev, { statusId: "bk", stepId: "groom", assignee: PLANNER }).pickup().statusId, "prog");
+  // ...but not when a person overrode the step's owner, or the task's flow is paused.
+  assert.equal(isParkedStatus(st("bk"), groom, { ownerOverride: true }), true);
+  assert.equal(isParkedStatus(st("bk"), groom, { paused: true }), true);
+  // ...and not when the task sits in Backlog while its recorded step is elsewhere (Build in Todo).
+  assert.equal(isParkedStatus(st("bk"), stepById(owned, "build")), true);
 });
 
 test("shared statuses: a status used by two steps picks the next one forward", () => {

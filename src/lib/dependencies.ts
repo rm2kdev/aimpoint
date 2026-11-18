@@ -6,6 +6,7 @@ import { publish } from "@/lib/realtime/server";
 import { loadWorkingBots, toFeed, toTask } from "@/lib/data";
 import { wakeBots } from "@/lib/bot-dispatch";
 import { notify } from "@/lib/notifications";
+import { isParked } from "@/lib/flow-engine";
 import { isClosedCategory, type ActivityDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 
 /**
@@ -268,6 +269,8 @@ export async function handOffReady(
   if (closer && closer.equals(task.assigneeId)) return;
   const bot = await c.bots.findOne({ orgId, _id: task.assigneeId }, { projection: { _id: 1 } });
   if (bot) {
+    // Parked in Backlog (VEC-274): ready, but not work yet; moving it out of Backlog hands it over.
+    if (await isParked(task, status?.category ?? null)) return;
     // Even when the bot finished the dependency itself: this is a different task it now has to start.
     wakeBots(orgId, [task.assigneeId], { kind: "ready", taskId: task._id, taskKey: key, title: task.title, by: await by.name(), detail });
   } else {

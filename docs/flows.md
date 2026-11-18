@@ -197,7 +197,8 @@ bot wake while `waitingOn` is non-empty; the blocked -> ready transition (`handO
 ### 5.4 Claims and `markStartedByBot`
 
 Pickup must not undo the step. New rule in `markStartedByBot`: on a flow task it only moves the task when
-the current step's status is backlog/unstarted stage, and then to the step's **working status**: the first
+the current step's status is unstarted stage, or backlog stage when the step names its owner (a parked Backlog task
+is never started otherwise, VEC-274), and then to the step's **working status**: the first
 started-stage status by order that is *not used by a later step*, else the first started status. On a step
 whose status is already started-stage (In Review / tester, Deploying / CI), pickup leaves the status alone.
 The status changes made by pickup are "within the step" and don't re-position it (5.6 ignores them).

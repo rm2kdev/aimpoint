@@ -10,7 +10,7 @@ import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
 import { billingOn, isOrgActive } from "@/lib/billing";
-import { atWaitStep, flowBriefing, type FlowBriefing } from "@/lib/flow-engine";
+import { atWaitStep, flowBriefing, isParked, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
 import { MCP_SERVER_NAME, legacyMcpNote, mcpServerNameFor } from "@/lib/mcp-name";
 import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
@@ -273,6 +273,8 @@ export async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReaso
     if (await c.tasks.findOne({ _id: reason.taskId, stopped: { $ne: null } }, { projection: { _id: 1 } })) return;
     const st = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } });
     if (isClosedCategory(st?.category)) return;
+    // Moved into Backlog between the wake-up and its delivery (VEC-274): parked, so no claim.
+    if (await isParked(task, st?.category ?? null)) return;
     // A wait step (design 5.7, VEC-181): the bot has been told what to watch for; it isn't working on the task while
     // it waits, so its claim is done right away (no working ring, check_for_work won't hand it out again).
     if (await atWaitStep(task)) {

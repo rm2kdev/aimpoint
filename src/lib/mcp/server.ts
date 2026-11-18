@@ -10,7 +10,7 @@ import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { taskAccess } from "@/lib/access";
-import { advanceTarget, atWaitStep, flowBriefing, loadTaskFlow, ownerName, type AdvanceTarget } from "@/lib/flow-engine";
+import { advanceTarget, atWaitStep, flowBriefing, isParked, loadTaskFlow, ownerName, parkedReason, type AdvanceTarget } from "@/lib/flow-engine";
 import { nextStepOf } from "@/lib/flow-engine-core";
 import { botOrgFlows } from "@/lib/flow-bot-view";
 import { botNewTaskViews, NEW_TASKS_NOTE } from "@/lib/project-defaults";
@@ -134,7 +134,7 @@ const FLOWS_NOTE =
 
 /** How the stages work, said once in get_workspace / check_for_triage (VEC-116). */
 const STAGES_NOTE =
-  'Statuses are per project: each project has its own ordered list (its `statuses`), and a task only takes a status of its own project, by that project\'s names. Every status has a stage, which is what Aimpoint acts on whatever the status is called: "backlog" (not planned yet), "triage" (waiting for a triage bot to break it down), "unstarted" (planned, not started; new tasks default to the first one), "started" (being worked on; a bot\'s pickup moves the task to the first one, and review statuses are started too), "done" (finished: releases the tasks waiting on it) and "cancelled" (dropped: also releases them).';
+  'Statuses are per project: each project has its own ordered list (its `statuses`), and a task only takes a status of its own project, by that project\'s names. Every status has a stage, which is what Aimpoint acts on whatever the status is called: "backlog" (not planned yet: parked, so assigning a bot to it records the assignee only and nothing is handed out until it moves to a not-started status), "triage" (waiting for a triage bot to break it down), "unstarted" (planned, not started; new tasks default to the first one), "started" (being worked on; a bot\'s pickup moves the task to the first one, and review statuses are started too), "done" (finished: releases the tasks waiting on it) and "cancelled" (dropped: also releases them).';
 
 function parsePriority(v: unknown) {
   if (v === undefined || v === null || v === "") return undefined;
@@ -155,9 +155,31 @@ async function openStatusIds(orgId: ObjectId) {
   return (await c.statuses.find({ orgId, category: { $nin: ["done", "cancelled"] } }, { projection: { _id: 1 } }).toArray()).map((s) => s._id);
 }
 
+/** Backlog-stage status ids: a task in one is parked unless its flow owns that step (VEC-274, isParked). */
+async function backlogStatusIds(orgId: ObjectId) {
+  const c = await cols();
+  return new Set((await c.statuses.find({ orgId, category: "backlog" }, { projection: { _id: 1 } }).toArray()).map((s) => s._id.toHexString()));
+}
+
+/** The parked ones among `tasks` (hex ids). */
+async function parkedIds(orgId: ObjectId, tasks: TaskDoc[]) {
+  const backlog = await backlogStatusIds(orgId);
+  const hits = await Promise.all(tasks.map(async (t) => (backlog.has(t.statusId.toHexString()) && (await isParked(t, "backlog")) ? t._id.toHexString() : null)));
+  return new Set(hits.filter((x): x is string => !!x));
+}
+
+/** Assigned to this bot, open, unarchived, not stopped, but parked in Backlog: listed, never handed out. */
+async function parkedAssignedCount(ctx: McpCtx) {
+  const c = await cols();
+  const backlog = [...(await backlogStatusIds(ctx.org._id))].map((id) => new ObjectId(id));
+  if (!backlog.length) return 0;
+  const tasks = await c.tasks.find({ orgId: ctx.org._id, assigneeId: ctx.bot._id, archivedAt: null, stopped: null, statusId: { $in: backlog } }, { projection: { description: 0 } }).limit(500).toArray();
+  return (await parkedIds(ctx.org._id, tasks)).size;
+}
+
 /**
  * Assigned, open, unarchived tasks not yet picked up by this bot and ready to work on (every dependency done):
- * highest priority, then soonest due, then oldest.
+ * highest priority, then soonest due, then oldest. Parked ones (Backlog, VEC-274) are left out.
  */
 async function unclaimedAssigned(ctx: McpCtx) {
   const c = await cols();
@@ -169,9 +191,10 @@ async function unclaimedAssigned(ctx: McpCtx) {
   const claimed = new Set(
     (await c.agentClaims.find({ botId: ctx.bot._id, taskId: { $in: tasks.map((t) => t._id) } }, { projection: { taskId: 1 } }).toArray()).map((x) => x.taskId.toHexString()),
   );
+  const parked = await parkedIds(ctx.org._id, tasks);
   const due = (t: TaskDoc) => t.dueDate?.getTime() ?? Number.POSITIVE_INFINITY;
   return tasks
-    .filter((t) => !claimed.has(t._id.toHexString()))
+    .filter((t) => !claimed.has(t._id.toHexString()) && !parked.has(t._id.toHexString()))
     .sort((a, b) => b.priority - a.priority || due(a) - due(b) || a.createdAt.getTime() - b.createdAt.getTime());
 }
 
@@ -201,13 +224,14 @@ async function closeoutFilter(ctx: McpCtx) {
 
 async function queueCounts(ctx: McpCtx) {
   const c = await cols();
-  const [mentions, closeouts, assigned, blocked] = await Promise.all([
+  const [mentions, closeouts, assigned, blocked, parked] = await Promise.all([
     c.botMentions.countDocuments({ botId: ctx.bot._id, deliveredAt: null }),
     c.tasks.countDocuments(await closeoutFilter(ctx)),
     unclaimedAssigned(ctx),
     blockedAssignedCount(ctx),
+    parkedAssignedCount(ctx),
   ]);
-  return { unreadMentions: mentions, pendingCloseouts: closeouts, unstartedAssignedTasks: assigned.length, assignedWaitingOnDependencies: blocked };
+  return { unreadMentions: mentions, pendingCloseouts: closeouts, unstartedAssignedTasks: assigned.length, assignedWaitingOnDependencies: blocked, assignedParkedInBacklog: parked };
 }
 
 async function taskResult(ctx: McpCtx, task: TaskDoc, project: ProjectDoc, headline: string, opts: { includeImages?: boolean; highlight?: ObjectId[]; extra?: Record<string, unknown> } = {}) {
@@ -228,8 +252,10 @@ async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
   const st = new Map(statuses.map((s) => [s._id.toHexString(), s.name]));
   const pk = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
   const cl = new Map(claims.map((x) => [x.taskId.toHexString(), x.state]));
+  const parked = await parkedIds(ctx.org._id, tasks);
   return tasks.map((t) => {
     const key = `${pk.get(t.projectId.toHexString()) ?? "?"}-${t.number}`;
+    const isParkedTask = parked.has(t._id.toHexString());
     return {
       key,
       title: t.title,
@@ -239,9 +265,11 @@ async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
       assignee: t.assigneeId ? personName(dir, t.assigneeId) : null,
       dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null,
       archived: !!t.archivedAt,
-      /** False while a task it depends on isn't done yet; `waitingOn` lists those. */
-      ready: !t.waitingOn?.length,
+      /** False while a task it depends on isn't done yet (`waitingOn` lists those) or while it's parked in Backlog. */
+      ready: !t.waitingOn?.length && !isParkedTask,
       waitingOn: (t.waitingOn ?? []).map((id) => waitingKeys.get(id.toHexString()) ?? "a deleted task"),
+      /** Parked in a backlog-stage status (VEC-274): not work yet, check_for_work won't hand it out. */
+      ...(isParkedTask ? { parked: true, notReadyReason: parkedReason(st.get(t.statusId.toHexString()) ?? "Backlog") } : {}),
       yourState: cl.get(t._id.toHexString()) ?? null,
       updatedAt: t.updatedAt.toISOString(),
       url: taskUrl(ctx.origin, ctx.org, key),
@@ -406,7 +434,7 @@ async function reviewHandoff(ctx: McpCtx, taskId: ObjectId, key: string, comment
 const TOOLS: Record<string, ToolImpl> = {
   check_for_work: {
     description:
-      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply (if you're the task's assignee and it's open, the mention hands the work back: it's picked up by you again and moved back to its project's first started status, if it has one, so finish it with complete_task again); (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved for you to its project's first started-stage status (In Progress by default; from a backlog, not-started or other started status such as In Review; a project with no started status leaves it where it is). Tasks still waiting on dependencies are held back until they're ready. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
+      "\"Do I have a task?\" Call this on your schedule. Returns ONE item, most urgent first: (1) a comment that newly @mentioned you, with the full task and comment thread so you can reply (if you're the task's assignee and it's open, the mention hands the work back: it's picked up by you again and moved back to its project's first started status, if it has one, so finish it with complete_task again); (2) a task you triaged whose sub-tasks are all done (`kind: \"closeout\"`): summarise what they delivered on it and close it out with complete_task; or (3) the next task assigned to you that you haven't picked up and that is ready (every task it depends on is done), which is then marked as picked up by you and moved for you to its project's first started-stage status (In Progress by default; from a not-started or other started status such as In Review; a project with no started status leaves it where it is). Tasks still waiting on dependencies are held back until they're ready. Tasks in a backlog-stage status (Backlog) are parked, not work: they aren't handed out (list_my_tasks shows them as `parked`) until someone moves them to a not-started status such as Todo, which hands them to you. Returns `kind: \"idle\"` when there's nothing new. Call again to get the next item.",
     inputSchema: { type: "object", properties: { include_images: IMAGES_ARG }, additionalProperties: false },
     run: async (args, ctx) => {
       const c = await cols();
@@ -518,13 +546,16 @@ const TOOLS: Record<string, ToolImpl> = {
       const tasks = await c.tasks.find({ _id: { $in: inProgress.map((x) => x.taskId) }, statusId: { $in: await openStatusIds(ctx.org._id) } }, { projection: { description: 0 } }).toArray();
       const rows = await summarise(ctx, tasks as TaskDoc[]);
       const blocked = await blockedAssignedCount(ctx);
-      const waitNote = blocked ? ` ${blocked} task${blocked === 1 ? " is" : "s are"} assigned to you but waiting on other tasks to be done; ${blocked === 1 ? "it" : "they"}'ll come through here once ready.` : "";
+      const parkedCount = await parkedAssignedCount(ctx);
+      const waitNote =
+        (blocked ? ` ${blocked} task${blocked === 1 ? " is" : "s are"} assigned to you but waiting on other tasks to be done; ${blocked === 1 ? "it" : "they"}'ll come through here once ready.` : "") +
+        (parkedCount ? ` ${parkedCount} task${parkedCount === 1 ? " is" : "s are"} assigned to you but parked in Backlog: not work yet, so leave ${parkedCount === 1 ? "it" : "them"} alone until someone moves ${parkedCount === 1 ? "it" : "them"} to a not-started status.` : "");
       return {
         content: [
           text(
-            (rows.length ? `No new work. You still have ${rows.length} task${rows.length === 1 ? "" : "s"} picked up and not finished.` : blocked ? "No new work." : "No new work. Nothing is assigned to you and nobody has mentioned you.") + waitNote,
+            (rows.length ? `No new work. You still have ${rows.length} task${rows.length === 1 ? "" : "s"} picked up and not finished.` : blocked || parkedCount ? "No new work." : "No new work. Nothing is assigned to you and nobody has mentioned you.") + waitNote,
           ),
-          json({ kind: "idle", stillInProgress: rows, assignedWaitingOnDependencies: blocked }),
+          json({ kind: "idle", stillInProgress: rows, assignedWaitingOnDependencies: blocked, assignedParkedInBacklog: parkedCount }),
         ],
       };
     },
@@ -584,7 +615,7 @@ const TOOLS: Record<string, ToolImpl> = {
   list_my_tasks: {
     readOnly: true,
     description:
-      "Open tasks assigned to you, plus tasks you've picked up and not finished. `yourState` is in_progress, done or null (not picked up yet). `ready` is false while a task it depends on isn't done (`waitingOn` lists them); check_for_work offers those once they're ready. Tasks a person stopped your work on are listed apart under `stopped` (who, when): don't work on them; they're handed back to you if they're resumed.",
+      "Open tasks assigned to you, plus tasks you've picked up and not finished. `yourState` is in_progress, done or null (not picked up yet). `ready` is false while a task it depends on isn't done (`waitingOn` lists them); check_for_work offers those once they're ready. A task in a backlog-stage status (Backlog) is `parked: true` with `ready: false` and a `notReadyReason`: it's not work yet and check_for_work won't offer it until someone moves it to a not-started status. Tasks a person stopped your work on are listed apart under `stopped` (who, when): don't work on them; they're handed back to you if they're resumed.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     run: async (_args, ctx) => {
       const c = await cols();
