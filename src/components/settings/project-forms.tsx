@@ -26,6 +26,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { createProjectForm, deleteProjectForm, updateProjectForm } from "@/app/actions/forms";
+import { fieldsInput, FormFieldsEditor, hasTextField, invalidFieldIds, sameFields } from "@/components/settings/form-fields-editor";
 import { TYPE_LABELS } from "@/lib/format";
 import { STAGE_LABELS } from "@/lib/stages";
 import { isFormDestinationStage, TASK_TYPES, type FormTypeMode, type ProjectForm, type Status, type TaskType } from "@/lib/types";
@@ -206,6 +207,7 @@ export function ProjectForms({
                           )}
                         </span>
                         {f.richText && <span>{f.allowImages ? "Rich text and images" : "Rich text"}</span>}
+                        {f.fields.length > 0 && <span>{f.fields.length === 1 ? "1 extra field" : `${f.fields.length} extra fields`}</span>}
                       </div>
                       {f.disabledReason && !f.enabled && <p className="mt-1 text-[12.5px] text-destructive">{f.disabledReason}</p>}
                     </div>
@@ -353,6 +355,14 @@ function FormEditor({
   const [preset, setPreset] = useState<TaskType>(form?.typeMode === "choose" ? form.type : "issue");
   const [richText, setRichText] = useState(form?.richText ?? false);
   const [allowImages, setAllowImages] = useState(form?.allowImages ?? false);
+  // TPA-401: custom fields, email note, hidden description. Forms saved before TPA-399 read as none / "" / false.
+  const [fields, setFields] = useState(form?.fields ?? []);
+  const [emailHelp, setEmailHelp] = useState(form?.emailHelp ?? "");
+  const [hideDescription, setHideDescription] = useState(form?.hideDescription ?? false);
+  // The last save's refusal (UserError text), shown in the dialog; `tried` marks empty/repeated labels after it.
+  const [error, setError] = useState<string | null>(null);
+  const [tried, setTried] = useState(false);
+  const hideNow = hideDescription && hasTextField(fields);
 
   const allowedList = TASK_TYPES.filter((t) => allowed.includes(t));
   const presetNow = allowedList.includes(preset) ? preset : allowedList[0];
@@ -374,9 +384,21 @@ function FormEditor({
       allowImages: richText && allowImages,
       ...(mode === "fixed" ? { type: fixedType, allowedTypes: [] } : { type: presetNow, allowedTypes: allowedList }),
     };
+    // Sent only when they differ from what's saved, so a form that never had fields saves exactly as before.
+    const note = emailHelp.replace(/\s+/g, " ").trim();
+    const extrasChanged = form
+      ? !sameFields(fields, form.fields) || note !== (form.emailHelp ?? "") || hideNow !== form.hideDescription
+      : fields.length > 0 || !!note || hideNow;
+    const extras = extrasChanged ? { fields: fieldsInput(fields), emailHelp: note || null, hideDescription: hideNow } : {};
+    setError(null);
     start(async () => {
-      const r = form ? await updateProjectForm(org.slug, form.id, input) : await createProjectForm(org.slug, projectId, input);
-      if (!r.ok) return void toast.error(r.error);
+      const r = form
+        ? await updateProjectForm(org.slug, form.id, { ...input, ...extras })
+        : await createProjectForm(org.slug, projectId, { ...input, ...extras });
+      if (!r.ok) {
+        setTried(true);
+        return void setError(r.error);
+      }
       toast.success(form ? `Saved ${input.name}` : `Added ${input.name}`);
       router.refresh();
       onClose();
@@ -385,7 +407,7 @@ function FormEditor({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-5 sm:max-w-lg">
+      <DialogContent className="gap-5 sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{form ? `Edit ${form.name}` : "New external form"}</DialogTitle>
           <DialogDescription>Submissions become tasks in {projectName}.</DialogDescription>
@@ -524,6 +546,16 @@ function FormEditor({
             )}
           </fieldset>
 
+          <FormFieldsEditor
+            fields={fields}
+            onFields={setFields}
+            emailHelp={emailHelp}
+            onEmailHelp={setEmailHelp}
+            hideDescription={hideNow}
+            onHideDescription={setHideDescription}
+            invalidIds={tried ? invalidFieldIds(fields) : new Set()}
+          />
+
           <div className="grid divide-y divide-border rounded-lg border border-border">
             <label className="flex items-center justify-between gap-3 px-3 py-2.5">
               <span className="leading-tight">
@@ -558,6 +590,12 @@ function FormEditor({
             <Switch checked={enabled} onCheckedChange={setEnabled} aria-label="Taking submissions" />
           </label>
         </form>
+
+        {error && (
+          <p role="alert" data-form-error className="rounded-lg bg-destructive/10 px-3 py-2 text-[13px] text-destructive">
+            {error}
+          </p>
+        )}
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
