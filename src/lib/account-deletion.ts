@@ -5,6 +5,8 @@ import { UserError } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { removeMembership } from "@/lib/membership";
 import { deleteAvatar, deleteOrgImages } from "@/lib/storage";
+import { billingEnabled } from "@/lib/billing";
+import { cancelSubscriptionForDeletion } from "@/lib/stripe";
 
 /**
  * Account deletion (VEC-48). The account page shows the plan up front, and `deleteAccount` re-checks it
@@ -61,7 +63,8 @@ export function blockedReason(blocked: DeletionPlanOrg[]) {
 /**
  * Delete an organisation and everything in it: projects, tasks with their comments, activity, claims and
  * mentions, statuses, bots and bot roles, invites, notifications, memberships and uploaded images.
- * Only used for orgs whose sole member is deleting their account, so nobody else is watching it.
+ * Only used for orgs whose sole member is deleting their account, so nobody else is watching it. With billing
+ * on, `deleteAccount` cancels the org's Stripe subscription first (VEC-259).
  */
 export async function deleteOrganisationCascade(orgId: ObjectId, actorId: ObjectId) {
   const c = await cols();
@@ -110,6 +113,15 @@ export async function deleteAccount(userId: ObjectId, { deleteSoleOrgs }: { dele
     throw new UserError(
       `You're the only member of ${names(plan.soleOrgs)}. Agree to delete ${plan.soleOrgs.length === 1 ? "it" : "them"} with your account, or invite someone and make them admin first.`,
     );
+  }
+
+  // Cancel the Stripe subscription of every org about to be deleted before touching anything (VEC-259): a
+  // Stripe failure refuses the whole deletion, so no org is ever deleted with a subscription still billing.
+  if (billingEnabled() && plan.soleOrgs.length) {
+    const doomed = await c.orgs
+      .find({ _id: { $in: plan.soleOrgs.map((o) => new ObjectId(o.id)) } }, { projection: { name: 1, billing: 1 } })
+      .toArray();
+    for (const org of doomed) await cancelSubscriptionForDeletion(org);
   }
 
   // Leave first: removeMembership re-checks the last-admin rule against the live data and throws before

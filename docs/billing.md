@@ -25,8 +25,9 @@ Set up through the Stripe MCP on 2026-11-18 (VEC-239).
 
 Staging is https://dev.aimpoint.dev: the `development` branch of rm2kdev/aimpoint on the Vercel project
 `aimpoint` (team ryan-s-projects-335ad04d), env vars scoped to Preview + git branch `development`.
-Production (https://app.aimpoint.dev, branch `main`) has no billing yet: its Stripe vars are placeholders
-and `BILLING_ENABLED` is unset.
+Production (https://app.aimpoint.dev, branch `main`) is being switched on in VEC-259: the live webhook
+endpoint, `STRIPE_WEBHOOK_SECRET` and `STRIPE_PRICE_ID` are in place; `BILLING_ENABLED=true` goes in
+together with the confirmed `sk_live_` key (see Production go-live below).
 
 | Object | Id |
 | --- | --- |
@@ -44,7 +45,7 @@ and `BILLING_ENABLED` is unset.
 | Product "Aimpoint Pro" | `prod_VeQVNfCBhrBm0v` |
 | Price (495 USD / month per seat, licensed, lookup key `aimpoint_pro_seat_monthly`) | `price_1Ud7eDPkMccAD7nRtmuQvbBM` |
 | Customer Portal configuration (account default) | `bpc_1Ud7edPkMccAD7nRPkadm64D` |
-| Webhook endpoint | not created: billing is off in production for now (see below) |
+| Webhook endpoint (`https://app.aimpoint.dev/api/stripe/webhook`, created in VEC-259) | `we_1UdIRJPkMccAD7nRzXU70IVO` |
 
 Both prices use `tax_behavior: exclusive`, so tax is added on top of US$4.95.
 
@@ -77,8 +78,8 @@ in `src/lib/stripe.ts` uses it without passing a `configuration` id:
 
 ## Webhook endpoint
 
-Staging has one (VEC-251, table above). For production, create an endpoint in the live account once
-billing is turned on there:
+Staging and production each have one (VEC-251 and VEC-259, tables above). Any new environment needs its own,
+in the matching account:
 
 - URL: `<base>/api/stripe/webhook`
 - events: `checkout.session.completed`, `customer.subscription.created`,
@@ -87,9 +88,35 @@ billing is turned on there:
 Its signing secret (`whsec_...`) is shown once on creation and goes into `STRIPE_WEBHOOK_SECRET` for
 that environment. Record the endpoint id and URL in the tables above.
 
-dev.aimpoint.dev is a Vercel preview deployment. If Vercel Deployment Protection covers it, Stripe's
+app.aimpoint.dev is a production custom domain, so Vercel Deployment Protection doesn't cover it and Stripe
+reaches the route directly. dev.aimpoint.dev is a Vercel preview deployment. If Vercel Deployment Protection covers it, Stripe's
 deliveries get Vercel's 401/302 instead of reaching the app, so protection has to be off for it or the
 endpoint URL has to carry a protection-bypass secret.
+
+## Deleting an organisation
+
+An organisation is only deleted when its sole member deletes their account (`deleteAccount` in
+`src/lib/account-deletion.ts`). With billing on, its Stripe subscription is cancelled first, immediately,
+with no proration or refund for the period already paid (`cancelSubscriptionForDeletion` in
+`src/lib/stripe.ts`, VEC-259): once the org is gone nobody can reach the Customer Portal, so a subscription
+left running would keep charging. If Stripe refuses the cancel, the whole account deletion is refused
+before anything is removed, so the user can retry. A subscription Stripe no longer has counts as cancelled.
+The Stripe customer and its invoices are kept. The `customer.subscription.deleted` event that follows finds
+no organisation and is acknowledged as ignored.
+
+## Production go-live (VEC-259)
+
+1. Live webhook endpoint and its secret in Vercel Production `STRIPE_WEBHOOK_SECRET` (done).
+2. `STRIPE_PRICE_ID=price_1Ud7eDPkMccAD7nRtmuQvbBM` in Vercel Production (done).
+3. `STRIPE_SECRET_KEY` = the live `sk_live_...` key, pasted by Ryan from the Stripe Dashboard (Aimpoint,
+   Developers > API keys).
+4. `BILLING_ENABLED=true` in Vercel Production, then redeploy `main`.
+5. Check: `POST /api/stripe/webhook` with a bad signature answers 400 (404 means billing is still off),
+   Settings > Billing shows US$4.95 per user/month plus tax, and Subscribe opens a live Checkout page.
+
+Turning billing on locks every production organisation without a subscription until an admin subscribes
+(nothing is deleted). Vercel's Hobby plan is for non-commercial use only, so the project should move to a
+Pro team before it takes payments.
 
 ## Environment variables
 

@@ -119,6 +119,29 @@ export async function createPortalSession(org: OrgDoc, origin: string): Promise<
   return session.url;
 }
 
+/** Subscription statuses that can still bill (or start billing) the customer. */
+const BILLABLE_STATUSES = new Set(["active", "trialing", "past_due", "unpaid", "paused", "incomplete"]);
+
+/**
+ * Cancel the org's Stripe subscription at once, before the org is deleted (VEC-259): a deleted org can't reach
+ * the Customer Portal, so a subscription left running would keep charging for nothing. No proration or refund
+ * for the current period. A subscription Stripe no longer has (already cancelled) counts as done. Throws a
+ * UserError on any other Stripe failure so the caller can refuse the deletion before anything is removed.
+ */
+export async function cancelSubscriptionForDeletion(org: Pick<OrgDoc, "billing" | "name">): Promise<"cancelled" | "none"> {
+  const subId = org.billing?.subscriptionId;
+  if (!subId || !BILLABLE_STATUSES.has(org.billing?.status ?? "")) return "none";
+  try {
+    await stripe().subscriptions.cancel(subId, { prorate: false, invoice_now: false });
+    return "cancelled";
+  } catch (err) {
+    const e = err as { code?: string; statusCode?: number };
+    if (e.code === "resource_missing" || e.statusCode === 404) return "none";
+    console.error("cancelSubscriptionForDeletion", subId, err);
+    throw new UserError(`${org.name}'s Pro subscription couldn't be cancelled, so nothing was deleted. Try again in a minute.`);
+  }
+}
+
 // ---------------------------------------------------------------------------------------------------
 // Webhook
 
