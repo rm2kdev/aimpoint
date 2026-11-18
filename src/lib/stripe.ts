@@ -9,7 +9,10 @@
  *   a redelivery of a processed event is acknowledged without touching the org. A failed handler drops the
  *   claim so Stripe's retry runs it again.
  * - Ordered: `billing.lastEventAt` holds the `created` time of the newest event applied; an older event
- *   that arrives late is skipped, so a delayed `subscription.updated` can't undo a later cancel.
+ *   that arrives late is skipped, so a delayed `subscription.updated` can't undo a later cancel. Only
+ *   subscription/invoice events move that clock: `checkout.session.completed` is often created a second
+ *   after `customer.subscription.created` and delivered first, and moving the clock then dropped the
+ *   subscription event (no seats or renewal date stored, VEC-292).
  * - Writes are compare-and-set on `billing.updatedAt` (retried), then `org.changed` refreshes open tabs.
  */
 import "server-only";
@@ -227,7 +230,7 @@ async function handleEvent(event: Stripe.Event): Promise<{ orgId: ObjectId | nul
         // The subscription events carry the real status; until one lands, a paid checkout is Pro.
         status: known ? prev!.status : paid ? "active" : "incomplete",
       };
-    });
+    }, false);
   }
   if (SUBSCRIPTION_EVENTS.has(event.type)) {
     const sub = event.data.object as unknown as SubscriptionLike;
@@ -287,6 +290,7 @@ async function apply(
   org: OrgDoc,
   at: Date,
   build: (prev: OrgBilling | undefined) => OrgBilling | null,
+  clock = true,
 ): Promise<{ orgId: ObjectId; outcome: string }> {
   const { orgs } = await cols();
   let current: OrgDoc | null = org;
@@ -297,7 +301,7 @@ async function apply(
     const patch = build(prev);
     if (!patch) return { orgId: org._id, outcome: "ignored: not this organisation's current subscription" };
     const now = new Date();
-    const next = { ...mergeBilling(prev, patch, now), lastEventAt: at };
+    const next = { ...mergeBilling(prev, patch, now), lastEventAt: clock ? at : (prev?.lastEventAt ?? null) };
     const res = await orgs.updateOne(
       { _id: org._id, "billing.updatedAt": prev?.updatedAt ?? { $exists: false } },
       { $set: { billing: next } },
