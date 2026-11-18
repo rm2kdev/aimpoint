@@ -40,8 +40,9 @@ export type WakeReason =
   | { kind: "triage"; taskId: ObjectId; taskKey: string; title: string; by: string; resumed?: boolean }
   /** A task this bot triaged is ready (its sub-tasks are closed: done or cancelled): summarise the work and close it out. */
   | { kind: "closeout"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string; retry?: boolean }
-  /** VEC-216 (webhook only): a person stopped this bot's work on the task; stop any run still working on it. */
-  | { kind: "stopped"; taskId: ObjectId; taskKey: string; title: string; by: string; work: "assigned" | "triage" }
+  /** VEC-216 (webhook only): a person stopped this bot's work on the task; stop any run still working on it.
+   * `parked` (VEC-275): it was moved into this backlog-stage status instead, so it's parked until it leaves Backlog. */
+  | { kind: "stopped"; taskId: ObjectId; taskKey: string; title: string; by: string; work: "assigned" | "triage"; parked?: string }
   | { kind: "test" };
 
 interface WakeMessage {
@@ -68,7 +69,7 @@ export const reasonLabel = (r: WakeReason) =>
           : r.kind === "closeout"
             ? `${r.retry ? "retry close-out" : "close out"} ${r.taskKey}`
             : r.kind === "stopped"
-              ? `stop ${r.taskKey}`
+              ? `${r.parked ? "park" : "stop"} ${r.taskKey}`
               : `mentioned on ${r.taskKey}`;
 
 /** Schedules wake-ups after the response is sent. Never throws into the caller. */
@@ -108,7 +109,21 @@ export function wakeBots(orgId: ObjectId, botIds: ObjectId[], reason: WakeReason
  * a webhook bot gets a task.stopped event; a Claude / OpenAI turn running inside a request aborts itself (stopWatch).
  * Every backend's further tool calls on the task are refused meanwhile. Never throws into the caller.
  */
-export function signalStop(orgId: ObjectId, stop: { taskId: ObjectId; botId: ObjectId; taskKey: string; title: string; by: string; work: "assigned" | "triage" }) {
+export function signalStop(
+  orgId: ObjectId,
+  stop: {
+    taskId: ObjectId;
+    botId: ObjectId;
+    taskKey: string;
+    title: string;
+    by: string;
+    work: "assigned" | "triage";
+    /** VEC-275: the task was parked (moved into this Backlog status), not stopped. */
+    parked?: string;
+    /** Hermes runs to cancel, when the caller already released the claims that recorded them (parking). */
+    runIds?: string[];
+  },
+) {
   const job = async () => {
     try {
       const c = await cols();
@@ -116,9 +131,9 @@ export function signalStop(orgId: ObjectId, stop: { taskId: ObjectId; botId: Obj
       const conn = bot?.connection;
       if (!org || !bot || !conn) return;
       if (conn.method === "webhook") {
-        await deliver(bot, org, { kind: "stopped", taskId: stop.taskId, taskKey: stop.taskKey, title: stop.title, by: stop.by, work: stop.work });
+        await deliver(bot, org, { kind: "stopped", taskId: stop.taskId, taskKey: stop.taskKey, title: stop.title, by: stop.by, work: stop.work, ...(stop.parked ? { parked: stop.parked } : {}) });
       } else if (conn.method === "hermes-api" && conn.url && conn.secretSealed) {
-        const runIds = [...new Set((await c.agentClaims.find({ botId: bot._id, taskId: stop.taskId, runId: { $type: "string" } }, { projection: { runId: 1 } }).toArray()).map((cl) => cl.runId!))];
+        const runIds = stop.runIds ?? [...new Set((await c.agentClaims.find({ botId: bot._id, taskId: stop.taskId, runId: { $type: "string" } }, { projection: { runId: 1 } }).toArray()).map((cl) => cl.runId!))];
         const key = unseal(conn.secretSealed);
         for (const runId of runIds) {
           let out: BotDelivery;
@@ -310,7 +325,7 @@ async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: Wa
   if (conn.method === "claude-api" || conn.method === "openai-api") {
     const vectorKey = conn.vectorKeySealed ? unseal(conn.vectorKeySealed) : null;
     if (!secret || !vectorKey || !conn.vectorUrl || !conn.model) return { ok: false, error: "The connection is missing its key or model. Run setup again." };
-    const args = { bot, org, prompt: msg.prompt, apiKey: secret, vectorKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId };
+    const args = { bot, org, prompt: msg.prompt, apiKey: secret, vectorKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId, work: reason.kind === "assigned" || reason.kind === "ready" };
     return conn.method === "claude-api" ? claudeApi(args) : openaiApi(args);
   }
   if (!conn.url || !secret) return { ok: false, error: "The connection is missing its address or key. Run setup again." };
@@ -431,7 +446,9 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const flow = task && project && (reason.kind === "assigned" || reason.kind === "ready") ? await flowBriefing(task, project.key) : null;
   const handoff = reason.kind === "assigned" ? reason.handoff : undefined;
   const head =
-    reason.kind === "stopped"
+    reason.kind === "stopped" && reason.parked
+      ? `${reason.by} moved ${reason.taskKey} "${reason.title}" to ${reason.parked} in Aimpoint (${org.name}), so it's parked: not work any more. Stop working on it now: end any run still working on it, don't call more tools on it and leave it as it is. Aimpoint has released your claim on it. You'll be handed it again, with a fresh wake-up, when someone moves it out of ${reason.parked}.`
+      : reason.kind === "stopped"
       ? `${reason.by} stopped your ${reason.work === "triage" ? "triage of" : "work on"} ${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}). Stop working on it now: end any run still working on it, don't call more tools on it and leave it as it is. While it's stopped Aimpoint refuses your changes to it (only a reply to a comment that @mentions you is accepted). If they resume it you get a task.resumed event with the task to carry on.`
       : reason.kind === "triage"
       ? `${reason.resumed ? STOP_RESUME_NOTE(reason.by, true) : ""}${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Aimpoint (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
@@ -521,6 +538,8 @@ interface ApiArgs {
   prompt: string;
   /** The task the turn is about (null for the connection test): Stop on it cuts the turn short (VEC-216). */
   taskId: ObjectId | null;
+  /** A work turn (assigned / ready): moving the task into Backlog (parking it, VEC-275) cuts it short too. */
+  work?: boolean;
 }
 
 const STOP_POLL_MS = 3_000;
@@ -530,13 +549,19 @@ const STOP_POLL_MS = 3_000;
  * and abort the in-flight model request when they do (the provider stops generating once the connection drops), so
  * neither Claude's pause_turn loop nor a long Responses call carries on. Any tool call that still lands is refused.
  */
-function stopWatch(botId: ObjectId, taskId: ObjectId | null) {
+function stopWatch(botId: ObjectId, taskId: ObjectId | null, work = false) {
   const ctrl = new AbortController();
   let stopped = false;
+  // A work turn also ends when the task is parked meanwhile (moved into Backlog, VEC-275): it isn't work any more.
+  const parked = async (id: ObjectId) => {
+    const c = await cols();
+    const task = await c.tasks.findOne({ _id: id }, { projection: { orgId: 1, projectId: 1, statusId: 1, flow: 1 } });
+    return !!task && (await isParked(task));
+  };
   const check = async () => {
     if (!taskId || stopped) return stopped;
     const hit = await (await cols()).tasks.findOne({ _id: taskId, "stopped.botId": botId }, { projection: { _id: 1 } }).catch(() => null);
-    if (hit) {
+    if (hit || (work && (await parked(taskId).catch(() => false)))) {
       stopped = true;
       ctrl.abort(new Error("stopped"));
     }
@@ -550,7 +575,7 @@ function stopWatch(botId: ObjectId, taskId: ObjectId | null) {
 async function claudeApi(a: ApiArgs): Promise<SendResult> {
   const messages: { role: "user" | "assistant"; content: unknown }[] = [{ role: "user", content: a.prompt }];
   const deadline = AbortSignal.timeout(AGENT_TURN_MS);
-  const watch = stopWatch(a.bot._id, a.taskId);
+  const watch = stopWatch(a.bot._id, a.taskId, a.work);
   try {
     // Long tool loops come back as pause_turn; send the partial turn back to let Claude continue, unless a person
     // stopped the work meanwhile (VEC-216): then the turn ends here.
@@ -591,7 +616,7 @@ async function claudeApi(a: ApiArgs): Promise<SendResult> {
 
 /** Responses API with a remote MCP tool: OpenAI calls Vector's MCP server itself. */
 async function openaiApi(a: ApiArgs): Promise<SendResult> {
-  const watch = stopWatch(a.bot._id, a.taskId);
+  const watch = stopWatch(a.bot._id, a.taskId, a.work);
   try {
     const res = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -661,7 +686,7 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     // VEC-215: the hand-back after a person stopped this bot's work and resumed it.
     ...(resumed ? { resumed: true, resumes: `task.${reason.kind}`, ...(reason.kind === "assigned" && reason.reassignedFrom ? { reassigned: true } : {}) } : {}),
     // VEC-216: task.stopped says which work was stopped.
-    ...(reason.kind === "stopped" ? { stopped: { work: reason.work } } : {}),
+    ...(reason.kind === "stopped" ? { stopped: { work: reason.work, ...(reason.parked ? { parked: true, status: reason.parked } : {}) } } : {}),
     ...(msg.flow ? { flow: msg.flow } : {}),
     prompt: msg.prompt,
     sentAt: new Date().toISOString(),

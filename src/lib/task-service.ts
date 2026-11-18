@@ -9,7 +9,8 @@ import { loadStatuses, requireProjectStatus, statusFor, statusInProject } from "
 import { publishWorking } from "@/lib/claims";
 import { newTaskStatusFor } from "@/lib/project-defaults";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
-import { wakeBots, wakeTriage } from "@/lib/bot-dispatch";
+import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
+import { backlogMove, parkRelease, unparkWakes, writeHandOff, type BacklogMove } from "@/lib/backlog-moves";
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
 import { isParked, planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
@@ -272,16 +273,50 @@ async function announceAssignment(actor: Actor, task: TaskDoc, key: string, hand
 }
 
 /**
- * A task assigned to a bot left a backlog-stage status (VEC-274): assigning it there recorded the assignee only, so
- * the bot is handed it now, through announceAssignment (ready, open and unparked only). Skipped when the bot already
- * holds a claim on it (a flow step that owned the Backlog status already handed it over) or the assignee is a person.
+ * A task assigned to a bot was unparked (VEC-274/275): it left Backlog, so the bot assigned while it sat there is
+ * handed it now with the same `assigned` wake-up as a fresh assignment (once: writeHandOff picks one hand-off per
+ * write). Nothing while it still waits on dependencies (the ready hand-off releases it later), is stopped, archived
+ * or closed, or when the bot already holds a claim (a flow step that owned the Backlog status handed it over).
  */
 async function announceUnparked(actor: Actor, task: TaskDoc, key: string) {
   if (!task.assigneeId) return;
   const c = await cols();
-  if (!(await c.bots.findOne({ orgId: actor.orgId, _id: task.assigneeId }, { projection: { _id: 1 } }))) return;
-  if (await c.agentClaims.findOne({ botId: task.assigneeId, taskId: task._id }, { projection: { _id: 1 } })) return;
-  await announceAssignment(actor, task, key);
+  const [bot, claim, status] = await Promise.all([
+    c.bots.findOne({ orgId: actor.orgId, _id: task.assigneeId }, { projection: { _id: 1 } }),
+    c.agentClaims.findOne({ botId: task.assigneeId, taskId: task._id }, { projection: { _id: 1 } }),
+    c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1 } }),
+  ]);
+  const wakes = unparkWakes({
+    assigneeIsBot: !!bot,
+    assigneeHasClaim: !!claim,
+    archived: !!task.archivedAt,
+    stage: status?.category ?? null,
+    waiting: (task.waitingOn ?? []).length > 0,
+    stopped: !!task.stopped,
+    parked: await isParked(task, status?.category ?? null),
+  });
+  if (wakes) await announceAssignment(actor, task, key);
+}
+
+/**
+ * The write parked the task (moved it into Backlog, VEC-275): it isn't work any more, so the bots working on it are
+ * released and told to stop through the Stop path's signal (a Hermes run is cancelled, a webhook bot gets
+ * task.stopped with `parked`), except a bot that parked it itself. Their non-triage claims are deleted, so a later
+ * move out of Backlog hands it over afresh, and queued work wake-ups are dropped. A stopped task is left to Resume.
+ * Runs before the task.upsert, which then carries the cleared working ring. Returns the stop signals to send after it.
+ */
+async function releaseParked(actor: Actor, task: TaskDoc): Promise<{ botId: ObjectId; runIds: string[] }[]> {
+  const c = await cols();
+  const claims = await c.agentClaims.find({ taskId: task._id }).toArray();
+  const { release, signal } = parkRelease(
+    claims.map((cl) => ({ id: cl._id.toHexString(), botId: cl.botId.toHexString(), kind: cl.kind ?? null, state: cl.state })),
+    { actorId: actor.id.toHexString(), stopped: !!task.stopped },
+  );
+  if (!release.length) return [];
+  const out = signal.map((b) => ({ botId: new ObjectId(b), runIds: [...new Set(claims.filter((cl) => cl.botId.toHexString() === b && typeof cl.runId === "string").map((cl) => cl.runId!))] }));
+  await c.agentClaims.deleteMany({ _id: { $in: release.map((id) => new ObjectId(id)) } });
+  await c.botWakes.deleteMany({ taskId: task._id, kind: { $in: ["assigned", "ready"] } });
+  return out;
 }
 
 /** The flow_step activity doc for a flow move (VEC-175). */
@@ -613,7 +648,6 @@ export async function updateTaskAs(
   let doneChanged = false;
   let closed = false;
   let enteredTriage = false;
-  let leftBacklog = false;
   // Statuses belong to the task's project (VEC-115): the status must be one of the destination project's
   // (the task's own unless it moves too). Another project's status is refused, never mapped. Its current status
   // sent along with a project move means "keep it": mapped below like a move without a status.
@@ -630,7 +664,6 @@ export async function updateTaskAs(
     doneChanged = isClosedCategory(prev?.category) !== isClosedCategory(s.category);
     closed = doneChanged && isClosedCategory(s.category);
     enteredTriage = s.category === "triage" && prev?.category !== "triage";
-    leftBacklog = prev?.category === "backlog" && s.category !== "backlog";
   }
   let removedDeps: ObjectId[] = [];
   if (patch.dependsOn !== undefined) {
@@ -733,6 +766,11 @@ export async function updateTaskAs(
   set.updatedAt = now;
   const after = await c.tasks.findOneAndUpdate({ _id: taskId, orgId: actor.orgId }, { $set: set }, { returnDocument: "after" });
   if (!after) throw new UserError("This task no longer exists.");
+  // Into or out of Backlog (VEC-274/275): parked tasks aren't work. Parking releases the bots working on it (before
+  // the unassign step finishes an old assignee's claim, so that bot is told to stop too) and before the upsert.
+  const move: BacklogMove =
+    set.statusId || set.flow !== undefined || set.projectId ? backlogMove(await isParked(before), await isParked(after)) : null;
+  const stops = move === "park" ? await releaseParked(actor, after) : [];
   if (set.assigneeId !== undefined) {
     await finishClaimOnUnassign(taskId, before.assigneeId ?? null, set.assigneeId);
     await resetClaimOnAssign(taskId, set.assigneeId);
@@ -759,16 +797,20 @@ export async function updateTaskAs(
     for (const d of docs) await publish(orgHex, { type: "feed.add", actorId, taskId: taskId.toHexString(), item: toFeed(d) });
   }
 
-  if (set.assigneeId) {
+  for (const stop of stops) signalStop(actor.orgId, { taskId, botId: stop.botId, taskKey: task.key, title: after.title, by: await actorName(actor), work: "assigned", parked: finalStatus?.name ?? "Backlog", runIds: stop.runIds });
+
+  // One hand-off per write (VEC-275), so a status change and an assignee change together wake the bot once.
+  const handOff = writeHandOff({ assigneeSet: !!set.assigneeId, sameOwnerHandoff: !!flowPlan.handoff?.sameOwner, nowReady, move });
+  if (handOff === "assignment") {
     await announceAssignment(actor, after, task.key, flowPlan.handoff);
-  } else if (flowPlan.handoff?.sameOwner) {
+  } else if (handOff === "same_owner" && flowPlan.handoff) {
     await handOverSameOwner(actor, after, task.key, flowPlan.handoff);
-  } else if (nowReady) {
+  } else if (handOff === "ready") {
     // Removing the last open dependency makes it ready, just as finishing it would.
     const keys = await taskKeys(actor.orgId, removedDeps);
     await handOffReady(actor.orgId, byOf(actor), after, task.key, removedDeps.flatMap((id) => keys.get(id.toHexString()) ?? []), "removed", [], closer);
-  } else if (leftBacklog) {
-    // Out of Backlog (VEC-274): a bot assigned while it was parked hears about it now.
+  } else if (handOff === "unpark") {
+    // Out of Backlog (VEC-274/275): a bot assigned while it was parked hears about it now.
     await announceUnparked(actor, after, task.key);
   }
   // Closing (or reopening) this task releases (or re-blocks) the tasks that wait for it.
