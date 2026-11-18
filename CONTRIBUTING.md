@@ -1,6 +1,6 @@
 # Contributing to Aimpoint
 
-Thanks for helping improve Aimpoint. Bug reports, feature requests and pull requests are all welcome.
+Thanks for helping improve Aimpoint. Bug reports, feature requests and pull requests are all welcome. File bugs and feature requests on the [Aimpoint board](https://app.aimpoint.dev/p/rm2kdev/AIM), where Aimpoint tracks its own work.
 
 ## Before you open a pull request
 
@@ -8,7 +8,7 @@ Thanks for helping improve Aimpoint. Bug reports, feature requests and pull requ
 
 2. **Run the checks.** `pnpm lint` and `pnpm test` should pass. See the [README](README.md#run-locally) for setting up a local environment.
 
-3. **Keep it focused.** One change per pull request, with a short description of what changed and why. For larger changes, open an issue first so we can agree on the approach.
+3. **Keep it focused.** One change per pull request, with a short description of what changed and why. For larger changes, open an issue on the [Aimpoint board](https://app.aimpoint.dev/p/rm2kdev/AIM) first so we can agree on the approach.
 
 ## How the CLA check works
 

@@ -2,6 +2,9 @@
 
 A small, calm task tracker for software teams: issues and feature requests, organised by organisation and project, live for everyone.
 
+> **Found a bug or have an idea? [Report it on the Aimpoint board](https://app.aimpoint.dev/p/rm2kdev/AIM).**
+> We track Aimpoint's own issues and feature requests in Aimpoint, and use it every day to build it. That board is the place to file bugs, ask for features and follow what's being worked on.
+
 - Multi-user, multi-organisation, with **admin** / **member** roles
 - **Projects** inside each organisation; task IDs use the project key (`WEB-12`). Each project has its own settings page with free-form key/value **agent context** (repos, commands, conventions) that bots receive with every task, plus archive and delete
 - Per-organisation **custom statuses** (name, colour, stage, order)
