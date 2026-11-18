@@ -4,6 +4,7 @@ import { findOpenForm } from "@/lib/project-forms";
 import { FORM_BODY_MAX, FORM_TITLE_MAX, FORM_UNAVAILABLE, HONEYPOT_FIELD } from "@/lib/form-submit";
 import { hasFeature } from "@/lib/billing-limits";
 import { FORM_DESCRIPTION_MAX, FORM_SUBMITTER_EMAIL_MAX, FORM_SUBMITTER_NAME_MAX } from "@/lib/task-service";
+import { FORM_FIELD_SCREENSHOTS_MAX, FORM_FIELD_VALUE_MAX, FORM_FIELDS_TEXT_MAX } from "@/lib/form-fields-core";
 import { PublicForm, type PublicFormProps } from "./public-form";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,8 @@ const PLAIN_ERRORS: Record<string, string> = {
   input: "Something in the form wasn't right. Check the title and try again.",
   unavailable: FORM_UNAVAILABLE,
 };
+/** `?error=input` on a form with custom fields (TPA-400): a required one may be what's missing. */
+const INPUT_WITH_FIELDS = "Something in the form wasn't right. Check the title and the required fields, then try again.";
 
 export default async function FormPage({ params, searchParams }: PageProps<"/f/[publicId]">) {
   const [{ publicId }, sp] = await Promise.all([params, searchParams]);
@@ -34,6 +37,7 @@ export default async function FormPage({ params, searchParams }: PageProps<"/f/[
   if (!form) notFound();
   // Unpaid (locked) org (VEC-224/262): the form is kept but shows as unavailable, without the fields.
   if (!(await hasFeature(form.orgId, "publicForms"))) return <FormUnavailable embed={sp.embed === "1"} />;
+  const errorCode = typeof sp.error === "string" ? sp.error : null;
   const props: PublicFormProps = {
     publicId: form.publicId,
     name: form.name,
@@ -43,17 +47,25 @@ export default async function FormPage({ params, searchParams }: PageProps<"/f/[
     allowedTypes: form.typeMode === "choose" ? form.allowedTypes : [],
     embed: sp.embed === "1",
     sent: sp.sent === "1",
-    error: typeof sp.error === "string" ? (PLAIN_ERRORS[sp.error] ?? null) : null,
+    error: errorCode === "input" && form.fields.length ? INPUT_WITH_FIELDS : errorCode && Object.hasOwn(PLAIN_ERRORS, errorCode) ? PLAIN_ERRORS[errorCode] : null,
     limits: {
       title: FORM_TITLE_MAX,
       description: FORM_DESCRIPTION_MAX,
       name: FORM_SUBMITTER_NAME_MAX,
       email: FORM_SUBMITTER_EMAIL_MAX,
       body: FORM_BODY_MAX,
+      short: FORM_FIELD_VALUE_MAX.short,
+      long: FORM_FIELD_VALUE_MAX.long,
+      fieldsText: FORM_FIELDS_TEXT_MAX,
+      screenshots: FORM_FIELD_SCREENSHOTS_MAX,
     },
     honeypot: HONEYPOT_FIELD,
     richText: form.richText,
     allowImages: form.richText && form.allowImages,
+    // TPA-400: the form's own questions (in order), the note under Email, and whether the Details box is shown.
+    fields: form.fields.map((f) => ({ id: f.id, label: f.label, help: f.help, kind: f.kind, required: f.required })),
+    emailHelp: form.emailHelp,
+    hideDescription: form.hideDescription,
   };
   return <PublicForm {...props} />;
 }
