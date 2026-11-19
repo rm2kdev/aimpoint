@@ -1,7 +1,7 @@
 // node --test src/lib/stripe-sync.test.mjs (VEC-223: Stripe -> org billing mapping)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canceledEndDate, hasLiveSubscription, invoiceSubscriptionId, mergeBilling, periodEnd, subscriptionPatch, subscriptionSeats } from "./stripe-sync.ts";
+import { canceledEndDate, hasLiveSubscription, invoiceSubscriptionId, mergeBilling, needsDiscountExpand, periodEnd, subscriptionDiscount, subscriptionPatch, subscriptionSeats } from "./stripe-sync.ts";
 
 const T = 1_800_000_000;
 const sub = (over = {}) => ({ id: "sub_1", status: "active", customer: "cus_1", items: { data: [{ current_period_end: T }] }, ...over });
@@ -71,4 +71,38 @@ test("seats come from the subscription item quantity (VEC-238)", () => {
   assert.equal(subscriptionSeats(sub()), null, "no quantity on the item");
   assert.equal(subscriptionSeats(sub({ items: null })), null);
   assert.equal(mergeBilling({ seats: 2, status: "active" }, subscriptionPatch(sub({ items: { data: [{ quantity: 3 }] } })), new Date()).seats, 3);
+});
+
+// VEC-311: promotion codes at Checkout put a discount on the subscription; Billing shows it.
+const coupon = { id: "co_1", name: "Test 50", percent_off: 50, amount_off: null, currency: null, duration: "repeating", duration_in_months: 3 };
+const discount = (over = {}) => ({ id: "di_1", end: T + 86_400 * 90, promotion_code: { id: "promo_1", code: "AIMPOINTTEST50" }, source: { coupon }, ...over });
+
+test("subscription discount: expanded clover shape, legacy coupon field, none, bare ids", () => {
+  assert.deepEqual(subscriptionDiscount(sub({ discounts: [discount()] })), {
+    code: "AIMPOINTTEST50",
+    name: "Test 50",
+    percentOff: 50,
+    amountOffCents: null,
+    currency: null,
+    duration: "repeating",
+    durationInMonths: 3,
+    endsAt: new Date((T + 86_400 * 90) * 1000),
+  });
+  const legacy = subscriptionDiscount(sub({ discounts: [{ id: "di_2", end: null, promotion_code: "promo_1", coupon: { ...coupon, duration: "forever", duration_in_months: null } }] }));
+  assert.deepEqual([legacy.code, legacy.duration, legacy.endsAt], [null, "forever", null]);
+  assert.equal(subscriptionDiscount(sub({ discounts: [] })), null);
+  assert.equal(subscriptionDiscount(sub({ discounts: ["di_1"] })), undefined);
+  assert.equal(subscriptionDiscount(sub()), undefined);
+  assert.equal(needsDiscountExpand(sub({ discounts: ["di_1"] })), true);
+  assert.equal(needsDiscountExpand(sub({ discounts: [discount()] })), false);
+  assert.equal(needsDiscountExpand(sub({ discounts: [] })), false);
+});
+
+test("subscription patch stores the discount, clears it when removed, keeps it when unknown", () => {
+  assert.equal(subscriptionPatch(sub({ discounts: [discount()] })).discount.code, "AIMPOINTTEST50");
+  const prev = { status: "active", discount: { code: "OLD" } };
+  assert.equal(mergeBilling(prev, subscriptionPatch(sub({ discounts: [] })), new Date()).discount, null);
+  assert.equal(mergeBilling(prev, subscriptionPatch(sub({ discounts: ["di_1"] })), new Date()).discount.code, "OLD");
+  assert.equal("discount" in subscriptionPatch(sub()), false);
+  assert.equal(subscriptionPatch(sub({ discounts: [discount()] }), true).discount, null);
 });

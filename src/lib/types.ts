@@ -130,9 +130,27 @@ export interface OrgBilling {
   pastDueSince?: Date | null;
   /** Seats on the subscription (its item quantity, from the webhook, VEC-238): billed at US$4.95 each per month. */
   seats?: number | null;
+  /** The subscription's discount (a coupon, usually from a promotion code at Checkout, VEC-311); null when none. */
+  discount?: BillingDiscount | null;
   /** `created` time of the newest Stripe webhook event applied (VEC-223); older late arrivals are skipped. */
   lastEventAt?: Date | null;
   updatedAt?: Date;
+}
+/** A Stripe discount on the Pro subscription as stored from the webhook (VEC-311). Coupons live in the Stripe dashboard. */
+export interface BillingDiscount {
+  /** The promotion code the customer typed (e.g. AIMPOINTTEST50), null when the coupon was applied directly. */
+  code: string | null;
+  /** The coupon's name, else null. */
+  name: string | null;
+  percentOff: number | null;
+  /** Fixed amount off each invoice, in the smallest unit of `currency`. */
+  amountOffCents: number | null;
+  currency: string | null;
+  /** Stripe coupon duration: once (one invoice), repeating (durationInMonths), forever. */
+  duration: string | null;
+  durationInMonths: number | null;
+  /** When the discount stops applying (repeating coupons), else null. */
+  endsAt: Date | null;
 }
 /**
  * Stages a person's new task may start in by default (VEC-128): open stages only, never done/cancelled.

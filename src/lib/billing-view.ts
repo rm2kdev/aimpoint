@@ -5,11 +5,11 @@
  * in billing-core; this only describes the result. With billing off (`enabled: false`) every check here
  * passes and the UI shows no Billing entry and no prompts.
  */
-import { billedSeatsFor, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type Plan } from "./billing-core";
+import { billedSeatsFor, discountedMonthlyCents, discountLabel, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type DiscountInfo, type Plan } from "./billing-core";
 import type { BillingStatus } from "./types";
 
-export { billedSeatsFor, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd };
-export type { Plan };
+export { billedSeatsFor, discountedMonthlyCents, discountLabel, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd };
+export type { DiscountInfo, Plan };
 
 export type CountKind = "members" | "bots" | "projects";
 
@@ -46,6 +46,8 @@ export interface BillingSummary {
   seats: number;
   /** Seats on the Stripe subscription as last reported by the webhook (null before one arrived). */
   subscribedSeats: number | null;
+  /** The live subscription's discount while it applies (VEC-311, promotion code at Checkout), else null. */
+  discount: (DiscountInfo & { endsAt: string | null }) | null;
 }
 
 /** Billing off: what the self-hosted UI sees (nothing limited). */
@@ -68,6 +70,7 @@ export const UNLIMITED_SUMMARY: BillingSummary = {
   usage: { members: 0, bots: 0, projects: 0, pendingInvites: 0, archivedProjects: 0 },
   seats: 0,
   subscribedSeats: null,
+  discount: null,
 };
 
 const NOUN: Record<CountKind, [string, string]> = {

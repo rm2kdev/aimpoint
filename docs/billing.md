@@ -64,6 +64,30 @@ Managed Payments adds the customer's local tax on top at Checkout (for example 1
 Australian address), so the Customer Portal and invoices show the tax-inclusive amount while Aimpoint
 shows the pre-tax price marked "plus tax" (`TAX_NOTE` in `src/lib/billing-core.ts`, VEC-270). Any new product must get the same tax code.
 
+## Coupons
+
+Pro Checkout accepts Stripe promotion codes (VEC-311): `checkoutSessionParams` in `src/lib/checkout-core.ts`
+sets `allow_promotion_codes: true`, so the Checkout page shows an "Add promotion code" field and Stripe applies
+the discount to the subscription. Aimpoint has no coupon admin of its own: coupons and their promotion codes are
+created and retired in the Stripe dashboard (Product catalog > Coupons), in the live account for production.
+Bots create test coupons in the sandbox only.
+
+Settings > Billing shows the subscription's discount. The subscription webhook stores it on `billing.discount`
+(payloads only carry discount ids, so the handler retrieves the subscription with `discounts.source.coupon`
+expanded) and a repeating or forever coupon shows as a Discount line with the discounted monthly total. A
+`once` coupon only takes the first invoice down: Checkout's first invoice uses it and Stripe removes it from the
+subscription, so Billing goes on showing the full price, which is what the next invoice charges.
+
+Sandbox test code (staging, dev.aimpoint.dev, created in VEC-311):
+
+| Object | Id |
+| --- | --- |
+| Coupon "Aimpoint test 50% (sandbox)" (50% off, duration once) | `HPksd5RM` |
+| Promotion code `AIMPOINTTEST50` (active) | `promo_1UdPFLBCR0YJ1Rigv89SdmBJ` |
+
+Use `AIMPOINTTEST50` with test card 4242 4242 4242 4242: the first invoice is US$2.47 plus tax (Stripe rounds the
+50% off US$4.95 to US$2.48), then US$4.95 a month.
+
 ## Customer Portal
 
 Same configuration in both accounts, and it is the account default, so `billingPortal.sessions.create`

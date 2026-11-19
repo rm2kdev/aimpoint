@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { billedSeatsFor, countNoun, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { billedSeatsFor, countNoun, discountedMonthlyCents, discountLabel, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
 import { billingPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
@@ -121,7 +121,7 @@ function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; labe
  * bills (Pro, or locked while overdue/paused) already follows joins and leaves; the "now" wording is for an org
  * that hasn't subscribed (VEC-270).
  */
-function SeatsNote({ b, pro, billedSeats }: { b: BillingSummary; pro: boolean; billedSeats: number }) {
+function SeatsNote({ b, pro, billedSeats, tz }: { b: BillingSummary; pro: boolean; billedSeats: number; tz: string }) {
   const people = `${b.seats} ${b.seats === 1 ? "person" : "people"}`;
   const updatingTo = seatsUpdatingTo({ pro, liveSubscription: b.liveSubscription, seats: b.seats, subscribedSeats: b.subscribedSeats });
   return (
@@ -135,7 +135,26 @@ function SeatsNote({ b, pro, billedSeats }: { b: BillingSummary; pro: boolean; b
           Updating Stripe to {seatTotalLabel(updatingTo)}.
         </span>
       )}
+      {b.discount && <DiscountLine b={b} billedSeats={billedSeats} tz={tz} />}
     </p>
+  );
+}
+
+/**
+ * The subscription's discount (VEC-311, a promotion code entered at Checkout): what it takes off and, for a recurring
+ * one, the discounted monthly total. Stripe applies it to the invoices; Aimpoint only shows it.
+ */
+function DiscountLine({ b, billedSeats, tz }: { b: BillingSummary; billedSeats: number; tz: string }) {
+  const d = b.discount!;
+  const full = proMonthlyCents(billedSeats);
+  const after = discountedMonthlyCents(full, d);
+  const until = formatDate(d.endsAt, tz);
+  return (
+    <span className="mt-1 block text-[12.5px] text-foreground" data-billing-discount={d.code ?? d.name ?? "discount"}>
+      Discount {discountLabel(d)}
+      {until ? `, until ${until}` : ""}
+      {after !== full ? `: ${usd(after)}/month ${TAX_NOTE}.` : "."}
+    </span>
   );
 }
 
@@ -218,7 +237,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                 {b.status === "past_due" && pro && (
                   <span className="rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive-ink">Payment failed</span>
                 )}
-                {pro && <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{`${usd(proMonthlyCents(billedSeats))}/month ${TAX_NOTE}`}</span>}
+                {pro && <span className="tabular ml-auto text-[13px] text-muted-foreground" data-billing-total>{`${usd(discountedMonthlyCents(proMonthlyCents(billedSeats), b.discount))}/month ${TAX_NOTE}`}</span>}
               </div>
               <p
                 data-billing-note={state.warn ? "warning" : "info"}
@@ -230,7 +249,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                 {state.warn && <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />}
                 {state.text}
               </p>
-              <SeatsNote b={b} pro={pro} billedSeats={billedSeats} />
+              <SeatsNote b={b} pro={pro} billedSeats={billedSeats} tz={tz} />
               {isAdmin ? (
                 <div className="mt-3.5 flex flex-wrap gap-2">
                   {/* Hidden while a finished Checkout waits for its webhook, so nobody pays twice. */}

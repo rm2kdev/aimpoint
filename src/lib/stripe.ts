@@ -21,6 +21,7 @@ import { ObjectId } from "mongodb";
 import { cols, getDb } from "@/lib/db";
 import { stripeConfig } from "@/lib/billing";
 import { seatQuantity } from "@/lib/billing-core";
+import { checkoutSessionParams } from "@/lib/checkout-core";
 import { orgPath } from "@/lib/paths";
 import { publish } from "@/lib/realtime/server";
 import { UserError } from "@/lib/result";
@@ -29,6 +30,7 @@ import {
   hasLiveSubscription,
   invoiceSubscriptionId,
   mergeBilling,
+  needsDiscountExpand,
   refId,
   subscriptionPatch,
   type InvoiceLike,
@@ -90,7 +92,8 @@ export async function ensureCustomer(org: OrgDoc): Promise<string> {
 
 /**
  * A subscription-mode Checkout session for Pro at US$4.95 per user per month (STRIPE_PRICE_ID is the per-seat
- * price), with quantity = the org's billable seats now (min 1, VEC-238). Refused while a subscription is live.
+ * price), with quantity = the org's billable seats now (min 1, VEC-238) and promotion codes allowed (VEC-311,
+ * params in checkout-core.ts). Refused while a subscription is live.
  */
 export async function createCheckoutSession(org: OrgDoc, origin: string, returnTo: CheckoutReturn = "billing"): Promise<string> {
   if (hasLiveSubscription(org.billing))
@@ -100,16 +103,16 @@ export async function createCheckoutSession(org: OrgDoc, origin: string, returnT
   const orgId = org._id.toHexString();
   const { countBillableSeats } = await import("@/lib/seat-sync");
   const quantity = seatQuantity(await countBillableSeats(org._id));
-  const session = await stripe().checkout.sessions.create({
-    mode: "subscription",
-    customer,
-    client_reference_id: orgId,
-    line_items: [{ price: priceId, quantity }],
-    metadata: { orgId },
-    subscription_data: { metadata: { orgId } },
-    success_url: checkoutReturnUrl(origin, org.slug, returnTo, "?checkout=success&session_id={CHECKOUT_SESSION_ID}"),
-    cancel_url: checkoutReturnUrl(origin, org.slug, returnTo, "?checkout=cancelled"),
-  });
+  const session = await stripe().checkout.sessions.create(
+    checkoutSessionParams({
+      customer,
+      orgId,
+      priceId,
+      quantity,
+      successUrl: checkoutReturnUrl(origin, org.slug, returnTo, "?checkout=success&session_id={CHECKOUT_SESSION_ID}"),
+      cancelUrl: checkoutReturnUrl(origin, org.slug, returnTo, "?checkout=cancelled"),
+    }),
+  );
   if (!session.url) throw new Error("Stripe returned a Checkout session without a URL.");
   return session.url;
 }
@@ -233,8 +236,9 @@ async function handleEvent(event: Stripe.Event): Promise<{ orgId: ObjectId | nul
     }, false);
   }
   if (SUBSCRIPTION_EVENTS.has(event.type)) {
-    const sub = event.data.object as unknown as SubscriptionLike;
+    let sub = event.data.object as unknown as SubscriptionLike;
     const deleted = event.type === "customer.subscription.deleted";
+    if (!deleted && needsDiscountExpand(sub)) sub = await withDiscounts(sub);
     const org = await findOrg(sub.metadata?.orgId, { customer: refId(sub.customer), subscription: sub.id });
     if (!org) return { orgId: null, outcome: "ignored: no matching organisation" };
     const patch = subscriptionPatch(sub, deleted);
@@ -265,6 +269,20 @@ async function handleEvent(event: Stripe.Event): Promise<{ orgId: ObjectId | nul
     });
   }
   return { orgId: null, outcome: `ignored: ${event.type}` };
+}
+
+/**
+ * The event's subscription with its discounts expanded (VEC-311): webhook payloads only carry discount ids. If Stripe
+ * can't be reached the event still applies, keeping the stored discount, rather than failing the whole event.
+ */
+async function withDiscounts(sub: SubscriptionLike): Promise<SubscriptionLike> {
+  try {
+    const full = await stripe().subscriptions.retrieve(sub.id, { expand: ["discounts.source.coupon", "discounts.promotion_code"] });
+    return { ...sub, discounts: full.discounts as unknown as SubscriptionLike["discounts"] };
+  } catch (err) {
+    console.error("[stripe webhook] couldn't expand subscription discounts", sub.id, err);
+    return { ...sub, discounts: undefined };
+  }
 }
 
 /** The org an event belongs to: by the org id we put in metadata, else by its Stripe customer/subscription. */

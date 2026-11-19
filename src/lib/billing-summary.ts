@@ -6,7 +6,7 @@ import "server-only";
 import { cols } from "@/lib/db";
 import { billingDebugActive, billingDebugProblem, billingOn, getEntitlements, getPlan } from "@/lib/billing";
 import { billingDebugAvailable } from "@/lib/billing-mode";
-import { PAST_DUE_GRACE_DAYS, planActive } from "@/lib/billing-core";
+import { discountActive, PAST_DUE_GRACE_DAYS, planActive } from "@/lib/billing-core";
 import { canceledEndDate, hasLiveSubscription } from "@/lib/stripe-sync";
 import { UNLIMITED_SUMMARY, type BillingSummary } from "@/lib/billing-view";
 import type { OrgDoc } from "@/lib/types";
@@ -32,6 +32,7 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
   // subscription.created event): don't show it as the renewal date.
   const live = b.status === "active" || b.status === "trialing";
   const periodEnd = b.currentPeriodEnd && !(live && new Date(b.currentPeriodEnd).getTime() < Date.now()) ? b.currentPeriodEnd : null;
+  const discount = hasLiveSubscription(b) && discountActive(b.discount, new Date()) ? { ...b.discount, endsAt: iso(b.discount.endsAt) } : null;
   const graceFrom = b.status === "past_due" ? (b.pastDueSince ?? b.currentPeriodEnd ?? null) : null;
   return {
     enabled: true,
@@ -52,5 +53,6 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
     usage: { members: members + pendingInvites, bots, projects, pendingInvites, archivedProjects },
     seats: members,
     subscribedSeats: typeof b.seats === "number" ? b.seats : null,
+    discount,
   };
 }

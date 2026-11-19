@@ -60,6 +60,54 @@ export function seatTotalLabel(seats: number): string {
   return `${n} ${n === 1 ? "seat" : "seats"} x ${usd(PRO_SEAT_PRICE_CENTS)} = ${usd(proMonthlyCents(n))}/month ${TAX_NOTE}`;
 }
 
+/** A subscription discount as Settings > Billing sees it (VEC-311; OrgBilling.discount with an ISO end date). */
+export interface DiscountInfo {
+  code: string | null;
+  name: string | null;
+  percentOff: number | null;
+  amountOffCents: number | null;
+  currency: string | null;
+  duration: string | null;
+  durationInMonths: number | null;
+  endsAt: string | Date | null;
+}
+
+/** Still applies at `now`: no end date, or one in the future. */
+export function discountActive(d: DiscountInfo | null | undefined, now: Date): d is DiscountInfo {
+  return !!d && (!d.endsAt || new Date(d.endsAt).getTime() > now.getTime());
+}
+
+/**
+ * The monthly total after a discount that recurs (repeating or forever), in US cents: the percent-off amount rounded
+ * like Stripe (50% of US$4.95 takes US$2.48 off, leaving US$2.47), a US-dollar amount off floored at 0. A once coupon only takes one invoice down (Checkout's first, which
+ * removes it), and an amount in another currency can't be converted here, so both leave the total as is.
+ */
+export function discountedMonthlyCents(cents: number, d: DiscountInfo | null | undefined): number {
+  if (!d || d.duration === "once") return cents;
+  if (d.percentOff) return cents - Math.round((cents * d.percentOff) / 100);
+  if (d.amountOffCents && (!d.currency || d.currency.toLowerCase() === "usd")) return Math.max(0, cents - d.amountOffCents);
+  return cents;
+}
+
+/** "AIMPOINTTEST50: 50% off for 3 months", "US$1.00 off forever", "Launch: 20% off one invoice". */
+export function discountLabel(d: DiscountInfo): string {
+  const off = d.percentOff
+    ? `${d.percentOff}% off`
+    : d.amountOffCents
+      ? `${!d.currency || d.currency.toLowerCase() === "usd" ? usd(d.amountOffCents) : `${(d.amountOffCents / 100).toFixed(2)} ${d.currency.toUpperCase()}`} off`
+      : "discount";
+  const span =
+    d.duration === "once"
+      ? "one invoice"
+      : d.duration === "repeating" && d.durationInMonths
+        ? `for ${d.durationInMonths} ${d.durationInMonths === 1 ? "month" : "months"}`
+        : d.duration === "forever"
+          ? "forever"
+          : "";
+  const who = d.code ?? d.name;
+  return `${who ? `${who}: ` : ""}${off}${span ? ` ${span}` : ""}`;
+}
+
 /** What Settings > Billing needs to show the seat line (VEC-238, VEC-303). */
 export interface SeatLineInput {
   pro: boolean;

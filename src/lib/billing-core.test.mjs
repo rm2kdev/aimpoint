@@ -25,6 +25,9 @@ import {
   proMonthlyCents,
   seatTotalLabel,
   usd,
+  discountActive,
+  discountedMonthlyCents,
+  discountLabel,
 } from "./billing-core.ts";
 
 const NOW = new Date("2026-11-18T12:00:00Z");
@@ -215,4 +218,29 @@ test("debug billing accepts only a complete test-mode Stripe setup", () => {
   assert.deepEqual(missing, ["STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID are not set."]);
   assert.match(debugStripeProblems({})[0], /STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRICE_ID are not set/);
   assert.match(debugBillingError(live), /^Test billing \(debug\) can't use this Stripe setup: STRIPE_SECRET_KEY is a live key/);
+});
+
+// VEC-311: a promotion code's discount on Settings > Billing.
+const disc = (over = {}) => ({ code: "AIMPOINTTEST50", name: null, percentOff: 50, amountOffCents: null, currency: null, duration: "repeating", durationInMonths: 3, endsAt: null, ...over });
+
+test("discounted monthly total: recurring percent/amount off, once and foreign currency leave it", () => {
+  assert.equal(discountedMonthlyCents(495, disc()), 247); // Stripe Checkout: $4.95 - $2.48 = $2.47
+  assert.equal(discountedMonthlyCents(1485, disc()), 742);
+  assert.equal(discountedMonthlyCents(495, disc({ duration: "forever", percentOff: 100 })), 0);
+  assert.equal(discountedMonthlyCents(990, disc({ percentOff: null, amountOffCents: 200, currency: "usd" })), 790);
+  assert.equal(discountedMonthlyCents(495, disc({ percentOff: null, amountOffCents: 1000, currency: "usd" })), 0);
+  assert.equal(discountedMonthlyCents(495, disc({ percentOff: null, amountOffCents: 200, currency: "aud" })), 495);
+  assert.equal(discountedMonthlyCents(495, disc({ duration: "once" })), 495);
+  assert.equal(discountedMonthlyCents(495, null), 495);
+});
+
+test("discount label and active window", () => {
+  assert.equal(discountLabel(disc()), "AIMPOINTTEST50: 50% off for 3 months");
+  assert.equal(discountLabel(disc({ duration: "once" })), "AIMPOINTTEST50: 50% off one invoice");
+  assert.equal(discountLabel(disc({ code: null, name: "Launch", percentOff: null, amountOffCents: 100, currency: "usd", duration: "forever" })), "Launch: US$1.00 off forever");
+  assert.equal(discountLabel(disc({ durationInMonths: 1 })), "AIMPOINTTEST50: 50% off for 1 month");
+  assert.equal(discountActive(disc(), NOW), true);
+  assert.equal(discountActive(disc({ endsAt: "2026-11-18T11:00:00Z" }), NOW), false);
+  assert.equal(discountActive(disc({ endsAt: "2026-12-18T11:00:00Z" }), NOW), true);
+  assert.equal(discountActive(null, NOW), false);
 });
