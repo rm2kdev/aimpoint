@@ -61,6 +61,27 @@ export function pruneSubmitStatuses(ids: readonly string[], statuses: readonly S
   return ids.filter((id, i) => ids.indexOf(id) === i && isPublicSubmitStage(byId.get(id)?.category));
 }
 
+/**
+ * Submit statuses for a project being switched public (AIM-2): the saved list when there is one, else the project's
+ * new-task status (`newTaskStatusId`, lib/project-defaults) when it's in a submit stage, so public tickets start
+ * where people's new tasks do (e.g. Triage, where a triage bot picks them up). Empty when it isn't (read-only).
+ */
+export function initialSubmitStatuses(saved: readonly string[], newTaskStatusId: string | null | undefined, statuses: readonly StatusLike[]): string[] {
+  if (saved.length) return [...saved];
+  const status = newTaskStatusId ? statuses.find((s) => s.id === newTaskStatusId) : undefined;
+  return status && isPublicSubmitStage(status.category) ? [status.id] : [];
+}
+
+/**
+ * The project's new-task status when the default public destination isn't it (AIM-2), for the settings warning that
+ * public tickets skip it; null when they match, nobody can submit, or the new-task status can't take submissions.
+ */
+export function intakeSkips<S extends StatusLike>(allowed: readonly string[], newTaskStatusId: string | null | undefined, statuses: readonly S[]): S | null {
+  if (!allowed.length || !newTaskStatusId || allowed[0] === newTaskStatusId) return null;
+  const status = statuses.find((s) => s.id === newTaskStatusId);
+  return status && isPublicSubmitStage(status.category) ? status : null;
+}
+
 /** The status a submission goes into: the requested one when allowed, the first allowed one when none was asked for. */
 export function pickSubmitStatus(requested: unknown, allowed: readonly string[]): { ok: true; id: string } | { ok: false; error: string } {
   if (!allowed.length) return { ok: false, error: "This project isn't taking new tickets." };

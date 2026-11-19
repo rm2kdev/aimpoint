@@ -203,6 +203,7 @@ Testing billing on a self-hosted instance: set `AIMPOINT_DEBUG=1` (leave `BILLIN
 ## Notes
 
 - Invite links are single-use and expire after 14 days. Creating an invite emails the link to the invitee (`src/lib/invite-email.ts` through `sendEmail`; absolute link from `AUTH_URL` when set, else the admin's own origin); if the email can't be sent the invite still stands and Settings > Members says so, so the admin can copy the link instead. Re-inviting an address replaces its pending invite and emails the new link.
+- Public projects (Project settings > Public access): signed-in accounts submit into the ticked submit statuses, and the default (first) one is where a ticket lands unless the submitter picks another. It is separate from the project's new-task status, but switching a project public with nothing ticked starts it with the new-task status (e.g. Triage, so the triage bot picks submissions up), the settings mark that status with "New tasks start here", and when the default is a different status a note says submissions skip it and offers to use it instead (`src/lib/project-public-core.ts` `initialSubmitStatuses`/`intakeSkips`).
 - Comments are plain text with @mentions (stored as `<@id>` tokens, validated against the org on save); descriptions are sanitised HTML.
 - Not built yet: email notifications, presence avatars, drag-to-reorder within a status.
 

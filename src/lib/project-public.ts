@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { loadStatuses } from "@/lib/statuses";
+import { newTaskStatusFor } from "@/lib/project-defaults";
 import { hasFeature, requireFeatureById } from "@/lib/billing-limits";
 import { createTaskAs, FORM_DESCRIPTION_MAX, type Actor } from "@/lib/task-service";
 import { hit, waitText } from "@/lib/form-submit";
@@ -14,6 +15,7 @@ import {
   PUBLIC_TASKS_MAX,
   PUBLIC_UNAVAILABLE,
   PUBLIC_UPLOAD_FILE,
+  initialSubmitStatuses,
   isPublicSubmitStage,
   parsePublicRef,
   pickSubmitStatus,
@@ -91,7 +93,7 @@ function assertAdmin(actor: PublicSettingsActor) {
 
 async function ownProject(orgId: ObjectId, projectId: string) {
   const c = await cols();
-  const project = await c.projects.findOne({ _id: oid(projectId, "project"), orgId }, { projection: { name: 1, key: 1, archivedAt: 1, publicAccess: 1 } });
+  const project = await c.projects.findOne({ _id: oid(projectId, "project"), orgId }, { projection: { name: 1, key: 1, archivedAt: 1, publicAccess: 1, defaults: 1 } });
   if (!project) throw new UserError("That project no longer exists.");
   return project;
 }
@@ -127,6 +129,11 @@ export async function setProjectPublicAccess(actor: PublicSettingsActor, project
     if (!r.ok) throw new UserError(r.error);
     submitStatusIds = r.ids;
   } else submitStatusIds = pruneSubmitStatuses((prev?.submitStatusIds ?? []).map((id) => id.toHexString()), statuses);
+  // Switching on with nothing allowed yet: submissions follow the project's new-task status (AIM-2).
+  if (enabled && !prev?.enabled && patch.submitStatusIds === undefined && !submitStatusIds.length) {
+    const newTask = (await newTaskStatusFor(actor.orgId, project._id, project)).status;
+    submitStatusIds = initialSubmitStatuses([], newTask?._id.toHexString(), statuses);
+  }
   const doc: ProjectPublicAccessDoc = {
     enabled,
     submitStatusIds: submitStatusIds.map((id) => new ObjectId(id)),

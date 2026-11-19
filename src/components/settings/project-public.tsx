@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, CopyIcon, ExternalLinkIcon, GlobeIcon, TriangleAlertIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -24,7 +24,8 @@ import {
 import { setProjectPublicAccess } from "@/app/actions/project-public";
 import { STAGE_LABELS } from "@/lib/stages";
 import { publicProjectPath } from "@/lib/paths";
-import { isFormDestinationStage, type ProjectPublicAccess, type Status } from "@/lib/types";
+import { intakeSkips } from "@/lib/project-public-core";
+import { isFormDestinationStage, newTaskStatusIn, type ProjectPublicAccess, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -57,7 +58,7 @@ export function ProjectPublic({
   archived: boolean;
   access: ProjectPublicAccess;
 }) {
-  const { org, isAdmin, statusesByProject, billing, memberById } = useOrg();
+  const { org, isAdmin, statusesByProject, billing, memberById, projectById, defaults } = useOrg();
   const locked = !billing.features.publicForms;
   const router = useRouter();
   const origin = useOrigin();
@@ -70,6 +71,9 @@ export function ProjectPublic({
   const statuses = projectStatuses(statusesByProject, projectId);
   const destinations = statuses.filter((s) => isFormDestinationStage(s.category));
   const statusById = new Map(statuses.map((s) => [s.id, s]));
+  // Where people's new tasks start (VEC-190); public tickets follow it unless the admin picks another default (AIM-2).
+  const newTask = newTaskStatusIn(statuses, projectById.get(projectId)?.newTaskStatusId, defaults.newTaskStage, (s) => s.id).status;
+  const newTaskId = newTask && isFormDestinationStage(newTask.category) ? newTask.id : null;
 
   const enabled = draft?.enabled ?? access.enabled;
   const showComments = draft?.showComments ?? access.showComments;
@@ -77,6 +81,7 @@ export function ProjectPublic({
   const path = publicProjectPath(org.slug, projectKey);
   const url = `${origin}${path}`;
   const updatedBy = access.updatedBy ? memberById.get(access.updatedBy)?.name : null;
+  const skipped = enabled ? intakeSkips(allowed, newTaskId, statuses) : null;
 
   const save = (patch: Patch, success: string) => {
     setDraft((d) => ({ ...d, ...patch }));
@@ -152,6 +157,7 @@ export function ProjectPublic({
           {enabled && (
             <>
               {link}
+              {skipped && <SkipNote skipped={skipped} into={statusById.get(allowed[0])?.name} />}
               <dl className="grid grid-cols-[150px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[13px]">
                 <dt className="text-faint">Submissions into</dt>
                 <dd className="text-muted-foreground">
@@ -217,6 +223,11 @@ export function ProjectPublic({
                       <StatusRing status={s} statuses={statuses} size={12} />
                       <span className="truncate">{s.name}</span>
                       {STAGE_LABELS[s.category] !== s.name && <span className="text-[12px] text-faint">{STAGE_LABELS[s.category]}</span>}
+                      {s.id === newTaskId && (
+                        <span data-new-task-status className="text-[12px] text-faint" title={`New ${projectName} tasks start in ${s.name}`}>
+                          · New tasks start here
+                        </span>
+                      )}
                     </label>
                     {isDefault ? (
                       <Tag>Default</Tag>
@@ -231,6 +242,13 @@ export function ProjectPublic({
                 );
               })}
             </ul>
+          )}
+          {skipped && (
+            <SkipNote skipped={skipped} into={statusById.get(allowed[0])?.name}>
+              <Button variant="outline" size="sm" className="h-7 shrink-0 text-[12.5px]" onClick={() => makeDefault(skipped)} data-use-new-task-status>
+                Use {skipped.name}
+              </Button>
+            </SkipNote>
           )}
         </fieldset>
 
@@ -255,6 +273,9 @@ export function ProjectPublic({
             <AlertDialogDescription>
               Anyone with the link, signed in or not, can read every ticket in {projectName}: titles, descriptions, statuses and images
               {showComments ? ", and comments" : ""}. Search engines may find it. You can make it private again at any time.
+              {!allowed.length && newTaskId && (
+                <> Signed-in accounts will be able to submit tickets into {statusById.get(newTaskId)?.name}, where new {projectName} tasks start; you can change that below.</>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -272,6 +293,19 @@ export function ProjectPublic({
         </AlertDialogContent>
       </AlertDialog>
     </SettingsRow>
+  );
+}
+
+/** Public tickets land somewhere other than the project's new-task status (AIM-2), e.g. Backlog instead of Triage. */
+function SkipNote({ skipped, into, children }: { skipped: Status; into?: string; children?: ReactNode }) {
+  return (
+    <div data-intake-skips role="note" className="flex items-center gap-3 rounded-lg border border-border bg-sidebar px-3.5 py-2.5 text-[13px] text-muted-foreground">
+      <span className="min-w-0 flex-1">
+        Public tickets land in {into ?? "another status"}, not {skipped.name} where new tasks start
+        {skipped.category === "triage" ? ", so your triage bot won't pick them up" : ""}.
+      </span>
+      {children}
+    </div>
   );
 }
 

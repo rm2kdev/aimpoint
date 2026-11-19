@@ -7,6 +7,8 @@ import {
   resolveSubmitStatuses,
   pruneSubmitStatuses,
   pickSubmitStatus,
+  initialSubmitStatuses,
+  intakeSkips,
   rewritePublicImages,
   localUploadNames,
   publicImagePath,
@@ -146,4 +148,27 @@ test("parsePublicRef normalises slug and key and refuses junk", () => {
   for (const [s, k] of [["", "VEC"], ["north wind", "VEC"], ["northwind", "1AB"], ["northwind", "V"], [{}, "VEC"], ["northwind", null], ["a/b", "VEC"]]) {
     assert.equal(parsePublicRef(s, k), null);
   }
+});
+
+test("initialSubmitStatuses seeds the new-task status when nothing is saved (AIM-2)", () => {
+  assert.deepEqual(initialSubmitStatuses([], T, statuses), [T]);
+  assert.deepEqual(initialSubmitStatuses([], U, statuses), [U]);
+  assert.deepEqual(initialSubmitStatuses([B], T, statuses), [B], "a saved list is kept");
+  assert.deepEqual(initialSubmitStatuses([], S, statuses), [], "a started new-task status can't take submissions");
+  assert.deepEqual(initialSubmitStatuses([], null, statuses), []);
+  assert.deepEqual(initialSubmitStatuses([], "9".repeat(24), statuses), []);
+});
+
+test("intakeSkips flags a default that isn't the new-task status (AIM-2)", () => {
+  assert.equal(intakeSkips([B], T, statuses)?.id, T, "Backlog default skips Triage");
+  assert.equal(intakeSkips([B, T], T, statuses)?.id, T, "Triage allowed but not the default");
+  assert.equal(intakeSkips([T, B], T, statuses), null);
+  assert.equal(intakeSkips([], T, statuses), null, "read-only project");
+  assert.equal(intakeSkips([B], S, statuses), null, "new-task status outside the submit stages");
+  assert.equal(intakeSkips([B], null, statuses), null);
+});
+
+test("a project seeded from its new-task status files public tickets there (AIM-2)", () => {
+  const allowed = pruneSubmitStatuses(initialSubmitStatuses([], T, statuses), statuses);
+  assert.deepEqual(pickSubmitStatus(undefined, allowed), { ok: true, id: T });
 });
