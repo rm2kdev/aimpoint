@@ -1,7 +1,8 @@
 /**
  * The name agents give Aimpoint's MCP server in their own MCP client (VEC-198). The product was called Vector, and
  * bots set up before the rename have the server as "vector" (their tools are mcp__vector__*), so wake-ups name the
- * server the way each bot actually has it until it reinstalls. Client-safe: no server-only imports.
+ * server the way each bot actually has it until it reinstalls. VEC-322 kept this fallback (and the note below) because
+ * bots with no recorded name still exist; the other VEC-198 shims are gone. Client-safe: no server-only imports.
  */
 export const MCP_SERVER_NAME = "aimpoint";
 export const LEGACY_MCP_SERVER_NAME = "vector";

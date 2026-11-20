@@ -528,7 +528,7 @@ function Settings({
             />
             {generated && secret === generated && (
               <p className="text-[12px] text-faint">
-                {b.method === "hermes-api" ? "Put this in Hermes's .env as API_SERVER_KEY and restart the gateway:" : "Use this secret to check X-Aimpoint-Signature (X-Vector-Signature carries the same value):"}
+                {b.method === "hermes-api" ? "Put this in Hermes's .env as API_SERVER_KEY and restart the gateway:" : "Use this secret to check X-Aimpoint-Signature:"}
               </p>
             )}
             {generated && secret === generated && b.method === "hermes-api" && <CopyBlock text={`API_SERVER_ENABLED=true\nAPI_SERVER_KEY=${generated}`} />}

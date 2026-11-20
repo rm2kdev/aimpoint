@@ -6,13 +6,13 @@ import { cols } from "@/lib/db";
 import { unseal } from "@/lib/secrets";
 import { friendlyNetworkError, hermesBase, hermesProbe, httpError } from "@/lib/bot-dispatch";
 import type { BotDoc, BotMcpInstall, BotMcpInstallDoc, OrgDoc } from "@/lib/types";
-import { LEGACY_MCP_SERVER_NAME, MCP_SERVER_NAME, type McpServerName } from "@/lib/mcp-name";
+import { MCP_SERVER_NAME, type McpServerName } from "@/lib/mcp-name";
 
 /**
  * "Install Aimpoint's MCP server" for a Hermes connection (VEC-169, recipe from the VEC-168 spike).
  *
  * 1. Install run: POST /v1/runs with a prompt that saves the bot key to the profile's .env, runs
- *    `hermes mcp add aimpoint` and `hermes mcp test aimpoint` (then drops the pre-rename `vector` entry, VEC-198), and
+ *    `hermes mcp add aimpoint` and `hermes mcp test aimpoint`, and
  *    answers `AIMPOINT_MCP_INSTALL: ok|failed`.
  * 2. Hermes never sees new MCP tools in the run that added them: the gateway picks the server up on its housekeeping
  *    reconcile, 40-80 s later. So Aimpoint waits, then sends check runs that call get_workspace (CHECK_AT_MS).
@@ -28,7 +28,7 @@ import { LEGACY_MCP_SERVER_NAME, MCP_SERVER_NAME, type McpServerName } from "@/l
 const INSTALL_RUN_MS = 180_000;
 /**
  * When each check run is due, counted from the install finishing. The gateway's reconcile loads a new server 38-78 s
- * after the install. A reinstall over a `vector` server Hermes had parked (its old key stopped working and 5 reconnects
+ * after the install. A reinstall over a server Hermes had parked (its old key stopped working and 5 reconnects
  * failed) leaves config.yaml unchanged, so it only heals on the parked server's self-probe, every 300 s: the later
  * checks cover that.
  */
@@ -51,11 +51,10 @@ export const mcpUrlFor = (aimpointUrl: string) => `${aimpointUrl.replace(/\/+$/,
 
 export function installPrompt(a: { aimpointUrl: string; botName: string; key: string }) {
   const bot = a.botName.replace(/["\r\n\\]/g, "").trim() || "bot";
-  // From the VEC-168 spike (tested end to end on fresh profiles), renamed for Aimpoint in VEC-198: the server is added as
-  // "aimpoint" (key in MCP_AIMPOINT_API_KEY, the env var Hermes derives from the name), and the old "vector" entry and
-  // its key are only removed once the new one tested fine, so a failed install leaves a working old setup in place.
+  // From the VEC-168 spike (tested end to end on fresh profiles): the server is added as "aimpoint" (key in
+  // MCP_AIMPOINT_API_KEY, the env var Hermes derives from the name).
   // String.raw keeps the \n escapes for Python/printf.
-  return String.raw`Aimpoint (the issue tracker at ${a.aimpointUrl}, formerly called Vector) is connecting you as its bot "${bot}". Install Aimpoint's MCP server into your own Hermes config so future Aimpoint tasks reach you. Use your terminal tool for every step, run the commands exactly as written, and do not show the key in your reply.
+  return String.raw`Aimpoint (the issue tracker at ${a.aimpointUrl}) is connecting you as its bot "${bot}". Install Aimpoint's MCP server into your own Hermes config so future Aimpoint tasks reach you. Use your terminal tool for every step, run the commands exactly as written, and do not show the key in your reply.
 
 1. Save the bot key to your profile's secrets file (replaces any old value; prints only its length):
 python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or pathlib.Path.home()/'.hermes')/'.env';k='${a.key}';s=p.read_text() if p.exists() else '';s=re.sub(r'(?m)^MCP_AIMPOINT_API_KEY=.*\n?','',s);s=s+('' if not s or s.endswith('\n') else '\n')+'MCP_AIMPOINT_API_KEY='+k+'\n';p.write_text(s);os.chmod(p,0o600);print('saved',len(k))"
@@ -64,10 +63,7 @@ python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or
 hermes mcp remove aimpoint </dev/null >/dev/null 2>&1; printf 'y\ny\n' | hermes mcp add aimpoint --url ${mcpUrlFor(a.aimpointUrl)} --auth header
 
 3. Check it: hermes mcp test aimpoint
-Exit code 0 means it worked. Any other exit code means it failed: run hermes mcp remove aimpoint </dev/null, leave any "vector" entry as it is, and go to the last line.
-
-4. Only if step 3 worked, remove the old "vector" entry and its key (it pointed at the same tracker under its old name; fine if neither exists):
-hermes mcp remove vector </dev/null >/dev/null 2>&1; python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or pathlib.Path.home()/'.hermes')/'.env';s=p.read_text() if p.exists() else '';p.exists() and p.write_text(re.sub(r'(?m)^MCP_VECTOR_API_KEY=.*\n?','',s));print('cleaned')"
+Exit code 0 means it worked. Any other exit code means it failed: run hermes mcp remove aimpoint </dev/null and go to the last line.
 
 Do not restart Hermes or the gateway: the gateway picks the new server up by itself within about a minute, and Aimpoint will check that with a follow-up run.
 
@@ -90,20 +86,17 @@ const scrub = (s: string) =>
     .trim()
     .slice(0, 200);
 
-/**
- * Reads the one-line answer of an install/check run. Accepts the pre-rename VECTOR_MCP_* tags too (a run sent before
- * VEC-198 shipped); `server` says which name that run installed under.
- */
+/** Reads the one-line answer of an install/check run; `server` is the name that run installed under. */
 export function parseSentinel(output: string, kind: "install" | "check") {
   const tag = kind === "install" ? "MCP_INSTALL" : "MCP_CHECK";
-  const m = new RegExp(`\\b(AIMPOINT|VECTOR)_${tag}:\\s*(ok|failed)\\b(.*)`, "i").exec(output ?? "");
+  const m = new RegExp(`\\bAIMPOINT_${tag}:\\s*(ok|failed)\\b(.*)`, "i").exec(output ?? "");
   if (!m) return null;
-  const rest = m[3] ?? "";
+  const rest = m[2] ?? "";
   const tools = /tools=(\d+)/.exec(rest);
   const reason = /reason=(.*)/.exec(rest);
   return {
-    ok: m[2].toLowerCase() === "ok",
-    server: (m[1].toUpperCase() === "VECTOR" ? LEGACY_MCP_SERVER_NAME : MCP_SERVER_NAME) as McpServerName,
+    ok: m[1].toLowerCase() === "ok",
+    server: MCP_SERVER_NAME as McpServerName,
     tools: tools ? Number(tools[1]) : null,
     reason: reason ? scrub(reason[1]) : null,
   };

@@ -729,16 +729,11 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      // VEC-198: X-Aimpoint-* plus the pre-rename X-Vector-* copies, so receivers checking either keep working.
-      "User-Agent": "Aimpoint-Webhooks/1 Vector-Webhooks/1",
+      "User-Agent": "Aimpoint-Webhooks/1",
       "X-Aimpoint-Event": event,
       "X-Aimpoint-Delivery": id,
       "X-Aimpoint-Timestamp": ts,
       "X-Aimpoint-Signature": `sha256=${sig}`,
-      "X-Vector-Event": event,
-      "X-Vector-Delivery": id,
-      "X-Vector-Timestamp": ts,
-      "X-Vector-Signature": `sha256=${sig}`,
     },
     body,
     signal: AbortSignal.timeout(TIMEOUT_MS),
