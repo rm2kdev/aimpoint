@@ -14,6 +14,8 @@ import {
   moveNote,
   nextStepOf,
   ownerPlan,
+  pausedAsUmbrella,
+  pausedWhy,
   requiredBetween,
   stepById,
   stepDriven,
@@ -199,7 +201,7 @@ export async function planFlowForUpdate(input: FlowUpdateInput): Promise<FlowPla
   // A triage umbrella: split into sub-tasks it now waits on. Its flow pauses; the triager closes it out as today.
   if (current?.status.category === "triage" && target.status.category !== "triage" && input.waitingAfter.length && triager) {
     return {
-      flow: position(flow, target, { paused: true }),
+      flow: position(flow, target, { paused: true, pausedBy: "umbrella" }),
       ...(flowActive(flow) ? { activity: { from: fromName, to: target.name, note: "umbrella" as const, status: target.status.name, owner: input.assigneeAfter ? hex(input.assigneeAfter) : null } } : {}),
     };
   }
@@ -282,7 +284,7 @@ export async function advanceTarget(task: TaskDoc, requested?: StatusDoc | null)
   if (!ctx) return { kind: "none" };
   const drives = flowDrives(ctx.flow);
   const none = (why: string): AdvanceTarget => (drives && !requested ? { kind: "none", why } : { kind: "none" });
-  if (task.flow?.paused) return none("its flow is paused (it waits on the sub-tasks it was split into), so the flow didn't move it");
+  if (task.flow?.paused) return none(pausedWhy(pausedAsUmbrella(task.flow, { waiting: !!task.waitingOn?.length, triaged: !!task.triagedBy })));
   if (!ctx.current || !ctx.status) return none("it isn't at any step of its flow (its status belongs to none), so the flow didn't move it");
   if (ctx.status.category === "done" || ctx.status.category === "cancelled") return none(`it's already ${ctx.status.name}`);
   const from = ctx.current;

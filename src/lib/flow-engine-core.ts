@@ -281,5 +281,30 @@ export function stalledMoveOn(
   return { label: `Move to ${next.name}`, step: current, next };
 }
 
+/**
+ * Was this flow paused because the task became a triage umbrella (VEC-325)? `pausedBy` says so; pauses written before
+ * it existed fall back to the umbrella's marks (it waits on sub-tasks, or a triager split it).
+ */
+export function pausedAsUmbrella(flow: { paused?: boolean; pausedBy?: "umbrella" | "person" } | null | undefined, legacy: { waiting: boolean; triaged: boolean }): boolean {
+  if (!flow?.paused) return false;
+  if (flow.pausedBy) return flow.pausedBy === "umbrella";
+  return legacy.waiting || legacy.triaged;
+}
+
+/** Why complete_task moved nothing on a paused flow, for the reply ("Nothing moved: <this>."). */
+export const pausedWhy = (umbrella: boolean) =>
+  umbrella
+    ? "its flow is paused (it waits on the sub-tasks it was split into), so the flow didn't move it"
+    : "its flow is paused, so the flow didn't move it; whoever resumes it picks the step";
+
+/** The flow note after a status move left the flow paused. */
+export const pausedMoveNote = (umbrella: boolean, status: string) =>
+  umbrella
+    ? ` Its flow is paused (it waits on the sub-tasks it was split into), so it moved to ${status} and nobody new was assigned.`
+    : ` Its flow is paused, so it moved to ${status} and nobody new was assigned; whoever resumes the flow picks the step.`;
+
+/** set_status on a task a person paused: the status moved, the flow stayed out of it. (Umbrellas get no note.) */
+export const pausedStatusNote = " Its flow is paused, so the flow didn't move it or assign anyone; whoever resumes the flow picks the step.";
+
 /** Pause / Resume flow (design 5.6): the task's creator, its assignee or an admin. */
 export const canPauseFlow = (v: Pick<FlowViewer, "me" | "isAdmin" | "createdBy" | "assigneeId">) => v.isAdmin || v.createdBy === v.me || v.assigneeId === v.me;

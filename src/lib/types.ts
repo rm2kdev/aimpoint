@@ -505,6 +505,8 @@ export interface TaskFlowState {
   ownerOverride?: boolean;
   /** The flow is switched off for this task (or it became a triage umbrella). */
   paused?: boolean;
+  /** Who paused it (VEC-325): the triage split ("umbrella") or a person's Pause / Stop. Unset on older pauses. */
+  pausedBy?: "umbrella" | "person";
   /** Wait steps: when the reminder went out (once per entry). */
   remindedAt?: Date | null;
 }

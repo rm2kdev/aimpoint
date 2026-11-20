@@ -81,7 +81,7 @@ type TaskFlowCtx = NonNullable<Awaited<ReturnType<typeof loadTaskFlow>>>;
 export function flowPauseState(task: TaskDoc, ctx: TaskFlowCtx, paused: boolean, now: Date) {
   const at = paused ? ctx.current : ctx.status ? locateStep(ctx.flow, ctx.status, null) : null;
   const flow: TaskFlowState = paused
-    ? { ...(task.flow ?? { stepId: at?.id ?? null, source: ctx.flow.source, version: ctx.flow.version, enteredAt: now }), paused: true }
+    ? { ...(task.flow ?? { stepId: at?.id ?? null, source: ctx.flow.source, version: ctx.flow.version, enteredAt: now }), paused: true, pausedBy: "person" }
     : {
         stepId: at?.id ?? null,
         source: ctx.flow.source,

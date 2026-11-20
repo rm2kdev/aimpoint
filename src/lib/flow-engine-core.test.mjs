@@ -6,6 +6,10 @@ import assert from "node:assert/strict";
 import { resolveFlowSteps, DEFAULT_FLOW_STEPS } from "./flow-model.ts";
 import {
   canPauseFlow,
+  pausedAsUmbrella,
+  pausedMoveNote,
+  pausedStatusNote,
+  pausedWhy,
   finishWithStatus,
   flowDrives,
   flowIsActive,
@@ -551,4 +555,26 @@ test("a quiet step inside a flow that drives the work is driven; the seeded defa
   );
   assert.equal(flowDrives(triageNote), false);
   assert.equal(stepDriven(triageNote, stepById(triageNote, "build")), false);
+});
+
+test("VEC-325: a person's pause is told apart from a triage umbrella's", () => {
+  const none = { waiting: false, triaged: false };
+  assert.equal(pausedAsUmbrella({ paused: true, pausedBy: "umbrella" }, none), true);
+  assert.equal(pausedAsUmbrella({ paused: true, pausedBy: "person" }, { waiting: true, triaged: true }), false);
+  assert.equal(pausedAsUmbrella({ paused: false, pausedBy: "umbrella" }, none), false);
+  assert.equal(pausedAsUmbrella(null, { waiting: true, triaged: true }), false);
+  // Pauses from before pausedBy: an umbrella still waits on sub-tasks or was triaged; anything else is a person's.
+  assert.equal(pausedAsUmbrella({ paused: true }, { waiting: true, triaged: false }), true);
+  assert.equal(pausedAsUmbrella({ paused: true }, { waiting: false, triaged: true }), true);
+  assert.equal(pausedAsUmbrella({ paused: true }, none), false);
+});
+
+test("VEC-325: paused wording mentions sub-tasks only for an umbrella", () => {
+  assert.equal(pausedWhy(true), "its flow is paused (it waits on the sub-tasks it was split into), so the flow didn't move it");
+  assert.match(pausedWhy(false), /^its flow is paused, so the flow didn't move it/);
+  assert.doesNotMatch(pausedWhy(false), /sub-task/);
+  assert.equal(pausedMoveNote(true, "Todo"), " Its flow is paused (it waits on the sub-tasks it was split into), so it moved to Todo and nobody new was assigned.");
+  assert.match(pausedMoveNote(false, "Todo"), /moved to Todo/);
+  assert.doesNotMatch(pausedMoveNote(false, "Todo"), /sub-task/);
+  assert.doesNotMatch(pausedStatusNote, /sub-task/);
 });

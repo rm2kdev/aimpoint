@@ -11,7 +11,7 @@ import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, f
 import { publishWorking } from "@/lib/claims";
 import { taskAccess } from "@/lib/access";
 import { advanceTarget, atWaitStep, flowBriefing, isParked, loadTaskFlow, ownerName, parkedReason, type AdvanceTarget } from "@/lib/flow-engine";
-import { nextStepOf } from "@/lib/flow-engine-core";
+import { nextStepOf, pausedAsUmbrella, pausedMoveNote, pausedStatusNote } from "@/lib/flow-engine-core";
 import { botOrgFlows } from "@/lib/flow-bot-view";
 import { botNewTaskViews, NEW_TASKS_NOTE } from "@/lib/project-defaults";
 import { notify } from "@/lib/notifications";
@@ -372,8 +372,8 @@ async function flowReplyNote(ctx: McpCtx, taskId: ObjectId, step: AdvanceTarget)
   if (step.kind === "none") return step.why ? ` Nothing moved: ${step.why}.` : "";
   if (step.kind === "wait") return ` It's at the ${step.step.name} step, which waits for "${step.step.wait?.label ?? "an outside event"}"; it moves on when that happens (advance_task, or a person moves it), not on complete_task.`;
   const c = await cols();
-  const after = await c.tasks.findOne({ _id: taskId }, { projection: { assigneeId: 1, flow: 1 } });
-  if (after?.flow?.paused) return ` Its flow is paused (it waits on the sub-tasks it was split into), so it moved to ${step.to.status.name} and nobody new was assigned.`;
+  const after = await c.tasks.findOne({ _id: taskId }, { projection: { assigneeId: 1, flow: 1, waitingOn: 1, triagedBy: 1 } });
+  if (after?.flow?.paused) return pausedMoveNote(pausedAsUmbrella(after.flow, { waiting: !!after.waitingOn?.length, triaged: !!after.triagedBy }), step.to.status.name);
   const owner = after?.assigneeId ? ((await loadDirectory(ctx.org._id)).get(after.assigneeId.toHexString())?.name ?? "its owner") : null;
   const self = after?.assigneeId?.equals(ctx.bot._id);
   if (step.to.status.category === "done") return ` The flow closed it as ${step.to.status.name}.`;
@@ -958,13 +958,15 @@ const TOOLS: Record<string, ToolImpl> = {
       const st = await resolveStatus(ctx, str(args, "status", true)!, task.projectId);
       const t = await updateTaskAs(ctx.actor, task._id, { statusId: st._id.toHexString() });
       // Where it is in its flow now and who has it (VEC-315), so a step owner moving it on sees the hand-off.
-      const after = await (await cols()).tasks.findOne({ _id: task._id }, { projection: { flow: 1, assigneeId: 1 } });
+      const after = await (await cols()).tasks.findOne({ _id: task._id }, { projection: { flow: 1, assigneeId: 1, waitingOn: 1, triagedBy: 1 } });
+      // A person paused its flow (VEC-325): say so, without the umbrella's "waits on sub-tasks" reason.
+      const pausedNote = after?.flow?.paused && task.flow?.paused && !pausedAsUmbrella(after.flow, { waiting: !!after.waitingOn?.length, triaged: !!after.triagedBy }) ? pausedStatusNote : "";
       const stepMoved = !!after?.flow?.stepId && after.flow.stepId !== task.flow?.stepId && !after.flow.paused;
       const mine = stepMoved && !!after?.assigneeId?.equals(ctx.bot._id) && !!task.assigneeId?.equals(ctx.bot._id);
       const where = stepMoved ? await whereNow(ctx, task._id) : "";
       const working = mine && !!(await (await cols()).agentClaims.findOne({ taskId: task._id, botId: ctx.bot._id, kind: { $ne: "triage" }, state: "in_progress" }, { projection: { _id: 1 } }));
       const carryOn = !mine ? "" : working ? " You own that step too: carry on with it here, and finish with complete_task (without a status to hand it on)." : " You own that step too: you'll be handed it for that step.";
-      return { content: [text(`${t.key} is now ${st.name}.${where}${carryOn}${blockersNote(assignedBlockersOf(t))}`)] };
+      return { content: [text(`${t.key} is now ${st.name}.${where}${carryOn}${pausedNote}${blockersNote(assignedBlockersOf(t))}`)] };
     },
   },
 
