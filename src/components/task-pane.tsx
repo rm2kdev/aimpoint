@@ -24,7 +24,7 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
 import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
-import { FlowStepper, useFlowPause, useStalledMoveOn } from "@/components/task-flow";
+import { TaskStatusBar, useFlowPause, useStalledMoveOn } from "@/components/task-flow";
 import { StopConfirm, StoppedBanner, useStopWork, WorkingStrip } from "@/components/stop-work";
 import { FormCreator, FormSubmitter, submitterLabel } from "@/components/task-source";
 import { ParkedNote, parkedPickerNote, useParkedBot, useParkedIn } from "@/components/parked";
@@ -386,7 +386,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </p>
           )}
 
-          {!task.archivedAt && !task.stopped && <FlowStepper task={task} className="mt-4" onTask={onFlowTask} />}
+          <TaskStatusBar task={task} className="mt-4" onTask={onFlowTask} />
 
           <dl className="mt-5 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-[13px]">
             <dt className="text-faint">Status</dt>

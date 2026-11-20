@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { CheckIcon, HourglassIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ArchiveIcon, CheckIcon, HourglassIcon, CirclePauseIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrgBase } from "@/components/org-provider";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { canPauseFlow, flowStepAction, locateStep, nextStepOf, stalledMoveOn, stepIndex, type FlowStepAction } from "@/lib/flow-engine-core";
 import type { ResolvedFlow, ResolvedStep } from "@/lib/flow-model";
+import { statusTrack } from "@/lib/status-track";
 import { isClosedCategory, type Member, type Task } from "@/lib/types";
 import { advanceTaskStep, moveStalledTaskOn, setTaskFlowPaused } from "@/app/actions/tasks";
 
@@ -278,55 +279,66 @@ function PaneWaiting({ step, task }: { step: ResolvedStep; task: Pick<Task, "flo
   );
 }
 
-/** The task pane's compact stepper: completed steps, the current step and who has it, the next step and its owner. */
-export function FlowStepper({ task, className, onTask }: { task: FlowTaskFields & Pick<Task, "waitingOn">; className?: string; onTask?: (t: Task) => void }) {
-  const { memberById, statusById, me, isAdmin } = useOrgBase();
+type BarTask = FlowTaskFields & Pick<Task, "waitingOn" | "stopped">;
+
+/**
+ * The task pane's status bar (VEC-329): the one component that draws where a task is, for every task. At a flow step
+ * it's the flow stepper (completed steps, the current step and who has it, the next step and its owner, the step's
+ * person action); otherwise (no flow, paused, off its flow, Cancelled) the project's own statuses with the current
+ * one highlighted. Paused / off-flow / stopped / archived are a note under the bar, not a replacement for it.
+ * Archived and stopped tasks are read-only here (no step action, no Resume). Steps come from `statusTrack`.
+ */
+export function TaskStatusBar({ task, className, onTask }: { task: BarTask; className?: string; onTask?: (t: Task) => void }) {
+  const { memberById, statusById, statusesByProject, me, isAdmin } = useOrgBase();
   const pos = useFlowPosition(task);
   const pause = useFlowPause(task, onTask);
-  if (!pos) return null;
-  const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
-
-  if (pos.kind !== "at") {
-    const status = statusById.get(task.statusId);
-    // A cancelled (or closed, non-step) task has simply left its flow; saying so on every one is noise.
-    if (pos.kind === "off" && isClosedCategory(status?.category)) return null;
-    const statusName = status?.name ?? "its status";
-    return (
-      <section aria-label="Flow" className={cn("flex items-center gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground", className)}>
-        {pos.kind === "paused" ? <PauseIcon className="size-3.5 shrink-0" /> : <WorkflowIcon className="size-3.5 shrink-0" />}
-        <span className="min-w-0 flex-1">
-          {pos.kind === "paused"
-            ? task.waitingOn.length
-              ? "Flow paused: it isn't handed on automatically. A split task waits here while its sub-tasks run."
-              : "Flow paused: status and assignee changes don't hand it on until the flow is resumed."
-            : `Off its flow: ${statusName} isn't one of the flow's steps, so nobody is handed it until it moves back into one.`}
-        </span>
-        {pos.kind === "paused" && pause.can && (
-          <Button size="sm" variant="outline" className="-my-1 h-7 gap-1.5 bg-background" disabled={pause.busy} onClick={() => void pause.toggle()}>
-            <PlayIcon className="size-3.5" /> Resume flow
-          </Button>
-        )}
-      </section>
-    );
-  }
-
-  const { flow, index, current, next, finished } = pos;
   const status = statusById.get(task.statusId);
+  const track = statusTrack({
+    statuses: statusesByProject.get(task.projectId) ?? [],
+    statusId: task.statusId,
+    flow: pos?.flow,
+    stepIndex: pos?.kind === "at" ? pos.index : -1,
+    paused: pos?.kind === "paused",
+  });
+  if (!track.steps.length) return null;
+  const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
+  const readOnly = !!task.archivedAt || !!task.stopped;
+  const at = track.source === "flow" && pos?.kind === "at" ? pos : null;
   const action =
-    !finished && status && !task.archivedAt
-      ? flowStepAction(flow, current, status, { me: me.id, isAdmin, createdBy: task.createdBy, assigneeId: task.assigneeId, assigneeIsPerson: !!assignee && assignee.kind !== "bot" })
+    at && !at.finished && status && !readOnly
+      ? flowStepAction(at.flow, at.current, status, { me: me.id, isAdmin, createdBy: task.createdBy, assigneeId: task.assigneeId, assigneeIsPerson: !!assignee && assignee.kind !== "bot" })
       : null;
-  const label = finished ? `Flow finished at ${current.name}` : `Step ${index + 1} of ${flow.steps.length}: ${current.name}`;
+
+  const notes: { key: string; icon: ReactNode; text: string; resume?: boolean }[] = [];
+  if (track.reason === "paused")
+    notes.push({
+      key: "paused",
+      icon: <PauseIcon className="size-3.5 shrink-0" />,
+      text: task.waitingOn.length
+        ? "Flow paused: it isn't handed on automatically. A split task waits here while its sub-tasks run."
+        : "Flow paused: status and assignee changes don't hand it on until the flow is resumed.",
+      resume: pause.can && !readOnly,
+    });
+  // A cancelled (or closed, non-step) task has simply left its flow; saying so on every one is noise.
+  if (track.reason === "off_flow" && !isClosedCategory(status?.category))
+    notes.push({
+      key: "off",
+      icon: <WorkflowIcon className="size-3.5 shrink-0" />,
+      text: `Off its flow: ${status?.name ?? "its status"} isn't one of the flow's steps, so nobody is handed it until it moves back into one.`,
+    });
+  if (task.stopped && !task.archivedAt) notes.push({ key: "stopped", icon: <CirclePauseIcon className="size-3.5 shrink-0" />, text: "Work stopped: nothing is handed on until it's resumed." });
+  if (task.archivedAt) notes.push({ key: "archived", icon: <ArchiveIcon className="size-3.5 shrink-0" />, text: "Archived: read-only until it's restored." });
+
   return (
-    <section aria-label="Flow" className={cn("rounded-lg border border-border px-3 py-2.5 text-[12.5px]", className)}>
-      <ol aria-label={label} className="flex flex-wrap items-center gap-x-1 gap-y-1">
-        {flow.steps.map((s, i) => {
-          const state = i < index || (finished && i === index) ? "done" : i === index ? "current" : "upcoming";
+    <section aria-label="Status" data-status-track={track.source} data-track-reason={track.reason} className={cn("rounded-lg border border-border px-3 py-2.5 text-[12.5px]", className)}>
+      <ol aria-label={track.label} className="flex flex-wrap items-center gap-x-1 gap-y-1">
+        {track.steps.map((s, i) => {
+          const state = s.state;
           return (
             <li key={s.id} className="flex min-w-0 items-center gap-1" aria-current={state === "current" ? "step" : undefined}>
-              {i > 0 && <span aria-hidden className={cn("h-px w-2.5 shrink-0", i <= index ? "bg-muted-foreground/60" : "bg-border")} />}
+              {i > 0 && <span aria-hidden className={cn("h-px w-2.5 shrink-0", state === "done" || state === "current" ? "bg-muted-foreground/60" : "bg-border")} />}
               <span
-                title={`${s.name} (${s.status.name})${state === "done" ? ", done" : state === "current" ? ", current step" : ""}`}
+                title={`${s.name}${track.source === "flow" ? ` (${s.statusName})` : ""}${state === "done" ? ", done" : state === "current" ? (track.source === "flow" ? ", current step" : ", current status") : state === "skipped" ? ", not reached" : ""}`}
                 className={cn(
                   "inline-flex h-5 max-w-[140px] items-center gap-1 rounded-[5px] px-1.5 whitespace-nowrap",
                   state === "current" ? "bg-foreground font-medium text-background" : state === "done" ? "bg-chip text-muted-foreground" : "text-faint",
@@ -337,39 +349,50 @@ export function FlowStepper({ task, className, onTask }: { task: FlowTaskFields 
                 ) : (
                   <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", state === "current" ? "bg-background" : "border border-faint")} />
                 )}
-                <span className="truncate">{s.name}</span>
-                <span className="sr-only">{state === "done" ? " (done)" : state === "current" ? " (current)" : ""}</span>
+                <span className={cn("truncate", state === "skipped" && "line-through decoration-faint/60")}>{s.name}</span>
+                <span className="sr-only">{state === "done" ? " (done)" : state === "current" ? " (current)" : state === "skipped" ? " (not reached)" : ""}</span>
               </span>
             </li>
           );
         })}
       </ol>
-      {!finished && (
+      {at && !at.finished && (
         <dl className="mt-2.5 grid grid-cols-[52px_minmax(0,1fr)] items-center gap-x-2 gap-y-1">
           <dt className="text-faint">Now</dt>
           <dd className="flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0 font-medium">{current.name}</span>
+            <span className="shrink-0 font-medium">{at.current.name}</span>
             <span className="text-faint">·</span>
             <OwnerLine owner={assignee ? { member: assignee, id: assignee.id, label: assignee.name } : { label: "Unassigned" }} />
           </dd>
-          {current.advance === "wait" && <PaneWaiting step={current} task={task} />}
-          {next && (
+          {at.current.advance === "wait" && <PaneWaiting step={at.current} task={task} />}
+          {at.next && (
             <>
               <dt className="text-faint">Next</dt>
               <dd className="flex min-w-0 items-center gap-1.5">
-                <span className="shrink-0 font-medium">{next.name}</span>
+                <span className="shrink-0 font-medium">{at.next.name}</span>
                 <span className="text-faint">·</span>
-                {next.status.category === "done" ? (
+                {at.next.status.category === "done" ? (
                   <span className="truncate text-muted-foreground">closes the task</span>
                 ) : (
-                  <OwnerLine owner={stepOwner(next, assignee, memberById)} />
+                  <OwnerLine owner={stepOwner(at.next, assignee, memberById)} />
                 )}
               </dd>
             </>
           )}
         </dl>
       )}
-      {action && <StepActionRow key={`${current.id}:${task.statusId}`} task={task} action={action} onTask={onTask} />}
+      {at && action && <StepActionRow key={`${at.current.id}:${task.statusId}`} task={task} action={action} onTask={onTask} />}
+      {notes.map((n) => (
+        <p key={n.key} data-track-note={n.key} className="mt-2 flex items-center gap-2 text-muted-foreground">
+          {n.icon}
+          <span className="min-w-0 flex-1">{n.text}</span>
+          {n.resume && (
+            <Button size="sm" variant="outline" className="-my-1 h-7 gap-1.5 bg-background" disabled={pause.busy} onClick={() => void pause.toggle()}>
+              <PlayIcon className="size-3.5" /> Resume flow
+            </Button>
+          )}
+        </p>
+      ))}
     </section>
   );
 }
