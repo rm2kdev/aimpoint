@@ -306,7 +306,7 @@ export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> 
         .toArray()
     : [];
   const finishedBy = new Set(finished.map((f) => `${f.taskId.toHexString()}:${f.botId.toHexString()}`));
-  // ...nor while that bot (as the task's triager) has a close-out of it pending: Vector already woke it to wrap the
+  // ...nor while that bot (as the task's triager) has a close-out of it pending: Aimpoint already woke it to wrap the
   // task up, and VEC-85 kept its done claim for that (VEC-89). Once it handled the close-out, the rule applies again.
   const maybeFinished = assigned.filter((t) => finishedBy.has(`${t.id}:${t.assigneeId}`));
   const closingOut = maybeFinished.length

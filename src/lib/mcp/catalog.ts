@@ -1,5 +1,5 @@
 /**
- * The MCP tools Vector exposes to bots. Client-safe: the Bot roles screen renders this list,
+ * The MCP tools Aimpoint exposes to bots. Client-safe: the Bot roles screen renders this list,
  * the MCP server (src/lib/mcp/server.ts) implements it.
  */
 

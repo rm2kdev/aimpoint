@@ -14,14 +14,14 @@ if (existsSync(".env.local")) {
   }
 }
 const client = await new MongoClient(process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017").connect();
-const db = client.db(process.env.MONGODB_DB ?? "vector");
-const PASSWORD = "vector-demo";
+const db = client.db(process.env.MONGODB_DB ?? "aimpoint");
+const PASSWORD = "aimpoint-demo";
 
 const people = [
-  { name: "Ryan Lamvohee", email: "ryan@demo.vector.dev", role: "admin" },
-  { name: "Mia Kowalski", email: "mia@demo.vector.dev", role: "member" },
-  { name: "Sofia Ortega", email: "sofia@demo.vector.dev", role: "member" },
-  { name: "Jonah Tan", email: "jonah@demo.vector.dev", role: "admin" },
+  { name: "Ryan Lamvohee", email: "ryan@demo.aimpoint.dev", role: "admin" },
+  { name: "Mia Kowalski", email: "mia@demo.aimpoint.dev", role: "member" },
+  { name: "Sofia Ortega", email: "sofia@demo.aimpoint.dev", role: "member" },
+  { name: "Jonah Tan", email: "jonah@demo.aimpoint.dev", role: "admin" },
 ];
 
 const old = await db.collection("orgs").findOne({ slug: "northwind" });

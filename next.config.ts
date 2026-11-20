@@ -6,7 +6,7 @@ const nextConfig: NextConfig = {
   devIndicators: { position: "bottom-right" },
   // Build version for the service worker URL (VEC-156): each deploy registers /sw.js?v=<new id>,
   // which installs a fresh worker and drops the previous build's caches.
-  env: { VECTOR_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA || Date.now().toString(36) },
+  env: { AIMPOINT_BUILD_ID: process.env.VERCEL_GIT_COMMIT_SHA || Date.now().toString(36) },
   // Let other machines on the LAN (e.g. the Mac mini at 10.0.0.2) load dev JS/HMR.
   allowedDevOrigins: ["10.0.0.2", "192.168.1.90", "*.local"],
   turbopack: {

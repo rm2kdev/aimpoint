@@ -223,7 +223,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     dependsOn: refs.dependencies.map(refOut),
     /** Tasks waiting for this one. Moving this task to a done status releases them to their assignees. */
     blocks: refs.dependents.map(refOut),
-    /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open (or, waiters or not, Vector couldn't deliver the hand-off to its bot). People see it flagged as stalled. kind "needs_owner" = unassigned but still waiting on its own dependencies: people see a neutral "Needs owner" hint, not Stalled. */
+    /** Set when open tasks wait on this one and nobody is moving it: unassigned, or its bot finished but left it open (or, waiters or not, Aimpoint couldn't deliver the hand-off to its bot). People see it flagged as stalled. kind "needs_owner" = unassigned but still waiting on its own dependencies: people see a neutral "Needs owner" hint, not Stalled. */
     stalled: stalledOut,
     /** Parked in a backlog-stage status (VEC-274): not work yet, so it isn't handed out or started. Null otherwise. */
     parked: await (async () => {
@@ -278,7 +278,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     /**
      * `context` is the project's admin-set key/value metadata: repos, environments, conventions and the like.
      * `statuses` is this project's own workflow in order (statuses are per project): the only names set_status,
-     * update_task and complete_task accept for this task. `stage` is what Vector acts on: a done or cancelled
+     * update_task and complete_task accept for this task. `stage` is what Aimpoint acts on: a done or cancelled
      * stage releases the tasks waiting on it, started = being worked on, unstarted = planned. `newTasks` (read-only,
      * VEC-190) = where a person's new task with no status lands here: `source` "project" (this project's override),
      * "org" (the org default stage) or "fallback"; tasks bots create without a status start in the first not-started one.

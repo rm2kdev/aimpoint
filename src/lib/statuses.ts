@@ -124,7 +124,7 @@ export async function statusFilterIds(orgId: ObjectId, ref: string, projectId?: 
 }
 
 /**
- * The names one project uses for the statuses Vector's texts talk about (VEC-116), so a wake-up or tool reply
+ * The names one project uses for the statuses Aimpoint's texts talk about (VEC-116), so a wake-up or tool reply
  * still reads right when a project renamed them: `started` is where a bot's pickup moves the task (first started
  * status; null when the project has none, so nothing moves and texts must not name one, VEC-120), `done` / `cancelled` the first of those stages, `review` a started-stage status named like "review"
  * (null when the project has none), `unstarted` the first not-started status, `triage` the first triage status.

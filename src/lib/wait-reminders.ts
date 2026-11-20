@@ -123,13 +123,13 @@ export async function sweepWaitReminders(now = new Date()): Promise<{ reminded: 
 }
 
 type SweepState = { timer?: ReturnType<typeof setInterval>; running?: boolean; run?: () => Promise<unknown> };
-const g = globalThis as unknown as { __vectorWaitReminders?: SweepState };
+const g = globalThis as unknown as { __aimpointWaitReminders?: SweepState };
 
 /** Runs the sweep every SWEEP_MS in this process (not on Vercel, not during a build). Safe to call repeatedly. */
 export function startWaitReminderSweeper() {
-  const st = (g.__vectorWaitReminders ??= {});
+  const st = (g.__aimpointWaitReminders ??= {});
   st.run = () => sweepWaitReminders(); // after a dev reload the timer calls the new code
-  if (st.timer || process.env.VERCEL || process.env.NEXT_PHASE === "phase-production-build" || process.env.VECTOR_WAKE_SWEEP === "off") return;
+  if (st.timer || process.env.VERCEL || process.env.NEXT_PHASE === "phase-production-build" || process.env.AIMPOINT_WAKE_SWEEP === "off") return;
   st.timer = setInterval(async () => {
     if (st.running) return;
     st.running = true;

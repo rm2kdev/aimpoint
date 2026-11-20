@@ -172,8 +172,8 @@ export function TaskWorkspace({
 
   useEffect(() => {
     const onLocal = (e: Event) => upsert((e as CustomEvent<Task>).detail);
-    window.addEventListener("vector:task", onLocal);
-    return () => window.removeEventListener("vector:task", onLocal);
+    window.addEventListener("aimpoint:task", onLocal);
+    return () => window.removeEventListener("aimpoint:task", onLocal);
   }, [upsert]);
 
   const seen = useCallback(
@@ -335,7 +335,7 @@ export function TaskWorkspace({
       upsert(task);
       return void toast.error(r.error);
     }
-    if (r.data) window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: r.data }));
+    if (r.data) window.dispatchEvent(new CustomEvent<Task>("aimpoint:task", { detail: r.data }));
     if (undo) {
       toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
         description: task.title,

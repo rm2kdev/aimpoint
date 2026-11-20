@@ -26,11 +26,11 @@ import type {
 import { seedDefaultFlows, DEFAULT_FLOW_MIGRATION } from "./flows-migration";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
-const dbName = process.env.MONGODB_DB ?? "vector";
+const dbName = process.env.MONGODB_DB ?? "aimpoint";
 
 type Cache = { client?: MongoClient; promise?: Promise<MongoClient>; indexed?: Promise<void> };
-const g = globalThis as unknown as { __vectorMongo?: Cache };
-const cache: Cache = (g.__vectorMongo ??= {});
+const g = globalThis as unknown as { __aimpointMongo?: Cache };
+const cache: Cache = (g.__aimpointMongo ??= {});
 
 async function client(): Promise<MongoClient> {
   if (cache.client) return cache.client;

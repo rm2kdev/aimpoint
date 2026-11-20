@@ -440,13 +440,13 @@ export async function sweepWakes(): Promise<{ retried: number; resent: number; r
 }
 
 type SweepState = { timer?: ReturnType<typeof setInterval>; running?: boolean; run?: () => Promise<unknown> };
-const g = globalThis as unknown as { __vectorWakeSweep?: SweepState };
+const g = globalThis as unknown as { __aimpointWakeSweep?: SweepState };
 
 /** Runs the sweep every SWEEP_MS in this process (not on Vercel, not during a build). Safe to call repeatedly. */
 export function startWakeSweeper() {
-  const st = (g.__vectorWakeSweep ??= {});
+  const st = (g.__aimpointWakeSweep ??= {});
   st.run = sweepWakes; // after a dev reload the timer calls the new code
-  if (st.timer || process.env.VERCEL || process.env.NEXT_PHASE === "phase-production-build" || process.env.VECTOR_WAKE_SWEEP === "off") return;
+  if (st.timer || process.env.VERCEL || process.env.NEXT_PHASE === "phase-production-build" || process.env.AIMPOINT_WAKE_SWEEP === "off") return;
   st.timer = setInterval(async () => {
     if (st.running) return;
     st.running = true;

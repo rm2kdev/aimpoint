@@ -94,12 +94,12 @@ const STEPS: { id: Step; label: string }[] = [
   { id: "install", label: "Install" },
   { id: "test", label: "Test" },
 ];
-/** Only Hermes has an Install step: Vector asks it to add Vector's MCP server to its own config (VEC-170). */
+/** Only Hermes has an Install step: Aimpoint asks it to add Aimpoint's MCP server to its own config (VEC-170). */
 const stepsFor = (method?: BotMethod) => STEPS.filter((s) => s.id !== "install" || method === "hermes-api");
 
 /**
  * The bot's backend: a summary when one is set, otherwise (or on edit) the setup flow.
- * `apiKey` is the bot's Vector key when this page has it in hand (just created or rerolled).
+ * `apiKey` is the bot's Aimpoint key when this page has it in hand (just created or rerolled).
  */
 export function BotConnection({ bot, setBot, apiKey, setApiKey }: { bot: Bot; setBot: (b: Bot) => void; apiKey: string | null; setApiKey: (k: string) => void }) {
   const { isAdmin } = useOrg();
@@ -302,7 +302,7 @@ function Setup({
 }) {
   const [step, setStep] = useState<Step>(initial.step);
   const [method, setMethod] = useState<BotMethod | undefined>(initial.method);
-  // Hermes confirmed it loaded Vector's MCP server, so the Test step needn't tell the admin to check it by hand.
+  // Hermes confirmed it loaded Aimpoint's MCP server, so the Test step needn't tell the admin to check it by hand.
   const [mcpInstalled, setMcpInstalled] = useState(false);
   const main = BACKENDS.filter((b) => !b.advanced);
   const advanced = BACKENDS.filter((b) => b.advanced);
@@ -437,9 +437,9 @@ function Settings({
   const [error, setError] = useState<string>();
   const [pending, start] = useTransition();
 
-  const offline = b.needsVectorKey && !isPublicHttps(origin);
-  // Claude and OpenAI get a key of their own for calling back into Vector. Without one in hand, saving issues a new key.
-  const rotates = Boolean(b.needsVectorKey && !apiKey && !prev);
+  const offline = b.needsAimpointKey && !isPublicHttps(origin);
+  // Claude and OpenAI get a key of their own for calling back into Aimpoint. Without one in hand, saving issues a new key.
+  const rotates = Boolean(b.needsAimpointKey && !apiKey && !prev);
   const canSave = (!b.url || url.trim()) && (!b.model || model.trim()) && (!b.secret || secret.trim() || prev?.secretHint);
 
   const save = () =>
@@ -451,9 +451,9 @@ function Settings({
         url,
         model,
         secret: secret.trim() || undefined,
-        vectorKey: b.needsVectorKey ? (apiKey ?? undefined) : undefined,
+        aimpointKey: b.needsAimpointKey ? (apiKey ?? undefined) : undefined,
         rotateKey: rotates,
-        vectorUrl: origin,
+        aimpointUrl: origin,
       });
       if (!r.ok) return setError(r.error);
       setBot(r.data!.bot);
@@ -565,7 +565,7 @@ function Settings({
   );
 }
 
-/** Vector's MCP server address and the bot's key: what an agent needs to act on tickets. For Hermes, the manual fallback. */
+/** Aimpoint's MCP server address and the bot's key: what an agent needs to act on tickets. For Hermes, the manual fallback. */
 function McpBox({ bot, setBot, apiKey, setApiKey, hermes }: { bot: Bot; setBot: (b: Bot) => void; apiKey: string | null; setApiKey: (k: string) => void; hermes?: boolean }) {
   const origin = useOrigin();
   return (
@@ -585,7 +585,7 @@ function McpBox({ bot, setBot, apiKey, setApiKey, hermes }: { bot: Bot; setBot: 
   );
 }
 
-/* ---------------- step 3 (Hermes): install Vector's MCP server ---------------- */
+/* ---------------- step 3 (Hermes): install Aimpoint's MCP server ---------------- */
 
 const POLL_MS = 3000;
 
@@ -595,9 +595,9 @@ function elapsed(ms: number) {
 }
 
 /**
- * After the Hermes connection is saved, Vector asks Hermes to install Vector's MCP server itself (installBotMcp,
+ * After the Hermes connection is saved, Aimpoint asks Hermes to install Aimpoint's MCP server itself (installBotMcp,
  * VEC-169) and follows it here until Hermes has loaded the tools. A fresh bot (or one whose key this page holds)
- * starts at once; a bot already in use asks first, because without its key in hand Vector issues a new one.
+ * starts at once; a bot already in use asks first, because without its key in hand Aimpoint issues a new one.
  * On failure, or whenever the admin prefers, the manual instructions take over.
  */
 function Install({
@@ -640,7 +640,7 @@ function Install({
   const begin = () =>
     start(async () => {
       setRefused(undefined);
-      const r = await installBotMcp(org.slug, bot.id, { key: (!staleKey && apiKey) || undefined, vectorUrl: window.location.origin }).catch(
+      const r = await installBotMcp(org.slug, bot.id, { key: (!staleKey && apiKey) || undefined, aimpointUrl: window.location.origin }).catch(
         () => ({ ok: false as const, error: "Aimpoint couldn't start the install. Check your connection and try again." }),
       );
       setPhase("running");
@@ -817,7 +817,7 @@ function CopyField({ label, value, secret }: { label: string; value: string; sec
   );
 }
 
-/** The bot's Vector key: copyable when this page has it, otherwise paste it back or make a new one. */
+/** The bot's Aimpoint key: copyable when this page has it, otherwise paste it back or make a new one. */
 function KeyField({ bot, setBot, apiKey, setApiKey }: { bot: Bot; setBot: (b: Bot) => void; apiKey: string | null; setApiKey: (k: string) => void }) {
   const { org } = useOrg();
   const [paste, setPaste] = useState("");
@@ -902,7 +902,7 @@ function Test({ bot, setBot, backend: b, mcpInstalled, onDone }: { bot: Bot; set
   const [delivery, setDelivery] = useState<NonNullable<Bot["connection"]>["lastDelivery"]>(null);
   const [pending, start] = useTransition();
 
-  // Watch for the bot's first call into Vector after this step opened.
+  // Watch for the bot's first call into Aimpoint after this step opened.
   useEffect(() => {
     if (checkedIn) return;
     const t = setInterval(async () => {

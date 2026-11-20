@@ -17,8 +17,8 @@ import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type Bot
 
 /**
  * Push delivery: when a bot with a backend (Claude, OpenAI, Hermes, webhook) is assigned a task or
- * @mentioned, Vector calls that backend with the task, its description and the whole thread. The agent
- * then acts on the ticket through Vector's MCP tools. A successful delivery marks the work as picked up
+ * @mentioned, Aimpoint calls that backend with the task, its description and the whole thread. The agent
+ * then acts on the ticket through Aimpoint's MCP tools. A successful delivery marks the work as picked up
  * (assignment) or delivered (mention), so check_for_work doesn't hand it out a second time.
  *
  * Task wake-ups (assigned, ready, close-out, mention) go through the wake queue (lib/wake-queue.ts): queued before
@@ -27,7 +27,7 @@ import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type Bot
  */
 
 export type WakeReason =
-  /** `retry`: a person asked Vector to hand it over again (VEC-159), because an earlier run stopped or never started. */
+  /** `retry`: a person asked Aimpoint to hand it over again (VEC-159), because an earlier run stopped or never started. */
   /** `handoff`: a flow step handed it on (VEC-175): from which step (null = it entered the flow) to which. */
   /** `resumed` (with retry): a person stopped the bot's work and has now resumed it (VEC-215). `reassignedFrom`: the
    * stopped bot's name when the task was reassigned to this bot while stopped (VEC-219), so this bot never worked on it. */
@@ -323,9 +323,9 @@ export async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReaso
 async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason, msg: WakeMessage, wake?: WakeAttempt): Promise<SendResult> {
   const secret = conn.secretSealed ? unseal(conn.secretSealed) : null;
   if (conn.method === "claude-api" || conn.method === "openai-api") {
-    const vectorKey = conn.vectorKeySealed ? unseal(conn.vectorKeySealed) : null;
-    if (!secret || !vectorKey || !conn.vectorUrl || !conn.model) return { ok: false, error: "The connection is missing its key or model. Run setup again." };
-    const args = { bot, org, prompt: msg.prompt, apiKey: secret, vectorKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId, work: reason.kind === "assigned" || reason.kind === "ready" };
+    const aimpointKey = conn.vectorKeySealed ? unseal(conn.vectorKeySealed) : null;
+    if (!secret || !aimpointKey || !conn.vectorUrl || !conn.model) return { ok: false, error: "The connection is missing its key or model. Run setup again." };
+    const args = { bot, org, prompt: msg.prompt, apiKey: secret, aimpointKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId, work: reason.kind === "assigned" || reason.kind === "ready" };
     return conn.method === "claude-api" ? claudeApi(args) : openaiApi(args);
   }
   if (!conn.url || !secret) return { ok: false, error: "The connection is missing its address or key. Run setup again." };
@@ -490,13 +490,13 @@ async function hermesRun(bot: BotDoc, org: OrgDoc, url: string, key: string, rea
       "Content-Type": "application/json",
       // One key per queued wake-up, the same on every retry: if an attempt that timed out did start a run, Hermes
       // refuses the retry instead of starting a second one.
-      "Idempotency-Key": `vector-${wake ? wake.wakeId.toHexString() : randomUUID()}`,
+      "Idempotency-Key": `aimpoint-${wake ? wake.wakeId.toHexString() : randomUUID()}`,
     },
     body: JSON.stringify({
       input: msg.prompt,
       instructions: wakeInstructions(bot, org),
       // One Hermes session per bot and task: a follow-up mention continues the same conversation.
-      session_id: `vector-${bot._id.toHexString()}-${reason.kind === "test" ? "test" : reason.taskId.toHexString()}`,
+      session_id: `aimpoint-${bot._id.toHexString()}-${reason.kind === "test" ? "test" : reason.taskId.toHexString()}`,
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
@@ -526,13 +526,13 @@ export async function hermesProbe(url: string, key: string): Promise<{ ok: true;
   }
 }
 
-/* ---------------- Direct model APIs (Vector runs the turn) ---------------- */
+/* ---------------- Direct model APIs (Aimpoint runs the turn) ---------------- */
 
 interface ApiArgs {
   bot: BotDoc;
   org: OrgDoc;
   apiKey: string;
-  vectorKey: string;
+  aimpointKey: string;
   mcpUrl: string;
   model: string;
   prompt: string;
@@ -571,7 +571,7 @@ function stopWatch(botId: ObjectId, taskId: ObjectId | null, work = false) {
   return { signal: ctrl.signal, check, isStopped: () => stopped, done: () => timer && clearInterval(timer) };
 }
 
-/** Messages API with the MCP connector: Anthropic calls Vector's MCP server itself. */
+/** Messages API with the MCP connector: Anthropic calls Aimpoint's MCP server itself. */
 async function claudeApi(a: ApiArgs): Promise<SendResult> {
   const messages: { role: "user" | "assistant"; content: unknown }[] = [{ role: "user", content: a.prompt }];
   const deadline = AbortSignal.timeout(AGENT_TURN_MS);
@@ -594,7 +594,7 @@ async function claudeApi(a: ApiArgs): Promise<SendResult> {
           max_tokens: 4096,
           system: wakeInstructions(a.bot, a.org),
           messages,
-          mcp_servers: [{ type: "url", url: a.mcpUrl, name: MCP_SERVER_NAME, authorization_token: a.vectorKey }],
+          mcp_servers: [{ type: "url", url: a.mcpUrl, name: MCP_SERVER_NAME, authorization_token: a.aimpointKey }],
           tools: [{ type: "mcp_toolset", mcp_server_name: MCP_SERVER_NAME }],
         }),
         signal: AbortSignal.any([deadline, watch.signal]),
@@ -614,7 +614,7 @@ async function claudeApi(a: ApiArgs): Promise<SendResult> {
   }
 }
 
-/** Responses API with a remote MCP tool: OpenAI calls Vector's MCP server itself. */
+/** Responses API with a remote MCP tool: OpenAI calls Aimpoint's MCP server itself. */
 async function openaiApi(a: ApiArgs): Promise<SendResult> {
   const watch = stopWatch(a.bot._id, a.taskId, a.work);
   try {
@@ -625,7 +625,7 @@ async function openaiApi(a: ApiArgs): Promise<SendResult> {
         model: a.model,
         instructions: wakeInstructions(a.bot, a.org),
         input: a.prompt,
-        tools: [{ type: "mcp", server_label: MCP_SERVER_NAME, server_url: a.mcpUrl, authorization: a.vectorKey, require_approval: "never" }],
+        tools: [{ type: "mcp", server_label: MCP_SERVER_NAME, server_url: a.mcpUrl, authorization: a.aimpointKey, require_approval: "never" }],
         store: false,
       }),
       signal: AbortSignal.any([AbortSignal.timeout(AGENT_TURN_MS), watch.signal]),

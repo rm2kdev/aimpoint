@@ -9,22 +9,22 @@ import type { BotDoc, BotMcpInstall, BotMcpInstallDoc, OrgDoc } from "@/lib/type
 import { LEGACY_MCP_SERVER_NAME, MCP_SERVER_NAME, type McpServerName } from "@/lib/mcp-name";
 
 /**
- * "Install Vector's MCP server" for a Hermes connection (VEC-169, recipe from the VEC-168 spike).
+ * "Install Aimpoint's MCP server" for a Hermes connection (VEC-169, recipe from the VEC-168 spike).
  *
  * 1. Install run: POST /v1/runs with a prompt that saves the bot key to the profile's .env, runs
  *    `hermes mcp add aimpoint` and `hermes mcp test aimpoint` (then drops the pre-rename `vector` entry, VEC-198), and
  *    answers `AIMPOINT_MCP_INSTALL: ok|failed`.
  * 2. Hermes never sees new MCP tools in the run that added them: the gateway picks the server up on its housekeeping
- *    reconcile, 40-80 s later. So Vector waits, then sends check runs that call get_workspace (CHECK_AT_MS).
- * 3. Installed = the bot called Vector (lastUsedAt moved) after the check run started. The run's text alone is model
- *    output, and the install run's own `mcp test` also calls Vector, so neither counts.
+ *    reconcile, 40-80 s later. So Aimpoint waits, then sends check runs that call get_workspace (CHECK_AT_MS).
+ * 3. Installed = the bot called Aimpoint (lastUsedAt moved) after the check run started. The run's text alone is model
+ *    output, and the install run's own `mcp test` also calls Aimpoint, so neither counts.
  *
  * The state lives on the bot (`mcpInstall`) and is advanced one step at a time under a lease, by an after() driver and
  * by every wizard poll, so it finishes even if the wizard is closed or the driver is cut off (serverless).
  * The key only ever travels in the install run's input: it is never stored, logged or returned here.
  */
 
-/** Longest an install run may take before Vector stops it. Spike: 13-47 s, wrong key 42 s. */
+/** Longest an install run may take before Aimpoint stops it. Spike: 13-47 s, wrong key 42 s. */
 const INSTALL_RUN_MS = 180_000;
 /**
  * When each check run is due, counted from the install finishing. The gateway's reconcile loads a new server 38-78 s
@@ -47,21 +47,21 @@ const HTTP_MS = 15_000;
 
 const TERMINAL = new Set(["completed", "failed", "cancelled", "interrupted"]);
 
-export const mcpUrlFor = (vectorUrl: string) => `${vectorUrl.replace(/\/+$/, "")}/api/mcp`;
+export const mcpUrlFor = (aimpointUrl: string) => `${aimpointUrl.replace(/\/+$/, "")}/api/mcp`;
 
-export function installPrompt(a: { vectorUrl: string; botName: string; key: string }) {
+export function installPrompt(a: { aimpointUrl: string; botName: string; key: string }) {
   const bot = a.botName.replace(/["\r\n\\]/g, "").trim() || "bot";
   // From the VEC-168 spike (tested end to end on fresh profiles), renamed for Aimpoint in VEC-198: the server is added as
   // "aimpoint" (key in MCP_AIMPOINT_API_KEY, the env var Hermes derives from the name), and the old "vector" entry and
   // its key are only removed once the new one tested fine, so a failed install leaves a working old setup in place.
   // String.raw keeps the \n escapes for Python/printf.
-  return String.raw`Aimpoint (the issue tracker at ${a.vectorUrl}, formerly called Vector) is connecting you as its bot "${bot}". Install Aimpoint's MCP server into your own Hermes config so future Aimpoint tasks reach you. Use your terminal tool for every step, run the commands exactly as written, and do not show the key in your reply.
+  return String.raw`Aimpoint (the issue tracker at ${a.aimpointUrl}, formerly called Vector) is connecting you as its bot "${bot}". Install Aimpoint's MCP server into your own Hermes config so future Aimpoint tasks reach you. Use your terminal tool for every step, run the commands exactly as written, and do not show the key in your reply.
 
 1. Save the bot key to your profile's secrets file (replaces any old value; prints only its length):
 python3 -c "import os,re,pathlib;p=pathlib.Path(os.environ.get('HERMES_HOME') or pathlib.Path.home()/'.hermes')/'.env';k='${a.key}';s=p.read_text() if p.exists() else '';s=re.sub(r'(?m)^MCP_AIMPOINT_API_KEY=.*\n?','',s);s=s+('' if not s or s.endswith('\n') else '\n')+'MCP_AIMPOINT_API_KEY='+k+'\n';p.write_text(s);os.chmod(p,0o600);print('saved',len(k))"
 
 2. Add the server, replacing any existing "aimpoint" entry (never create a second one):
-hermes mcp remove aimpoint </dev/null >/dev/null 2>&1; printf 'y\ny\n' | hermes mcp add aimpoint --url ${mcpUrlFor(a.vectorUrl)} --auth header
+hermes mcp remove aimpoint </dev/null >/dev/null 2>&1; printf 'y\ny\n' | hermes mcp add aimpoint --url ${mcpUrlFor(a.aimpointUrl)} --auth header
 
 3. Check it: hermes mcp test aimpoint
 Exit code 0 means it worked. Any other exit code means it failed: run hermes mcp remove aimpoint </dev/null, leave any "vector" entry as it is, and go to the last line.
@@ -128,7 +128,7 @@ interface HermesTarget {
   apiKey: string;
 }
 
-/** The bot's Hermes API server, or why Vector can't use it. */
+/** The bot's Hermes API server, or why Aimpoint can't use it. */
 export function hermesTarget(bot: BotDoc): HermesTarget | { error: string } {
   const conn = bot.connection;
   if (!conn || conn.method !== "hermes-api") return { error: "This bot isn't connected to Hermes over the Agent API." };
@@ -193,14 +193,14 @@ async function stopRun(t: HermesTarget, runId: string) {
   } catch {}
 }
 
-const sessionFor = (bot: BotDoc) => `vector-${bot._id.toHexString()}-setup`;
+const sessionFor = (bot: BotDoc) => `aimpoint-${bot._id.toHexString()}-setup`;
 
 /**
- * Sends the install run and records the attempt. `key` is the bot's current plaintext Vector key (the caller checked
+ * Sends the install run and records the attempt. `key` is the bot's current plaintext Aimpoint key (the caller checked
  * or just issued it). Returns the recorded attempt; a failure to start is recorded as `failed` too, so the wizard
  * reads every outcome the same way.
  */
-export async function startMcpInstall(bot: BotDoc, org: OrgDoc, key: string, opts: { keyRerolled: boolean; vectorUrl: string }): Promise<BotMcpInstallDoc> {
+export async function startMcpInstall(bot: BotDoc, org: OrgDoc, key: string, opts: { keyRerolled: boolean; aimpointUrl: string }): Promise<BotMcpInstallDoc> {
   const c = await cols();
   const doc = newAttempt(opts.keyRerolled);
   const t = hermesTarget(bot);
@@ -209,8 +209,8 @@ export async function startMcpInstall(bot: BotDoc, org: OrgDoc, key: string, opt
   else
     started = await startRun(
       t,
-      { input: installPrompt({ vectorUrl: opts.vectorUrl, botName: bot.name, key }), session_id: sessionFor(bot) },
-      `vector-mcp-install-${doc.id}`,
+      { input: installPrompt({ aimpointUrl: opts.aimpointUrl, botName: bot.name, key }), session_id: sessionFor(bot) },
+      `aimpoint-mcp-install-${doc.id}`,
     );
   if ("error" in started) Object.assign(doc, { state: "failed", reason: `Couldn't start the install: ${started.error}`, finishedAt: new Date() });
   else Object.assign(doc, { runId: started.runId, runStartedAt: new Date() });
@@ -268,7 +268,7 @@ async function step(bot: BotDoc, d: BotMcpInstallDoc): Promise<Step> {
 
   if (d.phase === "install" || d.phase === "check") {
     const limit = d.phase === "install" ? INSTALL_RUN_MS : CHECK_RUN_MS;
-    // A check passes the moment the bot calls Vector after the check run started; no need to wait for the run.
+    // A check passes the moment the bot calls Aimpoint after the check run started; no need to wait for the run.
     if (d.phase === "check" && bot.lastUsedAt && d.runStartedAt && bot.lastUsedAt > d.runStartedAt) {
       return { state: "installed", reason: null, finishedAt: new Date(), runId: null };
     }
@@ -299,7 +299,7 @@ async function step(bot: BotDoc, d: BotMcpInstallDoc): Promise<Step> {
       const at = new Date();
       return { phase: "waiting", installedAt: at, tools: s.tools, nextAt: new Date(at.getTime() + CHECK_AT_MS[0]), runId: null };
     }
-    // Check run finished: re-read lastUsedAt (the bot may have called Vector just before the run ended).
+    // Check run finished: re-read lastUsedAt (the bot may have called Aimpoint just before the run ended).
     const fresh = await (await cols()).bots.findOne({ _id: bot._id }, { projection: { lastUsedAt: 1 } });
     if (fresh?.lastUsedAt && d.runStartedAt && fresh.lastUsedAt > d.runStartedAt) return { state: "installed", reason: null, finishedAt: new Date(), runId: null };
     const s = parseSentinel(poll.output, "check");
@@ -316,7 +316,7 @@ async function step(bot: BotDoc, d: BotMcpInstallDoc): Promise<Step> {
 
   // waiting
   if (d.nextAt && now < d.nextAt.getTime()) return {};
-  const started = await startRun(t, { input: CHECK_PROMPT, session_id: sessionFor(bot) }, `vector-mcp-check-${d.id}-${d.checks + 1}`);
+  const started = await startRun(t, { input: CHECK_PROMPT, session_id: sessionFor(bot) }, `aimpoint-mcp-check-${d.id}-${d.checks + 1}`);
   if ("error" in started) return afterCheck({ ...d, checks: d.checks + 1 }, started.error);
   return { phase: "check", runId: started.runId, runStartedAt: new Date(), checks: d.checks + 1, nextAt: null };
 }

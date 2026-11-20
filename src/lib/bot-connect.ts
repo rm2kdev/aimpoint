@@ -2,16 +2,16 @@
  * Bot backends. Client-safe: the connect wizard renders this, the server validates against it and
  * src/lib/bot-dispatch.ts calls the backends.
  *
- * The model: an admin picks the backend that runs a bot and fills in its settings here in Vector.
- * When the bot is assigned a task or @mentioned, Vector calls that backend with the task and its
- * thread, and the agent acts on the ticket through Vector's MCP tools.
+ * The model: an admin picks the backend that runs a bot and fills in its settings here in Aimpoint.
+ * When the bot is assigned a task or @mentioned, Aimpoint calls that backend with the task and its
+ * thread, and the agent acts on the ticket through Aimpoint's MCP tools.
  */
 import type { BotAgent, BotMethod } from "@/lib/types";
 
 export interface SecretField {
   label: string;
   placeholder: string;
-  /** Offer "make one for me" (Vector generates it, the admin copies it to the other side). */
+  /** Offer "make one for me" (Aimpoint generates it, the admin copies it to the other side). */
   canGenerate?: { prefix: string };
 }
 
@@ -26,13 +26,13 @@ export interface Backend {
   url?: { label: string; placeholder: string; help?: string };
   secret?: SecretField;
   model?: { label: string; placeholder: string; default?: string; help?: string };
-  /** Vector hands the provider this bot's own key so it can call Vector's MCP server. */
-  needsVectorKey?: boolean;
+  /** Aimpoint hands the provider this bot's own key so it can call Aimpoint's MCP server. */
+  needsAimpointKey?: boolean;
   /** Where to get the credential. */
   keyHelp?: { label: string; href: string };
   /** Advanced options sit below the main three. */
   advanced?: boolean;
-  /** Vector calls this backend when work arrives. "mcp" is pull-only. */
+  /** Aimpoint calls this backend when work arrives. "mcp" is pull-only. */
   push: boolean;
 }
 
@@ -45,7 +45,7 @@ export const BACKENDS: Backend[] = [
     requires: "An Anthropic API key. Claude reaches Aimpoint's tools from Anthropic's servers, so Aimpoint has to be on a public https:// address.",
     secret: { label: "Anthropic API key", placeholder: "sk-ant-…" },
     model: { label: "Model", placeholder: "claude-opus-5-5", default: "claude-opus-5-5", help: "Any model id your key can use. Aimpoint checks it when you save." },
-    needsVectorKey: true,
+    needsAimpointKey: true,
     keyHelp: { label: "Get a key", href: "https://platform.claude.com/settings/keys" },
     push: true,
   },
@@ -57,7 +57,7 @@ export const BACKENDS: Backend[] = [
     requires: "An OpenAI API key. The model reaches Aimpoint's tools from OpenAI's servers, so Aimpoint has to be on a public https:// address.",
     secret: { label: "OpenAI API key", placeholder: "sk-…" },
     model: { label: "Model", placeholder: "Model id from platform.openai.com/docs/models", help: "Any model id your key can use. Aimpoint checks it when you save." },
-    needsVectorKey: true,
+    needsAimpointKey: true,
     keyHelp: { label: "Get a key", href: "https://platform.openai.com/api-keys" },
     push: true,
   },

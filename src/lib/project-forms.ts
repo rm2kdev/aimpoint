@@ -240,7 +240,7 @@ export async function updateProjectForm(actor: FormActor, formId: string, patch:
     if (typeof patch.enabled !== "boolean") throw new UserError("`enabled` is true or false.");
     set.enabled = patch.enabled;
     if (patch.enabled) {
-      // Re-enabling a form Vector switched off: its destination must be valid again (the admin may pick one in the same save).
+      // Re-enabling a form Aimpoint switched off: its destination must be valid again (the admin may pick one in the same save).
       if (!set.destinationStatusId) await requireFormDestination(actor.orgId, form.projectId, form.destinationStatusId.toHexString());
       set.disabledReason = null;
     }

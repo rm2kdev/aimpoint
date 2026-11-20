@@ -12,7 +12,7 @@
 // Options
 //   --target name=url   app to measure (repeatable; default dev=http://10.0.0.2:3200)
 //   --org <slug>        the "current" org (default northwind)
-//   --user <email>      admin of that org to sign in as (default ryan@demo.vector.dev); the session cookie is
+//   --user <email>      admin of that org to sign in as (default ryan@demo.aimpoint.dev); the session cookie is
 //                       minted from AUTH_SECRET in .env.local, no password involved
 //   --sizes a,b         current | large (default both). "large" creates a throwaway org in Mongo (~300 tasks,
 //                       20 projects, --tasks/--projects to change), runs there with real drops, then deletes it
@@ -70,7 +70,7 @@ const DESCRIPTIONS = {
 // ---- args / env --------------------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const o = { targets: [], org: "northwind", user: "ryan@demo.vector.dev", sizes: ["current", "large"], panes: ["closed", "open"], only: SCENARIOS, runs: 2, drop: false, headless: false, json: null, keepOrg: false, browser: "chrome", tasks: 300, projects: 20 };
+  const o = { targets: [], org: "northwind", user: "ryan@demo.aimpoint.dev", sizes: ["current", "large"], panes: ["closed", "open"], only: SCENARIOS, runs: 2, drop: false, headless: false, json: null, keepOrg: false, browser: "chrome", tasks: 300, projects: 20 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const v = () => argv[++i];

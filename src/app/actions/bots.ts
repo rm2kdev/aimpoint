@@ -97,7 +97,7 @@ export async function rerollBotKey(slug: string, id: string): Promise<Result<{ b
       { returnDocument: "after" },
     );
     if (!bot) throw new UserError("This bot no longer exists.");
-    // Providers that call Vector on the bot's behalf hold a sealed copy of the key: keep it current.
+    // Providers that call Aimpoint on the bot's behalf hold a sealed copy of the key: keep it current.
     if (bot.connection?.vectorKeySealed) {
       await c.bots.updateOne({ _id: bot._id }, { $set: { "connection.vectorKeySealed": seal(key) } });
     }
@@ -141,12 +141,12 @@ export interface ConnectionInput {
   model?: string;
   /** New secret. Omit to keep the saved one (same method only). */
   secret?: string;
-  /** The bot's Vector key, for methods that hand it to a provider. */
-  vectorKey?: string;
+  /** The bot's Aimpoint key, for methods that hand it to a provider. */
+  aimpointKey?: string;
   /** No key in hand: issue the bot a new one for the provider (the old one stops working). */
   rotateKey?: boolean;
-  /** Vector's origin as the browser sees it. */
-  vectorUrl?: string;
+  /** Aimpoint's origin as the browser sees it. */
+  aimpointUrl?: string;
 }
 
 const isPrivateHost = (h: string) =>
@@ -182,7 +182,7 @@ export async function saveBotConnection(slug: string, id: string, input: Connect
     const conn: BotConnectionDoc = { agent: input.agent, method: input.method, updatedAt: new Date() };
     let issued: ReturnType<typeof generateKey> | null = null;
     try {
-      const v = new URL(String(input.vectorUrl ?? ""));
+      const v = new URL(String(input.aimpointUrl ?? ""));
       if (v.protocol === "http:" || v.protocol === "https:") conn.vectorUrl = v.origin;
     } catch {}
     if (m.url) conn.url = cleanUrl(input.url, m.url.label);
@@ -203,11 +203,11 @@ export async function saveBotConnection(slug: string, id: string, input: Connect
       if (!model) throw new UserError("Add the model id.");
       conn.model = model;
     }
-    if (m.needsVectorKey) {
+    if (m.needsAimpointKey) {
       if (!conn.vectorUrl || /^http:/.test(conn.vectorUrl) || isPrivateHost(new URL(conn.vectorUrl).hostname)) {
         throw new UserError(`${m.title} calls Aimpoint from its own servers, so Aimpoint needs a public https:// address. This one is ${conn.vectorUrl ?? "unknown"}.`);
       }
-      const vk = input.vectorKey?.trim();
+      const vk = input.aimpointKey?.trim();
       if (vk) {
         if (hashKey(vk) !== bot.keyHash) throw new UserError("That isn't this bot's current key.");
         conn.vectorKeySealed = seal(vk);
@@ -282,12 +282,12 @@ export async function getBotPulse(slug: string, id: string): Promise<Result<Pick
 /* ---------------- MCP install (VEC-169) ---------------- */
 
 /**
- * Asks the bot's Hermes (Agent API connection) to add Vector's MCP server to its own config, then checks that it
- * loaded it. Pass the bot's plaintext key when the wizard holds it (just created or rerolled); without one Vector
+ * Asks the bot's Hermes (Agent API connection) to add Aimpoint's MCP server to its own config, then checks that it
+ * loaded it. Pass the bot's plaintext key when the wizard holds it (just created or rerolled); without one Aimpoint
  * rerolls the key for the install, and the old key stops working. Poll getBotMcpInstall for the outcome:
  * pending -> installed | failed (with a reason). The key is never stored, logged or returned.
  */
-export async function installBotMcp(slug: string, id: string, input: { key?: string; vectorUrl?: string } = {}): Promise<Result<BotMcpInstall>> {
+export async function installBotMcp(slug: string, id: string, input: { key?: string; aimpointUrl?: string } = {}): Promise<Result<BotMcpInstall>> {
   return guard(async () => {
     const { org } = await requireOrg(slug, { admin: true });
     const c = await cols();
@@ -295,12 +295,12 @@ export async function installBotMcp(slug: string, id: string, input: { key?: str
     if (!bot) throw new UserError("This bot no longer exists.");
     if (bot.connection?.method !== "hermes-api") throw new UserError("Connect this bot to Hermes over the Agent API first.");
     if (installRunning(bot.mcpInstall)) throw new UserError("An install is already running for this bot. Wait for it to finish.");
-    let vectorUrl = bot.connection.vectorUrl ?? null;
+    let aimpointUrl = bot.connection.vectorUrl ?? null;
     try {
-      const v = new URL(String(input.vectorUrl ?? ""));
-      if (v.protocol === "http:" || v.protocol === "https:") vectorUrl = v.origin;
+      const v = new URL(String(input.aimpointUrl ?? ""));
+      if (v.protocol === "http:" || v.protocol === "https:") aimpointUrl = v.origin;
     } catch {}
-    if (!vectorUrl) throw new UserError("Aimpoint doesn't know its own address for this connection. Run setup again.");
+    if (!aimpointUrl) throw new UserError("Aimpoint doesn't know its own address for this connection. Run setup again.");
 
     let key = typeof input.key === "string" ? input.key.trim() : "";
     if (key && hashKey(key) !== bot.keyHash) throw new UserError("That isn't this bot's current key.");
@@ -314,7 +314,7 @@ export async function installBotMcp(slug: string, id: string, input: { key?: str
       key = issued.key;
       rerolled = true;
     }
-    const doc = await startMcpInstall(bot, org, key, { keyRerolled: rerolled, vectorUrl });
+    const doc = await startMcpInstall(bot, org, key, { keyRerolled: rerolled, aimpointUrl });
     key = "";
     if (rerolled) revalidatePath(orgPath(slug, "settings", "bots", id));
     return toMcpInstall(doc);

@@ -9,7 +9,7 @@ const out = (s: StatusDoc) => ({ id: s._id.toHexString(), name: s.name, stage: s
  * GET /api/v1/statuses?project=WEB  One project's workflow, in order: { project: {id, key, name}, statuses: [{id, name, stage}] }.
  * GET /api/v1/statuses              Every project's, grouped: { projects: [{id, key, name, statuses}] }.
  * Statuses are per project (VEC-114): a task only takes its own project's statuses. `stage` (backlog, triage,
- * unstarted, started, done, cancelled) is what Vector acts on whatever the status is called. An unknown or
+ * unstarted, started, done, cancelled) is what Aimpoint acts on whatever the status is called. An unknown or
  * empty `project` is a 400.
  */
 export const GET = botRoute(async (req, { org }) => {

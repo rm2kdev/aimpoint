@@ -15,7 +15,7 @@ const env = Object.fromEntries(
 );
 const client = await new MongoClient(env.MONGODB_URI ?? "mongodb://127.0.0.1:27017").connect();
 try {
-  const db = client.db(env.MONGODB_DB ?? "vector");
+  const db = client.db(env.MONGODB_DB ?? "aimpoint");
   await db.collection("statuses").createIndex({ orgId: 1, projectId: 1, order: 1 });
   const done = db.collection("migrations");
   if (await done.findOne({ _id: PROJECT_STATUSES_MIGRATION })) {

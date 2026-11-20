@@ -1090,7 +1090,7 @@ const TOOLS: Record<string, ToolImpl> = {
   },
 };
 
-/** Reply note for blockers Vector assigned to the calling bot because its own task now waits on them (VEC-107). */
+/** Reply note for blockers Aimpoint assigned to the calling bot because its own task now waits on them (VEC-107). */
 function blockersNote(keys: string[]) {
   if (!keys.length) return "";
   const one = keys.length === 1;

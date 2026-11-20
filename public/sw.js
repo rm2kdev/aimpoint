@@ -1,5 +1,5 @@
 /*
- * Vector service worker (VEC-156). Hand-written on purpose: it only keeps what is the same for
+ * Aimpoint service worker (VEC-156). Hand-written on purpose: it only keeps what is the same for
  * every user, so nothing personal can ever come out of a cache.
  *
  * - Precache: the offline page and the app icons.

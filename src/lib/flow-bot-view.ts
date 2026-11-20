@@ -90,7 +90,7 @@ export interface BotTaskFlow {
   version: number;
   /** The flow drives this task (stepDriven): its step or the next, or any step past Triage, names an owner or carries instructions. False on the seeded default. */
   active: boolean;
-  /** Paused (a triage umbrella waiting on its sub-tasks, or switched off for this task): Vector treats it as if there were no flow. */
+  /** Paused (a triage umbrella waiting on its sub-tasks, or switched off for this task): Aimpoint treats it as if there were no flow. */
   paused: boolean;
   /** Its status isn't any step's (e.g. Cancelled): it re-joins the flow on a status change into a step's status. */
   detached: boolean;

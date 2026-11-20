@@ -3,7 +3,7 @@ import { MCP_SERVER_NAME } from "@/lib/mcp-name";
 import { callTool, listTools, SERVER_INSTRUCTIONS, UnknownToolError, type McpCtx } from "@/lib/mcp/server";
 
 /**
- * Vector's MCP server: Streamable HTTP, stateless. Each POST carries one JSON-RPC message (or a batch)
+ * Aimpoint's MCP server: Streamable HTTP, stateless. Each POST carries one JSON-RPC message (or a batch)
  * and gets a JSON response. Bots authenticate with their API key as a Bearer token.
  */
 

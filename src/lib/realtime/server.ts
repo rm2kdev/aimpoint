@@ -15,39 +15,39 @@ import type { RealtimeEvent } from "./events";
 export const realtimeDriver: "pusher" | "local" =
   process.env.PUSHER_APP_ID && process.env.PUSHER_SECRET && process.env.NEXT_PUBLIC_PUSHER_KEY ? "pusher" : "local";
 
-const g = globalThis as unknown as { __vectorBus?: EventEmitter; __vectorPusher?: Pusher };
+const g = globalThis as unknown as { __aimpointBus?: EventEmitter; __aimpointPusher?: Pusher };
 
 export function localBus(): EventEmitter {
-  if (!g.__vectorBus) {
-    g.__vectorBus = new EventEmitter();
-    g.__vectorBus.setMaxListeners(0);
+  if (!g.__aimpointBus) {
+    g.__aimpointBus = new EventEmitter();
+    g.__aimpointBus.setMaxListeners(0);
   }
-  return g.__vectorBus;
+  return g.__aimpointBus;
 }
 
 export function pusher(): Pusher {
-  g.__vectorPusher ??= new Pusher({
+  g.__aimpointPusher ??= new Pusher({
     appId: process.env.PUSHER_APP_ID!,
     key: process.env.NEXT_PUBLIC_PUSHER_KEY!,
     secret: process.env.PUSHER_SECRET!,
     cluster: process.env.NEXT_PUBLIC_PUSHER_CLUSTER ?? "mt1",
     useTLS: true,
   });
-  return g.__vectorPusher;
+  return g.__aimpointPusher;
 }
 
 export const orgChannel = (orgId: string) => `private-org-${orgId}`;
 export const presenceChannel = (orgId: string) => `presence-org-${orgId}`;
 
 /** Local-driver presence: open SSE connections per org and user. */
-const p = globalThis as unknown as { __vectorPresence?: Map<string, Map<string, number>> };
+const p = globalThis as unknown as { __aimpointPresence?: Map<string, Map<string, number>> };
 export function localPresence(orgId: string, userId: string, delta: 1 | -1) {
-  p.__vectorPresence ??= new Map();
-  const org = p.__vectorPresence.get(orgId) ?? new Map<string, number>();
+  p.__aimpointPresence ??= new Map();
+  const org = p.__aimpointPresence.get(orgId) ?? new Map<string, number>();
   const n = (org.get(userId) ?? 0) + delta;
   if (n > 0) org.set(userId, n);
   else org.delete(userId);
-  p.__vectorPresence.set(orgId, org);
+  p.__aimpointPresence.set(orgId, org);
   localBus().emit(orgChannel(orgId), { type: "presence", userIds: [...org.keys()] });
 }
 
@@ -107,12 +107,12 @@ async function emit(orgId: string, event: RealtimeEvent) {
  */
 const WORKLOAD_TRIGGERS = new Set<RealtimeEvent["type"]>(["task.upsert", "task.delete", "org.changed"]);
 type WorkloadState = { running: Promise<void> | null; dirty: boolean; last: string };
-const w = globalThis as unknown as { __vectorWorkload?: Map<string, WorkloadState> };
+const w = globalThis as unknown as { __aimpointWorkload?: Map<string, WorkloadState> };
 
 export function refreshWorkload(orgId: string): Promise<void> {
-  w.__vectorWorkload ??= new Map();
-  let s = w.__vectorWorkload.get(orgId);
-  if (!s) w.__vectorWorkload.set(orgId, (s = { running: null, dirty: false, last: "" }));
+  w.__aimpointWorkload ??= new Map();
+  let s = w.__aimpointWorkload.get(orgId);
+  if (!s) w.__aimpointWorkload.set(orgId, (s = { running: null, dirty: false, last: "" }));
   const state = s;
   if (state.running) {
     state.dirty = true;

@@ -18,7 +18,7 @@ const WORDS = ["Sync", "editor", "uploads", "billing", "webhook", "retry", "side
 
 export async function connect(env) {
   const client = await new MongoClient(env.MONGODB_URI ?? "mongodb://127.0.0.1:27017").connect();
-  return { client, db: client.db(env.MONGODB_DB ?? "vector") };
+  return { client, db: client.db(env.MONGODB_DB ?? "aimpoint") };
 }
 
 /**

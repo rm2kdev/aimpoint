@@ -38,7 +38,7 @@ export interface NewTaskDefaults {
 
 /** Local echo so the creator's list updates even before the real-time event lands. */
 export function emitLocalTask(task: Task) {
-  window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: task }));
+  window.dispatchEvent(new CustomEvent<Task>("aimpoint:task", { detail: task }));
 }
 
 const chip =

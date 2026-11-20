@@ -294,7 +294,7 @@ export interface ProjectFormDoc {
   publicId: string;
   enabled: boolean;
   /**
-   * Set when Vector switched the form off itself (its status was deleted or left the allowed stages and nothing
+   * Set when Aimpoint switched the form off itself (its status was deleted or left the allowed stages and nothing
    * equivalent was left to re-map to), so the settings UI can say why. Cleared when an admin re-enables it.
    */
   disabledReason?: string | null;
@@ -459,7 +459,7 @@ export interface TaskDoc {
    */
   rank?: string;
   /**
-   * VEC-108: set when Vector told someone this task went red Stalled because nobody owns it (a "stalled"
+   * VEC-108: set when Aimpoint told someone this task went red Stalled because nobody owns it (a "stalled"
    * notification), so it isn't sent again while that lasts; cleared once the task leaves that state (re-arms).
    */
   stalledNoticeAt?: Date | null;
@@ -587,7 +587,7 @@ export interface ActivityDoc {
     | "dependency_removed"
     /** Every dependency is done. `from` holds the key(s) of the one(s) that finished it, comma-separated. */
     | "unblocked"
-    /** VEC-159: the actor asked Vector to hand the task to its bot again (`to` = the bot's id). `note` "closeout"
+    /** VEC-159: the actor asked Aimpoint to hand the task to its bot again (`to` = the bot's id). `note` "closeout"
      * when it re-sent a triager's close-out rather than the work itself. */
     | "retried"
     /** VEC-215: the actor stopped a bot's work on the task (`to` = the bot's id; `note` "triage" when it was triaging). */
@@ -600,10 +600,10 @@ export interface ActivityDoc {
   from?: string | null;
   to?: string | null;
   /**
-   * Why Vector made the change itself. "started_work": a bot picked the task up, so it moved to In Progress.
+   * Why Aimpoint made the change itself. "started_work": a bot picked the task up, so it moved to In Progress.
    * "resumed_work": its assigned bot was @mentioned after finishing, so it's back at work and In Progress.
    * "auto_owner" (on an assignee change): nobody owned it and the actor bot parked its own task behind it, so
-   * Vector assigned it to that bot (VEC-107). `waiter` holds the waiting task's key.
+   * Aimpoint assigned it to that bot (VEC-107). `waiter` holds the waiting task's key.
    */
   note?: ActivityNote;
   /** With note "auto_owner": key of the task that was waiting on this one. */
@@ -645,7 +645,7 @@ export interface BotDoc {
   connection?: BotConnectionDoc | null;
   /** How many tasks the bot works on at once (display only for now). Unset on older bots: read as BOT_MAX_TASKS_DEFAULT. */
   maxTasks?: number;
-  /** The latest "install Vector's MCP server" run sent to a Hermes connection (VEC-169, lib/bot-mcp-install.ts). */
+  /** The latest "install Aimpoint's MCP server" run sent to a Hermes connection (VEC-169, lib/bot-mcp-install.ts). */
   mcpInstall?: BotMcpInstallDoc | null;
   /** Name the bot's MCP client has Aimpoint's server under (lib/mcp-name.ts, VEC-198). Unset = set up before the rename ("vector"). */
   mcpServerName?: string;
@@ -654,7 +654,7 @@ export interface BotDoc {
 }
 
 /**
- * Vector asked the bot's Hermes to add Vector's MCP server to its own config (VEC-169). `phase`: the install run is
+ * Aimpoint asked the bot's Hermes to add Aimpoint's MCP server to its own config (VEC-169). `phase`: the install run is
  * going (`install`), waiting before a check run (`waiting`, until `nextAt`), or a check run is going (`check`).
  * Never holds the key: that only travels in the install run's input.
  */
@@ -664,7 +664,7 @@ export interface BotMcpInstallDoc {
   phase: "install" | "waiting" | "check";
   startedAt: Date;
   updatedAt: Date;
-  /** The Hermes run being watched (install or check) and when Vector sent it. */
+  /** The Hermes run being watched (install or check) and when Aimpoint sent it. */
   runId: string | null;
   runStartedAt: Date | null;
   /** When the install run finished, and the tool count it reported. */
@@ -673,7 +673,7 @@ export interface BotMcpInstallDoc {
   /** Check runs sent so far, and when the next one is due (phase `waiting`). */
   checks: number;
   nextAt: Date | null;
-  /** Vector issued the bot a new key for this install (the old one stopped working). */
+  /** Aimpoint issued the bot a new key for this install (the old one stopped working). */
   keyRerolled: boolean;
   reason: string | null;
   finishedAt: Date | null;
@@ -700,9 +700,9 @@ export const BOT_MAX_TASKS_MAX = 20;
 export const botMaxTasks = (b: { maxTasks?: number | null }) =>
   Number.isInteger(b.maxTasks) && b.maxTasks! >= BOT_MAX_TASKS_MIN && b.maxTasks! <= BOT_MAX_TASKS_MAX ? b.maxTasks! : BOT_MAX_TASKS_DEFAULT;
 
-/** The backend that runs a bot. Vector calls it when the bot is assigned a task or @mentioned. */
+/** The backend that runs a bot. Aimpoint calls it when the bot is assigned a task or @mentioned. */
 export type BotAgent = "claude" | "openai" | "hermes" | "other";
-/** How Vector reaches the backend. See src/lib/bot-connect.ts. */
+/** How Aimpoint reaches the backend. See src/lib/bot-connect.ts. */
 export type BotMethod = "claude-api" | "openai-api" | "hermes-api" | "webhook" | "mcp";
 
 export interface BotDelivery {
@@ -724,12 +724,12 @@ export interface BotConnectionDoc {
   url?: string;
   /** Model id for direct API methods. */
   model?: string;
-  /** Vector's origin, recorded at setup: task links in wake-ups, and the MCP URL for providers that call back. */
+  /** Aimpoint's origin, recorded at setup: task links in wake-ups, and the MCP URL for providers that call back. */
   vectorUrl?: string;
   /** AES-GCM sealed secret: Hermes API key, webhook signing secret or provider API key. */
   secretSealed?: string;
   secretHint?: string;
-  /** Sealed copy of the bot's own Vector key, for Claude/OpenAI, which call Vector's MCP server on the bot's behalf. */
+  /** Sealed copy of the bot's own Aimpoint key, for Claude/OpenAI, which call Aimpoint's MCP server on the bot's behalf. */
   vectorKeySealed?: string;
   updatedAt: Date;
   lastDelivery?: BotDelivery;
@@ -836,7 +836,7 @@ export interface BotMentionDoc {
 
 /** Something a person should look at. Bots get wake-ups and check_for_work instead. */
 /** "review": a bot finished a task but left it open (e.g. In Review) while other tasks wait on it.
- * "undelivered": Vector couldn't hand a task to its push bot after retrying (actorId = the bot).
+ * "undelivered": Aimpoint couldn't hand a task to its push bot after retrying (actorId = the bot).
  * "stalled": an open, ready task nobody is assigned to is holding other open tasks up (VEC-108).
  * "waiting": a task has sat at a flow wait step longer than its `remindAfterDays` (VEC-182, once per entry). */
 export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered" | "stalled" | "waiting";
@@ -1005,7 +1005,7 @@ export interface TaskFlowView {
  * "unassigned": nobody is assigned to it.
  * "needs_owner": nobody is assigned, but it is still waiting on open dependencies of its own, so it isn't holding
  * anything up yet. Not stalled: a softer hint (neutral, not red) to give it an owner before those clear (VEC-86).
- * "undelivered": its bot (`botId`) was never reached: Vector couldn't deliver the hand-off after retrying, so
+ * "undelivered": its bot (`botId`) was never reached: Aimpoint couldn't deliver the hand-off after retrying, so
  * nobody is working on it even though it says ready. Shown whether or not other tasks wait on it.
  * A person assignee, or a bot that hasn't picked it up yet or is working on it, isn't stalled.
  */

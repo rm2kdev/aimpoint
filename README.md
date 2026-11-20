@@ -26,7 +26,7 @@ pnpm seed                       # optional: demo org "Northwind Labs"
 pnpm dev
 ```
 
-Seeded logins (password `vector-demo`): `ryan@demo.vector.dev` (admin), `jonah@demo.vector.dev` (admin), `mia@demo.vector.dev`, `sofia@demo.vector.dev`.
+Seeded logins (password `aimpoint-demo`): `ryan@demo.aimpoint.dev` (admin), `jonah@demo.aimpoint.dev` (admin), `mia@demo.aimpoint.dev`, `sofia@demo.aimpoint.dev`.
 
 Locally, with no Pusher or Blob variables set:
 
@@ -36,7 +36,7 @@ Locally, with no Pusher or Blob variables set:
 
 ## Deploy to Vercel
 
-1. Create a MongoDB Atlas cluster and set `MONGODB_URI` / `MONGODB_DB` (the database name defaults to `vector`).
+1. Create a MongoDB Atlas cluster and set `MONGODB_URI` / `MONGODB_DB` (the database name defaults to `aimpoint`).
 2. Set `AUTH_SECRET`.
 3. **Real-time:** create a Pusher Channels app (or a Pusher-compatible service such as Soketi) and set `PUSHER_APP_ID`, `PUSHER_SECRET`, `NEXT_PUBLIC_PUSHER_KEY`, `NEXT_PUBLIC_PUSHER_CLUSTER`. Clients subscribe to `private-org-<orgId>`; `/api/realtime/pusher-auth` only authorises members of that org. (Serverless functions can't hold SSE connections or share an in-memory bus, so the local driver is dev-only.)
 4. **Images:** add a Vercel Blob store to the project; Vercel injects `BLOB_READ_WRITE_TOKEN` and uploads switch to Blob automatically.

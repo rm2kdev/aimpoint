@@ -169,7 +169,7 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
       },
       /** Released on the row without waiting: top of the same status in that project, one write. */
       quickDrop: async (p, task) => {
-        const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("vector:task", { detail: t }));
+        const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("aimpoint:task", { detail: t }));
         const same = task.projectId === p.id;
         // Optimistically keep the stage in the new project, as the server does (VEC-115/117).
         const from = statusById.get(task.statusId);

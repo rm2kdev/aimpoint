@@ -1,8 +1,8 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Vector mark: a small constellation. Dots joined by thin lines trace a "V"
- * with a branch off it, like a vector diagram; one loose dot sits apart.
+ * Aimpoint mark: a small constellation. Dots joined by thin lines trace a "V"
+ * with a branch off it; one loose dot sits apart.
  * Keep in sync with src/app/icon.svg.
  */
 export function LogoMark({ className }: { className?: string }) {
