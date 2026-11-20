@@ -18,7 +18,7 @@ import {
   type TaskPatch,
 } from "@/lib/task-service";
 import { retryHandOff } from "@/lib/retry-handoff";
-import { advanceStepAs, setFlowPausedAs } from "@/lib/flow-actions";
+import { advanceStepAs, moveStalledOnAs, setFlowPausedAs } from "@/lib/flow-actions";
 import { resumeWorkAs, stopWorkAs } from "@/lib/stop-work";
 import type { Counts, FeedItem, RetryOutcome, Task, TaskDetail, TaskDoc } from "@/lib/types";
 
@@ -57,6 +57,14 @@ export async function retryTask(slug: string, taskId: string, force = false): Pr
  */
 export async function advanceTaskStep(slug: string, taskId: string, stepId: string, comment: string | null): Promise<Result<Task>> {
   return guard(async () => advanceStepAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), { stepId: String(stepId ?? ""), comment: typeof comment === "string" ? comment : null }));
+}
+
+/**
+ * "Move to <next step>" on a Stalled flow task (VEC-317): its bot finished the step but the task never moved. Creator
+ * or admin. Same advance as complete_task without a status; `stepId` is the step shown, so it can't move twice.
+ */
+export async function moveStalledTaskOn(slug: string, taskId: string, stepId: string): Promise<Result<Task>> {
+  return guard(async () => moveStalledOnAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), { stepId: String(stepId ?? "") }));
 }
 
 /** Pause / Resume the task's flow (VEC-183): creator, assignee or admin. Resuming re-syncs it by status. */

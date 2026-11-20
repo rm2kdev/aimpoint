@@ -8,10 +8,10 @@ import { useOrgBase } from "@/components/org-provider";
 import { MemberAvatar, UnassignedAvatar } from "@/components/bits";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { canPauseFlow, flowStepAction, locateStep, nextStepOf, stepIndex, type FlowStepAction } from "@/lib/flow-engine-core";
+import { canPauseFlow, flowStepAction, locateStep, nextStepOf, stalledMoveOn, stepIndex, type FlowStepAction } from "@/lib/flow-engine-core";
 import type { ResolvedFlow, ResolvedStep } from "@/lib/flow-model";
 import { isClosedCategory, type Member, type Task } from "@/lib/types";
-import { advanceTaskStep, setTaskFlowPaused } from "@/app/actions/tasks";
+import { advanceTaskStep, moveStalledTaskOn, setTaskFlowPaused } from "@/app/actions/tasks";
 
 /**
  * Where a task is in its project's flow (VEC-178, docs/flows.md section 7), for the task pane's stepper and the
@@ -111,6 +111,48 @@ export function useFlowPause(task: FlowTaskFields | null, onTask?: (t: Task) => 
     });
   };
   return { can, paused, busy, toggle };
+}
+
+/**
+ * "Move to <next step>" for the pane's Stalled banner (VEC-317, docs/flows.md 5.8): a flow task whose bot finished
+ * its step but that never moved on. Rules are the client-safe `stalledMoveOn` (creator or admin, a driven non-wait
+ * step with a next step); the server re-checks them and moves it the way complete_task without a status does.
+ * `why` names the step it's stuck at and where the flow should have sent it, for the banner text (`replaces`: instead
+ * of the generic reason text, whose "move it to Done" a flow may refuse; otherwise appended to it).
+ */
+export function useStalledMoveOn(task: (FlowTaskFields & Pick<Task, "stalled">) | null, onTask?: (t: Task) => void) {
+  const { org, me, isAdmin, statusById, memberById } = useOrgBase();
+  const pos = useFlowPosition(task ?? { projectId: "", statusId: "", flow: null });
+  const [busy, setBusy] = useState(false);
+  const status = task ? statusById.get(task.statusId) : undefined;
+  const move =
+    task && !task.archivedAt && status && pos?.kind === "at" ? stalledMoveOn(pos.flow, pos.current, status, { me: me.id, isAdmin, createdBy: task.createdBy }, task.stalled?.reason) : null;
+  if (!task || !move) return null;
+  const next = move.next;
+  const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
+  const nextOwner = next.status.category === "done" ? null : stepOwner(next, assignee, memberById).label;
+  const to = `${next.name}${next.status.category === "done" ? ` (${next.status.name})` : ""}`;
+  // "finished" today says "move it to Done", which a flow refuses past a required step: say where it's stuck instead.
+  const stalled = task.stalled!;
+  const n = stalled.blocking.length;
+  const keys = n <= 1 ? stalled.blocking.join("") : `${stalled.blocking.slice(0, -1).join(", ")} and ${stalled.blocking[n - 1]}`;
+  const bot = stalled.botId ? (memberById.get(stalled.botId)?.name ?? null) : null;
+  const replaces = stalled.reason === "finished";
+  const why = replaces
+    ? `${bot ?? "Its bot"} finished its work, but the task is still at the ${move.step.name} step: the flow never handed it on to ${to}${n ? `, and ${keys} ${n === 1 ? "is" : "are"} waiting on it` : ""}. Move it on, or @mention ${bot ?? "the bot"} if the work isn't done.`
+    : `It's still at the ${move.step.name} step: the flow never handed it on to ${to}.`;
+  const run = async () => {
+    if (busy) return;
+    setBusy(true);
+    const r = await moveStalledTaskOn(org.slug, task.id, move.step.id);
+    setBusy(false);
+    if (!r.ok) return void toast.error(r.error);
+    if (r.data) onTask?.(r.data);
+    toast.success(`Moved ${task.key} to ${next.name}`, {
+      description: next.status.category === "done" ? `Closed it (${next.status.name}).` : `${next.status.name}${nextOwner ? `, ${/^Stays|^Unassigned|^Any|^Nobody/.test(nextOwner) ? nextOwner.charAt(0).toLowerCase() + nextOwner.slice(1) : `handed to ${nextOwner}`}` : ""}.`,
+    });
+  };
+  return { label: move.label, why, replaces, busy, run, title: `Hand it on to ${next.name}, the way the bot's complete_task would have` };
 }
 
 const sentence = (s: string) => s[0].toUpperCase() + s.slice(1);

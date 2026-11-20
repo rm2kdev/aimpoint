@@ -18,6 +18,7 @@ import {
   ownerPlan,
   requiredBetween,
   stepById,
+  stalledMoveOn,
   stepDriven,
   syncByStatus,
   workingStatus,
@@ -353,6 +354,45 @@ test("pane step actions: a wait step's label for people with a say, Complete ste
   const std = [S("s1", "Triage", "triage", 1), S("s2", "Todo", "unstarted", 2), S("s4", "In Review", "started", 4), S("s5", "Done", "done", 5)];
   const def = resolveFlowSteps(DEFAULT_FLOW_STEPS, std, dir, { source: "org", version: 1 });
   assert.equal(flowStepAction(def, stepById(def, "build"), std[1], v(MIA, { assigneeId: MIA, assigneeIsPerson: true })), null);
+});
+
+test("VEC-317: Move to <next step> on a Stalled flow task, for the creator or an admin, where complete_task would send it", () => {
+  const RYAN = "1".repeat(24);
+  const MIA = "2".repeat(24);
+  const flow = resolveFlowSteps(
+    [
+      bstep("outreach", "Outreach", "lead", { kind: "bot", id: OUTREACH }, { instructions: "Email the lead." }),
+      bstep("await", "Awaiting reply", "out", { kind: "bot", id: OUTREACH }, { advance: "wait", wait: { label: "Reply received", resolvers: [OUTREACH], remindAfterDays: 5 } }),
+      bstep("planning", "Planning", "plan", { kind: "keep" }),
+      bstep("signoff", "Sign-off", "sign", { kind: "person", id: SOFIA }, { advance: "manual" }),
+      bstep("won", "Won", "won", { kind: "none" }),
+    ],
+    bld,
+    dir,
+    { source: "project", version: 1 },
+  );
+  const at = (id) => stepById(flow, id);
+  const v = (me, extra = {}) => ({ me, isAdmin: false, createdBy: RYAN, ...extra });
+  // Bot finished at Outreach, task never moved: the creator gets "Move to Awaiting reply".
+  const m = stalledMoveOn(flow, at("outreach"), st("lead", bld), v(RYAN), "finished");
+  assert.deepEqual([m.label, m.step.id, m.next.id], ["Move to Awaiting reply", "outreach", "await"]);
+  // VEC-316's run-ended reason counts too; an admin may, a bystander may not.
+  assert.equal(stalledMoveOn(flow, at("outreach"), st("lead", bld), v(MIA, { isAdmin: true }), "unfinished").next.id, "await");
+  assert.equal(stalledMoveOn(flow, at("outreach"), st("lead", bld), v(MIA), "finished"), null);
+  // A quiet keep step inside a driven flow still moves on (stepDriven), to the person's step.
+  assert.equal(stalledMoveOn(flow, at("planning"), st("plan", bld), v(RYAN), "finished").label, "Move to Sign-off");
+  // Not stalled, or stalled for a reason moving on doesn't fix (nobody assigned, wake-up never delivered): nothing.
+  assert.equal(stalledMoveOn(flow, at("outreach"), st("lead", bld), v(RYAN), null), null);
+  assert.equal(stalledMoveOn(flow, at("outreach"), st("lead", bld), v(RYAN), "unassigned"), null);
+  assert.equal(stalledMoveOn(flow, at("outreach"), st("lead", bld), v(RYAN), "undelivered"), null);
+  // Wait steps move on with their own action; the last step and closed tasks have nowhere to go.
+  assert.equal(stalledMoveOn(flow, at("await"), st("out", bld), v(RYAN), "finished"), null);
+  assert.equal(stalledMoveOn(flow, at("won"), st("won", bld), v(RYAN), "finished"), null);
+  assert.equal(stalledMoveOn(flow, at("signoff"), st("lost", bld), v(RYAN), "finished"), null);
+  // The seeded default flow doesn't drive the work, so complete_task wouldn't move it either: no button.
+  const std = [S("s1", "Triage", "triage", 1), S("s2", "Todo", "unstarted", 2), S("s4", "In Review", "started", 4), S("s5", "Done", "done", 5)];
+  const def = resolveFlowSteps(DEFAULT_FLOW_STEPS, std, dir, { source: "org", version: 1 });
+  assert.equal(stalledMoveOn(def, stepById(def, "build"), std[1], v(RYAN), "finished"), null);
 });
 
 test("pause / resume flow: creator, assignee or admin", () => {

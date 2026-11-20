@@ -4,8 +4,8 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { toFeed, toTask, withWorkingBots } from "@/lib/data";
-import { loadTaskFlow } from "@/lib/flow-engine";
-import { canPauseFlow, flowStepAction, locateStep, type FlowViewer } from "@/lib/flow-engine-core";
+import { advanceTarget, loadTaskFlow } from "@/lib/flow-engine";
+import { canPauseFlow, flowStepAction, locateStep, stalledMoveOn, type FlowViewer } from "@/lib/flow-engine-core";
 import { addCommentAs, updateTaskAs, type Actor } from "@/lib/task-service";
 import type { ActivityDoc, Task, TaskDoc, TaskFlowState } from "@/lib/types";
 
@@ -46,6 +46,30 @@ export async function advanceStepAs(actor: Actor, taskId: ObjectId, opts: { step
   const statusChanges = action.next.status.id !== ctx.status.id;
   // flowResolver: the step's owner may not have edit rights (another person was assigned); this is the one move it may make.
   return updateTaskAs(actor, taskId, statusChanges ? { statusId: action.next.status.id } : {}, { flowTo: action.next.id, flowResolver: true });
+}
+
+/**
+ * "Move to <next step>" on a flow task that sits Stalled after its bot finished the step (VEC-317, docs/flows.md 5.8):
+ * the one-click fix instead of a comment and an @mention. The creator or an admin. It takes the same advance path as
+ * complete_task without a status (advanceTarget, then updateTaskAs with `flowTo`), so the status moves, the next
+ * step's owner is assigned and woken or notified, and a same-bot keep step re-opens that bot's claim.
+ */
+export async function moveStalledOnAs(actor: Actor, taskId: ObjectId, opts: { stepId: string }): Promise<Task> {
+  const task = await loadTask(actor, taskId);
+  const ctx = task.flow?.paused ? null : await loadTaskFlow(task);
+  const step = ctx?.current;
+  if (!ctx || !step || !ctx.status) throw new UserError(task.flow?.paused ? "Its flow is paused. Resume the flow first, or change the status." : "This task isn't at a step of a flow.");
+  if (step.id !== opts.stepId) throw new UserError(`It has already moved on: it's at the ${step.name} step now.`);
+  const project = await (await cols()).projects.findOne({ _id: task.projectId }, { projection: { key: 1 } });
+  const [shown] = await withWorkingBots([toTask(task, project?.key ?? "?")]);
+  const move = stalledMoveOn(ctx.flow, step, ctx.status, viewerOf(actor, task, ctx.dir.bots), shown.stalled?.reason);
+  if (!move) {
+    if (!shown.stalled) throw new UserError("It isn't stalled any more, so there's nothing to fix. Move it with the flow or the status instead.");
+    throw new UserError(`You can't move it on from ${step.name}. Its creator or an admin can.`);
+  }
+  const target = await advanceTarget(task);
+  if (target.kind !== "advance" || target.to.id !== move.next.id) throw new UserError(`The flow can't hand it on from ${step.name} right now.`);
+  return updateTaskAs(actor, taskId, target.statusChanges ? { statusId: target.to.status.id } : {}, { flowTo: target.to.id });
 }
 
 type TaskFlowCtx = NonNullable<Awaited<ReturnType<typeof loadTaskFlow>>>;

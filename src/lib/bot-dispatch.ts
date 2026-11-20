@@ -399,8 +399,8 @@ const STARTED_NOTE = (w: StatusWords, current: string, flow?: FlowBriefing | nul
   `${
     flow?.stays
       ? `It stays in ${flow.stays} while you work on this step (nothing to set for that)`
-      : w.started
-        ? `Aimpoint moves it to ${w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
+      : flow?.moves || w.started
+        ? `Aimpoint moves it to ${flow?.moves ?? w.started} for you as it's handed over (the task below may still show its earlier status), so don't set that yourself`
         : `This project has no started status, so the task stays in ${current} while you work (nothing to set for that)`
   }; ${flow ? flow.finish.charAt(0).toLowerCase() + flow.finish.slice(1) : `finish with complete_task and ${w.done}, or ${reviewWord(w)} only when a named person must check something.`} ${BLOCKER_NOTE}`;
 
@@ -408,13 +408,25 @@ const STARTED_NOTE = (w: StatusWords, current: string, flow?: FlowBriefing | nul
 const FLOW_NOTE = (flow: FlowBriefing | null | undefined, handoff: { fromStep: string | null; toStep: string } | undefined) =>
   flow ? `${handoff?.fromStep ? `The ${handoff.fromStep} step is finished and the flow handed it to you for ${handoff.toStep}. ` : ""}${flow.text}\n\n` : "";
 
-/** Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. */
-const RESUMED_NOTE = (w: StatusWords, current: string) =>
+/**
+ * Mention wake-ups to the task's assignee: the mention hands the work back, so the bot finishes it again. On an
+ * active-flow step (VEC-317) the pickup follows the flow (it may stay put) and finishing hands it on, as for a hand-off.
+ */
+const RESUMED_NOTE = (w: StatusWords, current: string, flow?: FlowBriefing | null) =>
   `You're its assignee, so this hands the work back to you: ${
-    w.started
-      ? `Aimpoint moves it back to ${w.started} as this is delivered (the task below may still show its earlier status and Stalled)`
-      : `it's picked up by you again and stays in ${current}, since this project has no started status (the task below may still show Stalled)`
-  }. Reply to the comment and do what it asks, then finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment. ${BLOCKER_NOTE}`;
+    flow?.stays
+      ? `it's picked up by you again and stays in ${flow.stays} for this step (the task below may still show Stalled)`
+      : flow?.moves || w.started
+        ? `Aimpoint moves it back to ${flow?.moves ?? w.started} as this is delivered (the task below may still show its earlier status and Stalled)`
+        : `it's picked up by you again and stays in ${current}, since this project has no started status (the task below may still show Stalled)`
+  }. Reply to the comment and do what it asks, then ${
+    flow
+      ? `finish the step again: ${flow.finish.charAt(0).toLowerCase() + flow.finish.slice(1)}`
+      : `finish with complete_task again: ${w.done} when the work meets its acceptance criteria (that releases the tasks waiting on it), or ${reviewWord(w)} only when a named person must check something, with a <@id> mention of them in the comment.`
+  } ${BLOCKER_NOTE}`;
+
+/** The closing line of a work wake-up on an active-flow step (VEC-317): the one thing that moves the task on. Shared with check_for_work. */
+export const flowLastNote = (flow: FlowBriefing | null | undefined) => (flow?.last ? `\n\nBefore you end your run: ${flow.last.charAt(0).toLowerCase() + flow.last.slice(1)}` : "");
 
 const TOOLS_HINT = (w: StatusWords, mcp: string) =>
   `Act on the ticket with the \`${mcp}\` MCP tools: add_comment to reply or report progress (people only see what you post there), set_status to move it, assign_task to hand it on, update_task to edit it, and complete_task when your work on an assigned task is done. Statuses are per project: use the names of the task's own project (listed under \`project.statuses\` in the task below). Moving a task to a done status (${w.done} here) releases the tasks that depend on it; ${w.review ?? "an open status"} does not, so finish with ${w.done} when the work meets its acceptance criteria, and use ${reviewWord(w)} only when a person has to check something (@mention them). get_task re-reads it; get_workspace lists projects with their statuses, and people. ${STOP_NOTE}`;
@@ -445,8 +457,10 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
     context = built.data;
   }
   const retried = (reason.kind === "assigned" || reason.kind === "closeout") && reason.retry;
+  // A mention of the assignee that hands the work back is a work wake-up too (VEC-317: it ends on the flow's finish).
+  const resumes = reason.kind === "mentioned" && (await mentionResumesWork(org._id, bot._id, reason.taskId));
   // Work wake-ups on a flow task carry the step and its instructions, also on retries and ready hand-offs (VEC-175).
-  const flow = task && project && (reason.kind === "assigned" || reason.kind === "ready") ? await flowBriefing(task, project.key) : null;
+  const flow = task && project && (reason.kind === "assigned" || reason.kind === "ready" || resumes) ? await flowBriefing(task, project.key) : null;
   const handoff = reason.kind === "assigned" ? reason.handoff : undefined;
   const head =
     reason.kind === "stopped" && reason.parked
@@ -464,16 +478,16 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       : reason.kind === "ready"
         ? `${reason.taskKey} "${reason.title}", assigned to you in Aimpoint (${org.name}), is ready to work on: ${reason.detail}, so nothing it depends on is open any more. Do the work it asks for. Earlier tasks' comments may hold results you need (see \`dependencies\`; read them with get_task). ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
         : `${reason.by} mentioned you in a comment on ${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}). The comment marked "new": true is the one that mentioned you. ${
-            (await mentionResumesWork(org._id, bot._id, reason.taskId)) ? `${RESUMED_NOTE(w, current)}\n\n${PROGRESS_HINT}` : "Reply to it."
+            resumes ? `${RESUMED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}` : "Reply to it."
           }`;
   const meta = project?.metadata?.filter((m) => m.key) ?? [];
   const projectBlock = meta.length
     ? `\n\nProject context for ${project!.key} (${project!.name}), set by the team. Follow it while you work:\n${meta.map((m) => `- ${m.key}: ${m.value.replace(/\n/g, "\n  ")}`).join("\n")}`
     : "";
   return {
-    prompt: `${head}${projectBlock}\n\n${TOOLS_HINT(w, mcpServerNameFor(bot))}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
+    prompt: `${head}${projectBlock}\n\n${TOOLS_HINT(w, mcpServerNameFor(bot))}${flowLastNote(flow)}\n\nThe task, with its description and every comment:\n\n${JSON.stringify(context, null, 2)}`,
     task: context,
-    flow: flow ? { ...flow.payload, handoff: handoff ?? null } : null,
+    flow: flow && !resumes ? { ...flow.payload, handoff: handoff ?? null } : null,
   };
 }
 

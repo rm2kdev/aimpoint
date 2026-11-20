@@ -306,6 +306,26 @@ A step with `advance: "wait"` pauses the task until an outside event:
   that reference it (editor warning, admin notification).
 - Wait steps are excluded from red Stalled (they are expected to sit); reminders cover them.
 
+Stuck flow tasks (VEC-314/317). A step only ends when its owner calls complete_task (without a status on an active
+flow; its own, a working or the next step's status does the same, VEC-315). A bot that only says "done" in chat or in
+its run's last message moves nothing, so the bots are told so plainly and last: `flow.howToFinish` and every work
+wake-up on an active-flow step (assigned, ready, hand-off, retry, the check_for_work hand-out and a mention that hands
+the work back) end with "Finish this step by calling complete_task without a status. Saying you're done in chat (or in
+your run's last message) does not move the task: only complete_task does." (`FLOW_FINISH_LAST` / `FlowBriefing.last`
+in lib/flow-engine.ts, `flowLastNote` in lib/bot-dispatch.ts).
+
+- Detection: a task stuck at a step shows as red Stalled with its reason (`loadStalled` in lib/data.ts): `finished`
+  (its bot holds a done claim and the task is still open at the step) and the run-ended reasons VEC-316 adds (a bot
+  run that ended without complete_task: one automatic follow-up wake-up first, then Stalled).
+- Moving it on: the task pane's Stalled banner says which step it's stuck at and where the flow should have sent it,
+  with a "Move to <next step>" button for the creator or an admin (`stalledMoveOn` in flow-engine-core.ts, offered for
+  `finished` / `unfinished` on a driven, non-wait step with a next step). It runs `moveStalledOnAs`
+  (lib/flow-actions.ts): the same advance as complete_task without a status (`advanceTarget`, then `updateTaskAs` with
+  `flowTo`), so the status moves, the next step's owner is assigned and woken or notified with its instructions, and a
+  keep step owned by the same bot re-opens its claim. The server re-checks that the task is still Stalled at the step
+  shown (a stale pane can't move it twice). Other fixes stay as before: Retry (hand it to the bot again), an @mention
+  of the bot (hands the work back), or a status change.
+
 ### 5.9 Retry / unstall (VEC-159)
 
 `retryHandOff` re-sends the current step's hand-off (kind `handoff`, `retry: true`, same instructions) to the

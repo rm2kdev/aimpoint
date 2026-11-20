@@ -357,12 +357,23 @@ export interface FlowBriefing {
   finish: string;
   /** The status pickup leaves it in (a started-stage step), or null when pickup moves it as usual. */
   stays: string | null;
+  /** The status pickup (or a mention that hands the work back) moves it to, when it moves; null when it stays. */
+  moves: string | null;
+  /**
+   * The closing instruction of a work wake-up on a step that hands on with complete_task (VEC-317): prompts end on it,
+   * since a bot that only says it's done in its run leaves the task sitting at the step. Null at a wait step.
+   */
+  last: string | null;
   /** For webhook payloads and tool replies. */
   payload: {
     step: { id: string; name: string; status: string; owner: string; instructions: string; advance: string; number: number; of: number };
     next: { id: string; name: string; status: string; owner: string } | null;
   };
 }
+
+/** The last instruction on an active-flow step (VEC-317), in flow.howToFinish and at the end of every work wake-up. */
+export const FLOW_FINISH_LAST =
+  "Finish this step by calling complete_task without a status. Saying you're done in chat (or in your run's last message) does not move the task: only complete_task does.";
 
 /** The briefing for whoever holds the task's current step; null when the flow has nothing to say (no flow, paused, the default). */
 export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: TaskFlowContext | null): Promise<FlowBriefing | null> {
@@ -387,6 +398,9 @@ export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: T
       later.length ? ` Don't pass a done status: ${later.map((s) => s.name).join(", ")} still ${later.length === 1 ? "has" : "have"} to run.` : ""
     }`;
   }
+  // Said plainly and last (VEC-317): runs that only said "done" in chat left the task at its step (MAR-1).
+  const last = step.advance === "wait" || !next ? null : FLOW_FINISH_LAST;
+  if (last) finish = `${finish} ${last}`;
   const text = `This task is at step ${i + 1} of ${flow.steps.length}, "${step.name}", of ${projectKey}'s flow (${flow.steps.map((s) => s.name).join(" > ")}).${
     instructions ? ` Instructions for this step:\n${instructions}\n` : " "
   }${finish}`;
@@ -395,6 +409,8 @@ export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: T
     finish,
     // Pickup leaves it where it is: a started-stage step, or one whose every started status belongs to a later step (VEC-315).
     stays: step.status.category === "started" || (step.status.category === "unstarted" && !workingStatus(flow, step, ctx.statuses)) ? step.status.name : null,
+    moves: step.status.category === "started" ? null : (workingStatus(flow, step, ctx.statuses)?.name ?? null),
+    last,
     payload: {
       step: { id: step.id, name: step.name, status: step.status.name, owner: ownerName(dir, step), instructions, advance: step.advance, number: i + 1, of: flow.steps.length },
       next: next ? { id: next.id, name: next.name, status: next.status.name, owner: ownerName(dir, next) } : null,

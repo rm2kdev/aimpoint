@@ -251,5 +251,35 @@ export function flowStepAction(flow: ResolvedFlow, current: ResolvedStep, status
   return personHolds ? { kind: "complete", label: "Complete step", step: current, next } : null;
 }
 
+/**
+ * Stalled reasons a person fixes by moving the flow on (VEC-317): the step's bot finished (or its run ended) but the
+ * task never left the step. Strings, so reasons VEC-316 adds ("unfinished") need no change here.
+ */
+export const MOVE_ON_STALLED: ReadonlySet<string> = new Set(["finished", "unfinished"]);
+
+/** "Move to <next step>" on a Stalled flow task: the step it's at and where complete_task without a status sends it. */
+export type StalledMoveOn = { label: string; step: ResolvedStep; next: ResolvedStep };
+
+/**
+ * The pane's one-click fix for a flow task that sits Stalled at a step after its bot finished (VEC-317), or null.
+ * For people with edit access (the creator or an admin). Same target as complete_task without a status
+ * (advanceTarget): a driven, non-wait step with a next step, the task still open.
+ */
+export function stalledMoveOn(
+  flow: ResolvedFlow,
+  current: ResolvedStep,
+  status: FlowStatusLike,
+  v: Pick<FlowViewer, "me" | "isAdmin" | "createdBy">,
+  stalledReason: string | null | undefined,
+): StalledMoveOn | null {
+  if (!stalledReason || !MOVE_ON_STALLED.has(stalledReason)) return null;
+  if (closed(status.category) || status.category === "triage" || current.status.category === "done" || current.advance === "wait") return null;
+  if (!stepDriven(flow, current)) return null;
+  const next = nextStepOf(flow, current);
+  if (!next) return null;
+  if (!(v.isAdmin || v.createdBy === v.me)) return null;
+  return { label: `Move to ${next.name}`, step: current, next };
+}
+
 /** Pause / Resume flow (design 5.6): the task's creator, its assignee or an admin. */
 export const canPauseFlow = (v: Pick<FlowViewer, "me" | "isAdmin" | "createdBy" | "assigneeId">) => v.isAdmin || v.createdBy === v.me || v.assigneeId === v.me;

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowRightIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -24,7 +24,7 @@ import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
 import { msSince, QUIET_HINT_MS, useCanRetry, useRetryTask } from "@/components/retry-task";
-import { FlowStepper, useFlowPause } from "@/components/task-flow";
+import { FlowStepper, useFlowPause, useStalledMoveOn } from "@/components/task-flow";
 import { StopConfirm, StoppedBanner, useStopWork, WorkingStrip } from "@/components/stop-work";
 import { FormCreator, FormSubmitter, submitterLabel } from "@/components/task-source";
 import { ParkedNote, parkedPickerNote, useParkedBot, useParkedIn } from "@/components/parked";
@@ -71,6 +71,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     setTask((cur) => (cur ? { ...cur, ...t } : cur));
   };
   const flowPause = useFlowPause(task, onFlowTask);
+  // VEC-317: a flow task left at its step after its bot finished gets "Move to <next step>" in the Stalled banner.
+  const moveOn = useStalledMoveOn(task, onFlowTask);
   // VEC-217: Stop / Resume the bot's work (lib/stop-work.ts).
   const stopWork = useStopWork(task, onFlowTask);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -334,14 +336,24 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
           {!task.archivedAt && <StoppedBanner task={task} ctl={stopWork} className="mt-3" />}
           {!task.archivedAt && <WorkingStrip ctl={stopWork} taskKey={task.key} className="mt-3" />}
           {task.stalled && isStalledReason(task.stalled.reason) && !closed && !task.archivedAt && (
-            <div role="status" className="mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 py-2 pr-2 pl-3 text-[12.5px] text-destructive">
+            <div role="status" className={cn("mt-3 flex items-start gap-2 rounded-lg bg-destructive/10 py-2 pr-2 pl-3 text-[12.5px] text-destructive", moveOn && "flex-wrap pb-2.5")}>
               <CircleAlertIcon className="mt-px size-3.5 shrink-0" />
               <span className="min-w-0 flex-1">
                 <span className="font-medium">Stalled, needs attention.</span>{" "}
-                {stalledText(task.stalled, task.stalled.botId ? (memberById.get(task.stalled.botId)?.name ?? null) : null)}
+                {moveOn?.replaces ? moveOn.why : stalledText(task.stalled, task.stalled.botId ? (memberById.get(task.stalled.botId)?.name ?? null) : null)}
+                {moveOn && !moveOn.replaces && ` ${moveOn.why}`}
               </span>
-              {canRetry && task.stalled.botId && (
-                <RetryButton busy={retrying} onClick={onRetry} className="-my-1 border-destructive/30 text-destructive hover:text-destructive" />
+              {moveOn ? (
+                // VEC-317: the one-click fix for a flow task left at its step, on its own row so the reason stays readable.
+                <div className="flex basis-full items-center gap-2 pl-[22px]">
+                  <Button size="sm" disabled={moveOn.busy} onClick={() => void moveOn.run()} title={moveOn.title} className="h-7 gap-1.5 px-2.5">
+                    <ArrowRightIcon className="size-3.5" /> {moveOn.label}
+                  </Button>
+                  {canRetry && task.stalled.botId && <RetryButton busy={retrying} onClick={onRetry} className="border-destructive/30 bg-background text-destructive hover:text-destructive" />}
+                </div>
+              ) : (
+                canRetry &&
+                task.stalled.botId && <RetryButton busy={retrying} onClick={onRetry} className="-my-1 border-destructive/30 text-destructive hover:text-destructive" />
               )}
             </div>
           )}
