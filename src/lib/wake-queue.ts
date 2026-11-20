@@ -76,6 +76,7 @@ function storedReason(r: QueuedReason): BotWakeDoc["reason"] {
     ...("resumed" in r && r.resumed ? { resumed: true } : {}),
     ...("reassignedFrom" in r && r.reassignedFrom ? { reassignedFrom: r.reassignedFrom } : {}),
     ...("handoff" in r && r.handoff ? { handoff: r.handoff } : {}),
+    ...("followUp" in r && r.followUp ? { followUp: true } : {}),
   };
 }
 
@@ -90,7 +91,7 @@ function toReason(w: BotWakeDoc): QueuedReason {
     case "mentioned":
       return { kind: "mentioned", ...base, commentId: r.commentId ?? new ObjectId() };
     default:
-      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}), ...(r.resumed ? { resumed: true } : {}), ...(r.reassignedFrom ? { reassignedFrom: r.reassignedFrom } : {}), ...(r.handoff ? { handoff: r.handoff } : {}) };
+      return { kind: "assigned", ...base, ...(r.retry ? { retry: true } : {}), ...(r.resumed ? { resumed: true } : {}), ...(r.reassignedFrom ? { reassignedFrom: r.reassignedFrom } : {}), ...(r.handoff ? { handoff: r.handoff } : {}), ...(r.followUp ? { followUp: true } : {}) };
   }
 }
 
@@ -285,7 +286,10 @@ async function stillOwed(wake: BotWakeDoc): Promise<"send" | "landed" | "drop"> 
   } else {
     // Reassigned, blocked again (the next ready hand-off will wake it), in Triage, or already picked up / finished.
     if (!task.assigneeId?.equals(wake.botId) || task.waitingOn?.length || status.category === "triage") return "drop";
-    if (await c.agentClaims.findOne({ botId: wake.botId, taskId: wake.taskId }, { projection: { _id: 1 } })) return "drop";
+    if (wake.reason.followUp) {
+      // VEC-316: a follow-up is owed only while the claim it was sent for is still open and waiting for it.
+      if (!(await c.agentClaims.findOne({ botId: wake.botId, taskId: wake.taskId, state: "in_progress", "watch.followUpAt": { $ne: null } }, { projection: { _id: 1 } }))) return "drop";
+    } else if (await c.agentClaims.findOne({ botId: wake.botId, taskId: wake.taskId }, { projection: { _id: 1 } })) return "drop";
     // Moved into Backlog since (VEC-274): parked, so no hand-off; leaving Backlog sends a fresh one.
     if (await isParked(task, status.category)) return "drop";
   }
@@ -436,6 +440,8 @@ export async function sweepWakes(): Promise<{ retried: number; resent: number; r
   const resent = await reconcile();
   // Unclaimed public form uploads (VEC-233) ride along: throttled to every 10 min inside, so this is usually a no-op.
   await import("./form-uploads").then((m) => m.sweepFormUploadsSoon()).catch((err) => console.error("[form uploads sweep]", err));
+  // Runs that ended without complete_task (VEC-316): one follow-up, then Stalled. Throttled to every 30 s inside.
+  await import("./unfinished-runs").then((m) => m.sweepUnfinishedRunsSoon()).catch((err) => console.error("[unfinished runs sweep]", err));
   return { retried, resent, released };
 }
 

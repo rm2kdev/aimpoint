@@ -184,7 +184,7 @@ export async function resumeOnMention(orgId: ObjectId, botId: ObjectId, taskId: 
         if ((err as { code?: number }).code !== 11000) throw err; // a concurrent pickup took it: already working
       }
     } else if (claim.state !== "in_progress") {
-      const res = await c.agentClaims.updateOne({ _id: claim._id, state: claim.state }, { $set: { state: "in_progress", claimedAt: now, finishedAt: null } });
+      const res = await c.agentClaims.updateOne({ _id: claim._id, state: claim.state }, { $set: { state: "in_progress", claimedAt: now, finishedAt: null }, $unset: { watch: "", unfinishedAt: "" } });
       changed = res.modifiedCount > 0;
     }
     // The move's upsert carries the reopened claim (and the cleared stall); otherwise publish the claim alone.

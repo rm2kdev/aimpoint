@@ -10,6 +10,8 @@ import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
+import { armRunWatch } from "@/lib/run-watch";
+import { followUpText } from "@/lib/run-watch-core";
 import { billingOn, isOrgActive } from "@/lib/billing";
 import { atWaitStep, flowBriefing, isParked, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
@@ -32,7 +34,7 @@ export type WakeReason =
   /** `handoff`: a flow step handed it on (VEC-175): from which step (null = it entered the flow) to which. */
   /** `resumed` (with retry): a person stopped the bot's work and has now resumed it (VEC-215). `reassignedFrom`: the
    * stopped bot's name when the task was reassigned to this bot while stopped (VEC-219), so this bot never worked on it. */
-  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean; resumed?: boolean; reassignedFrom?: string; handoff?: { fromStep: string | null; toStep: string } }
+  | { kind: "assigned"; taskId: ObjectId; taskKey: string; title: string; by: string; retry?: boolean; resumed?: boolean; reassignedFrom?: string; handoff?: { fromStep: string | null; toStep: string }; /** VEC-316: the one follow-up after a run ended without complete_task. */ followUp?: boolean }
   | { kind: "mentioned"; taskId: ObjectId; commentId: ObjectId; taskKey: string; title: string; by: string }
   /** An assigned task's last dependency closed. `detail` says which, e.g. "WEB-1 is done". */
   | { kind: "ready"; taskId: ObjectId; taskKey: string; title: string; by: string; detail: string }
@@ -62,7 +64,7 @@ export const reasonLabel = (r: WakeReason) =>
   r.kind === "test"
     ? "test"
     : r.kind === "assigned"
-      ? `${r.resumed ? "resume" : r.retry ? "retry" : r.handoff ? "handoff" : "assigned"} ${r.taskKey}`
+      ? `${r.followUp ? "follow-up" : r.resumed ? "resume" : r.retry ? "retry" : r.handoff ? "handoff" : "assigned"} ${r.taskKey}`
       : r.kind === "ready"
         ? `${r.taskKey} ready`
         : r.kind === "triage"
@@ -244,6 +246,8 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
     if (res.ok) await markHandedOver(bot, org, reason);
     // The run working on it, on the bot's claim: Stop (VEC-216) cancels it with POST /v1/runs/{id}/stop.
     if (res.ok && res.runId && reason.kind !== "test") await (await cols()).agentClaims.updateMany({ botId: bot._id, taskId: reason.taskId }, { $set: { runId: res.runId } });
+    // VEC-316: watch the run this work delivery started, so one that ends without complete_task is followed up.
+    if (res.ok && (reason.kind === "assigned" || reason.kind === "ready" || reason.kind === "mentioned")) await armRunWatch(bot._id, reason.taskId, conn.method, { followUp: reason.kind === "assigned" && !!reason.followUp });
     out = res.ok
       ? { at: new Date(), ok: true, reason: reasonLabel(reason), status: res.status, ...meta }
       : { at: new Date(), ok: false, reason: reasonLabel(reason), status: res.status, error: res.error, ...meta };
@@ -471,6 +475,16 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
       ? `${reason.resumed ? STOP_RESUME_NOTE(reason.by, true) : ""}${reason.by} put ${reason.taskKey} "${reason.title}" in ${w.triage} in Aimpoint (${org.name}). You're the triage bot for it: no other bot will be handed it. Break it down into the actual tasks needed to do the job and wire up their dependencies so the work happens in a logical order:\n\n${TRIAGE_STEPS(reason.taskKey, w)}`
       : reason.kind === "closeout"
       ? `${retried ? RETRY_NOTE(reason.by) : ""}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is ready to close out: ${reason.detail}, so nothing it depends on is open any more. You triaged it, so wrapping it up is yours:\n\n${CLOSEOUT_STEPS(reason.taskKey, w)}`
+      : reason.kind === "assigned" && reason.followUp
+      ? `${followUpText({
+          key: reason.taskKey,
+          title: reason.title,
+          org: org.name,
+          status: (task && (await c.statuses.findOne({ _id: task.statusId }, { projection: { name: 1 } }))?.name) || "its current status",
+          step: flow ? { name: flow.payload.step.name, number: flow.payload.step.number, of: flow.payload.step.of } : null,
+          finish: flow?.finish ?? null,
+          done: w.done,
+        })}`
       : reason.kind === "assigned"
       ? retried
         ? `${reason.resumed ? (reason.reassignedFrom ? REASSIGNED_RESUME_NOTE(reason.by, reason.reassignedFrom) : STOP_RESUME_NOTE(reason.by)) : RETRY_NOTE(reason.by)}${reason.taskKey} "${reason.title}" in Aimpoint (${org.name}) is assigned to you and ready to work on. Do the work it asks for. ${FLOW_NOTE(flow, undefined)}${STARTED_NOTE(w, current, flow)}\n\n${PROGRESS_HINT}`
@@ -698,6 +712,8 @@ async function webhook(bot: BotDoc, org: OrgDoc, url: string, secret: string, re
     org: { slug: org.slug, name: org.name },
     task: msg.task,
     by: reason.kind === "test" ? null : reason.by,
+    // VEC-316: the one follow-up after the bot's run ended without complete_task.
+    ...(reason.kind === "assigned" && reason.followUp ? { followUp: true } : {}),
     // VEC-159: a person asked for this hand-off again (the bot's earlier run on it stopped).
     ...((reason.kind === "assigned" || reason.kind === "closeout") && reason.retry ? { retry: true } : {}),
     // VEC-215: the hand-back after a person stopped this bot's work and resumed it.

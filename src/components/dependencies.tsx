@@ -114,6 +114,10 @@ export function stalledText(stalled: Stalled, botName: string | null) {
   if (stalled.reason === "needs_owner") return `Nobody is assigned yet. ${waiting}, and it can start once its own dependencies are done, so assign it before then.`;
   if (stalled.reason === "undelivered")
     return `Aimpoint couldn't hand it to ${botName ?? "its bot"}: the wake-up still failed after several retries, so nobody is working on it${n ? `, and ${waiting}` : ""}. Check the bot's connection, then reassign it or @mention the bot to send it again.`;
+  if (stalled.reason === "unfinished")
+    return `${botName ?? "Its bot"} ended its run without calling complete_task, and again after Aimpoint's one follow-up, so nothing moved it on${n ? `, and ${waiting}` : ""}. Check its last comments, then move it on, reassign it or @mention the bot to hand it back.`;
+  // A flow task finished at a step with no hand-off is Stalled even with nothing waiting on it (VEC-316).
+  if (stalled.reason === "finished" && !n) return `${botName ?? "Its bot"} finished its work but the task is still at the same step of its flow, and nothing handed it on. Review it and move it to the next step, or reassign it.`;
   return stalled.reason === "finished"
     ? `${botName ?? "Its bot"} finished its work but left it open, and ${waiting}. Review it and move it to Done to release ${n === 1 ? "it" : "them"}, or reassign it.`
     : `Nobody is assigned, and ${waiting}. Assign it to someone.`;

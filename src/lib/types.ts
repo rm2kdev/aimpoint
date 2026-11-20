@@ -774,6 +774,8 @@ export interface BotWakeDoc {
     reassignedFrom?: string;
     /** An assigned wake-up from a flow hand-off (VEC-175). */
     handoff?: { fromStep: string | null; toStep: string };
+    /** VEC-316: the one follow-up after a run ended without complete_task (lib/unfinished-runs.ts). */
+    followUp?: boolean;
   };
   /** Attempts made so far. */
   attempts: number;
@@ -823,6 +825,12 @@ export interface AgentClaimDoc {
   state: "in_progress" | "done" | "stopped";
   /** VEC-216: the Hermes run the push wake-up started for this work, so Stop can cancel it (POST /v1/runs/{id}/stop). */
   runId?: string | null;
+  /** VEC-316: what the latest work delivery started, so lib/unfinished-runs.ts can tell when that run ended without
+   * complete_task (rules in lib/run-watch-core.ts). Unset on poll bots' claims and claims from before it shipped. */
+  watch?: import("./run-watch-core").RunWatch | null;
+  /** VEC-316: the follow-up's run also ended without complete_task, so the sweep finished the claim as unfinished
+   * (finishedAt = unfinishedAt). The task shows as Stalled "unfinished" until the bot finishes or picks it up again. */
+  unfinishedAt?: Date | null;
   claimedAt: Date;
   finishedAt?: Date | null;
 }
@@ -1011,6 +1019,10 @@ export interface TaskFlowView {
  * anything up yet. Not stalled: a softer hint (neutral, not red) to give it an owner before those clear (VEC-86).
  * "undelivered": its bot (`botId`) was never reached: Aimpoint couldn't deliver the hand-off after retrying, so
  * nobody is working on it even though it says ready. Shown whether or not other tasks wait on it.
+ * "unfinished": its bot's run ended without complete_task, and so did the one follow-up Aimpoint sent it (VEC-316),
+ * so nobody is moving it. Shown whether or not other tasks wait on it.
+ * "finished" also shows without waiters on a flow task its bot finished at a step the flow drives, when it is still at
+ * that step with no hand-off (VEC-316).
  * A person assignee, or a bot that hasn't picked it up yet or is working on it, isn't stalled.
  */
 export interface Stalled {
@@ -1020,7 +1032,7 @@ export interface Stalled {
   /** Keys of the open tasks waiting on it, e.g. ["VEC-16", "VEC-17"]. */
   blocking: string[];
 }
-export type StalledReason = "finished" | "unassigned" | "needs_owner" | "undelivered";
+export type StalledReason = "finished" | "unassigned" | "needs_owner" | "undelivered" | "unfinished";
 /** True for reasons that mean the task really is holding others up (red Stalled), false for the needs_owner hint. */
 export const isStalledReason = (r: StalledReason) => r !== "needs_owner";
 /** A task mentioned from another task: a dependency or a dependent. */

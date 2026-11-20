@@ -3,6 +3,7 @@ import { ObjectId, type Filter } from "mongodb";
 import sanitizeHtml from "sanitize-html";
 import { cols } from "@/lib/db";
 import { mcpServerNameFor } from "@/lib/mcp-name";
+import { addRunStalls } from "@/lib/run-stalled";
 import type {
   ActivityDoc,
   Bot,
@@ -248,6 +249,14 @@ async function closedStatusIds(statusIds: string[]): Promise<Set<string>> {
  * "needs_owner" reason instead of "unassigned".
  */
 export async function loadStalled(tasks: Task[]): Promise<Map<string, Stalled>> {
+  const out = await stalledByWaiters(tasks);
+  // VEC-316: "unfinished" (runs that ended twice without complete_task) and flow tasks finished at a step with no
+  // hand-off, whether or not anything waits on them.
+  await addRunStalls(tasks, out);
+  return out;
+}
+
+async function stalledByWaiters(tasks: Task[]): Promise<Map<string, Stalled>> {
   const out = new Map<string, Stalled>();
   const candidates = tasks.filter((t) => !t.archivedAt && !t.workingBotIds.length);
   if (!candidates.length) return out;

@@ -745,7 +745,7 @@ const TOOLS: Record<string, ToolImpl> = {
       // Finishing is also the end of its close-out, if one was pending: the task can show as "finished" Stalled now (VEC-89).
       const resolved = await resolveCloseout(task._id, ctx.bot._id);
       // A new done claim (none before, or in progress) can also make it Stalled, so republish then as well.
-      if (claim?.state !== "done" || resolved) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+      if (claim?.state !== "done" || claim?.unfinishedAt || resolved) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
       const key = `${project.key}-${task.number}`;
       // A flow hand-off gave the task its next owner (an advance, or an explicit status that sent it to another step's
       // owner, e.g. a tester failing it back to Develop): nothing is left waiting on this bot, so no review note.

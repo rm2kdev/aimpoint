@@ -205,6 +205,8 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
         reason:
           stalled.reason === "finished"
             ? `${personRef(dir, stalled.botId)?.name ?? "Its bot"} finished its work but left it open`
+            : stalled.reason === "unfinished"
+            ? `${personRef(dir, stalled.botId)?.name ?? "Its bot"} ended its run without calling complete_task, twice (Aimpoint sent one follow-up), so nothing moved it on`
             : stalled.reason === "undelivered"
             ? `Aimpoint couldn't deliver the hand-off to ${personRef(dir, stalled.botId)?.name ?? "its bot"} after several retries, so nobody is working on it`
             : stalled.reason === "needs_owner"
