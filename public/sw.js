@@ -11,11 +11,13 @@
  *
  * The cache name carries the build version from the registration URL (/sw.js?v=<build>). A new
  * deploy registers a new URL, the new worker installs, takes over at once and deletes every older
- * vector-* cache on activate.
+ * aimpoint-* cache on activate, plus any vector-* cache left from before the rename (VEC-321).
  */
 
 const VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
-const CACHE = `vector-${VERSION}`;
+const CACHE = `aimpoint-${VERSION}`;
+// Cache name prefixes this worker owns: the current one and the pre-rename one (VEC-321).
+const CACHE_PREFIXES = ["aimpoint-", "vector-"];
 const OFFLINE_URL = "/offline.html";
 const PRECACHE = [OFFLINE_URL, "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
 
@@ -37,7 +39,7 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       const keys = await caches.keys();
-      await Promise.all(keys.filter((k) => k.startsWith("vector-") && k !== CACHE).map((k) => caches.delete(k)));
+      await Promise.all(keys.filter((k) => k !== CACHE && CACHE_PREFIXES.some((p) => k.startsWith(p))).map((k) => caches.delete(k)));
       if (self.registration.navigationPreload) await self.registration.navigationPreload.enable();
       await self.clients.claim();
     })(),

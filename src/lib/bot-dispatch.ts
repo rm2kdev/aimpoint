@@ -4,6 +4,7 @@ import { after } from "next/server";
 import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { unseal } from "@/lib/secrets";
+import { connectionAimpointKeySealed, connectionAimpointUrl } from "@/lib/connection-fields";
 import { isPush } from "@/lib/bot-connect";
 import { buildTaskContext } from "@/lib/mcp/context";
 import { publishWorking } from "@/lib/claims";
@@ -323,9 +324,11 @@ export async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReaso
 async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason, msg: WakeMessage, wake?: WakeAttempt): Promise<SendResult> {
   const secret = conn.secretSealed ? unseal(conn.secretSealed) : null;
   if (conn.method === "claude-api" || conn.method === "openai-api") {
-    const aimpointKey = conn.vectorKeySealed ? unseal(conn.vectorKeySealed) : null;
-    if (!secret || !aimpointKey || !conn.vectorUrl || !conn.model) return { ok: false, error: "The connection is missing its key or model. Run setup again." };
-    const args = { bot, org, prompt: msg.prompt, apiKey: secret, aimpointKey, mcpUrl: `${conn.vectorUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId, work: reason.kind === "assigned" || reason.kind === "ready" };
+    const sealedKey = connectionAimpointKeySealed(conn);
+    const aimpointUrl = connectionAimpointUrl(conn);
+    const aimpointKey = sealedKey ? unseal(sealedKey) : null;
+    if (!secret || !aimpointKey || !aimpointUrl || !conn.model) return { ok: false, error: "The connection is missing its key or model. Run setup again." };
+    const args = { bot, org, prompt: msg.prompt, apiKey: secret, aimpointKey, mcpUrl: `${aimpointUrl}/api/mcp`, model: conn.model, taskId: reason.kind === "test" ? null : reason.taskId, work: reason.kind === "assigned" || reason.kind === "ready" };
     return conn.method === "claude-api" ? claudeApi(args) : openaiApi(args);
   }
   if (!conn.url || !secret) return { ok: false, error: "The connection is missing its address or key. Run setup again." };
@@ -433,7 +436,7 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
   const current = (task && !w.started && (await c.statuses.findOne({ _id: task.statusId, orgId: org._id }, { projection: { name: 1 } }))?.name) || "its current status";
   if (task && project) {
     const built = await buildTaskContext(task, project, {
-      origin: conn.vectorUrl ?? "",
+      origin: connectionAimpointUrl(conn) ?? "",
       org,
       bot,
       includeImages: false,

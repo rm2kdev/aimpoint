@@ -23,6 +23,7 @@ import { daysUntil } from "@/lib/dates";
 import { PRIORITY_LABELS } from "@/lib/format";
 import { compareRank } from "@/lib/rank";
 import type { Priority, Task } from "@/lib/types";
+import { adoptLegacyKey } from "@/lib/stored-keys";
 
 /* ---------------- model ---------------- */
 
@@ -79,6 +80,7 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
 
   useEffect(() => {
     try {
+      adoptLegacyKey(localStorage, storageKey);
       const raw = localStorage.getItem(storageKey);
       const saved = raw ? (JSON.parse(raw) as Partial<ViewState> & { v?: number }) : {};
       const legacyDefault = (saved.v ?? 1) < VIEW_STATE_VERSION && saved.sort === "priority";

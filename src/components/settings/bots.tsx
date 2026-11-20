@@ -18,6 +18,7 @@ import { createBot } from "@/app/actions/bots";
 import { timeAgo } from "@/lib/format";
 import type { Bot, BotAvatar as BotAvatarData } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
+import { storageKey } from "@/lib/stored-keys";
 
 export function BotsSettings({
   bots,
@@ -139,7 +140,7 @@ function NewBotDialog({ open, onClose }: { open: boolean; onClose: () => void })
                 const r = await createBot(org.slug, { name, description, avatar });
                 if (!r.ok) return setError(r.error);
                 // Hand the one-time key to the bot page, where the connect wizard puts it into the setup steps.
-                sessionStorage.setItem(`vector:new-bot-key:${r.data!.bot.id}`, r.data!.key);
+                sessionStorage.setItem(storageKey(`new-bot-key:${r.data!.bot.id}`), r.data!.key);
                 onClose();
                 setTimeout(reset, 200);
                 router.push(orgPath(org.slug, "settings", "bots", r.data!.bot.id));

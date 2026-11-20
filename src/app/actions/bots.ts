@@ -12,6 +12,7 @@ import { toBot } from "@/lib/data";
 import { METHOD_IDS, backendFor } from "@/lib/bot-connect";
 import { deliver, hermesProbe, providerProbe } from "@/lib/bot-dispatch";
 import { seal, secretHint, unseal } from "@/lib/secrets";
+import { connectionAimpointKeySealed, connectionAimpointUrl } from "@/lib/connection-fields";
 import { BOT_MAX_TASKS_DEFAULT, BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAgent, BotAvatar, BotConnectionDoc, BotMcpInstall, BotMethod } from "@/lib/types";
 import { advanceMcpInstall, installRunning, preflightHermes, recordFailedInstall, startMcpInstall, toMcpInstall } from "@/lib/bot-mcp-install";
@@ -98,8 +99,11 @@ export async function rerollBotKey(slug: string, id: string): Promise<Result<{ b
     );
     if (!bot) throw new UserError("This bot no longer exists.");
     // Providers that call Aimpoint on the bot's behalf hold a sealed copy of the key: keep it current.
-    if (bot.connection?.vectorKeySealed) {
-      await c.bots.updateOne({ _id: bot._id }, { $set: { "connection.vectorKeySealed": seal(key) } });
+    if (connectionAimpointKeySealed(bot.connection)) {
+      await c.bots.updateOne(
+        { _id: bot._id },
+        { $set: { "connection.aimpointKeySealed": seal(key) }, $unset: { "connection.vectorKeySealed": "" } },
+      );
     }
     revalidatePath(orgPath(slug, "settings", "bots", id));
     return { bot: toBot(bot), key };
@@ -183,7 +187,7 @@ export async function saveBotConnection(slug: string, id: string, input: Connect
     let issued: ReturnType<typeof generateKey> | null = null;
     try {
       const v = new URL(String(input.aimpointUrl ?? ""));
-      if (v.protocol === "http:" || v.protocol === "https:") conn.vectorUrl = v.origin;
+      if (v.protocol === "http:" || v.protocol === "https:") conn.aimpointUrl = v.origin;
     } catch {}
     if (m.url) conn.url = cleanUrl(input.url, m.url.label);
 
@@ -204,17 +208,17 @@ export async function saveBotConnection(slug: string, id: string, input: Connect
       conn.model = model;
     }
     if (m.needsAimpointKey) {
-      if (!conn.vectorUrl || /^http:/.test(conn.vectorUrl) || isPrivateHost(new URL(conn.vectorUrl).hostname)) {
-        throw new UserError(`${m.title} calls Aimpoint from its own servers, so Aimpoint needs a public https:// address. This one is ${conn.vectorUrl ?? "unknown"}.`);
+      if (!conn.aimpointUrl || /^http:/.test(conn.aimpointUrl) || isPrivateHost(new URL(conn.aimpointUrl).hostname)) {
+        throw new UserError(`${m.title} calls Aimpoint from its own servers, so Aimpoint needs a public https:// address. This one is ${conn.aimpointUrl ?? "unknown"}.`);
       }
       const vk = input.aimpointKey?.trim();
       if (vk) {
         if (hashKey(vk) !== bot.keyHash) throw new UserError("That isn't this bot's current key.");
-        conn.vectorKeySealed = seal(vk);
-      } else if (prev?.vectorKeySealed) conn.vectorKeySealed = prev.vectorKeySealed;
+        conn.aimpointKeySealed = seal(vk);
+      } else if (connectionAimpointKeySealed(prev)) conn.aimpointKeySealed = connectionAimpointKeySealed(prev);
       else if (input.rotateKey) {
         issued = generateKey();
-        conn.vectorKeySealed = seal(issued.key);
+        conn.aimpointKeySealed = seal(issued.key);
       } else throw new UserError("This backend needs the bot's key.");
     }
 
@@ -295,7 +299,7 @@ export async function installBotMcp(slug: string, id: string, input: { key?: str
     if (!bot) throw new UserError("This bot no longer exists.");
     if (bot.connection?.method !== "hermes-api") throw new UserError("Connect this bot to Hermes over the Agent API first.");
     if (installRunning(bot.mcpInstall)) throw new UserError("An install is already running for this bot. Wait for it to finish.");
-    let aimpointUrl = bot.connection.vectorUrl ?? null;
+    let aimpointUrl = connectionAimpointUrl(bot.connection) ?? null;
     try {
       const v = new URL(String(input.aimpointUrl ?? ""));
       if (v.protocol === "http:" || v.protocol === "https:") aimpointUrl = v.origin;

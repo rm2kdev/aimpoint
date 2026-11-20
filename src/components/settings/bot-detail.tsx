@@ -35,6 +35,7 @@ import { analyticsPath, flowsPath, orgPath, projectFlowPath, rolesPath } from "@
 import { ProjectTile } from "@/components/settings/org-settings";
 import type { BotFlowPlace } from "@/lib/flows";
 import { analyticsSearchFor } from "@/lib/analytics-range";
+import { adoptLegacyKey, storageKey } from "@/lib/stored-keys";
 
 const Row = SettingsRow;
 
@@ -67,7 +68,8 @@ export function BotDetail({
   const [maxTasks, setMaxTasks] = useState(String(initial.maxTasks));
   const [pending, start] = useTransition();
   useEffect(() => {
-    const k = `vector:new-bot-key:${initial.id}`;
+    const k = storageKey(`new-bot-key:${initial.id}`);
+    adoptLegacyKey(sessionStorage, k);
     const key = sessionStorage.getItem(k);
     if (key) {
       sessionStorage.removeItem(k);

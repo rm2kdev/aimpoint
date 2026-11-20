@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { ShareIcon, SquarePlusIcon, XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { adoptLegacyKey, storageKey } from "@/lib/stored-keys";
 
 /**
  * "Add to Home Screen" prompt (VEC-157). Two install paths:
@@ -23,7 +24,7 @@ type InstallEvent = Event & {
 
 export type InstallMode = "ios" | "prompt";
 
-const DISMISS_KEY = "vector:install-dismissed";
+const DISMISS_KEY = storageKey("install-dismissed");
 const DISMISS_MS = 30 * 24 * 60 * 60 * 1000;
 
 interface InstallState {
@@ -67,6 +68,7 @@ function iosCanAddToHomeScreen() {
 
 function dismissedRecently() {
   try {
+    adoptLegacyKey(localStorage, DISMISS_KEY);
     const at = Number(localStorage.getItem(DISMISS_KEY));
     return at > 0 && Date.now() - at < DISMISS_MS;
   } catch {

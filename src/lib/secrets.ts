@@ -6,10 +6,17 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:
  * AES-256-GCM with a key derived from AUTH_SECRET, so rotating AUTH_SECRET invalidates sealed values.
  */
 
+/**
+ * KDF context for the sealing key. Keeps the pre-rename "vector" bytes on purpose (VEC-321): every sealed value in
+ * the database (bot connection secrets and Aimpoint keys, 2FA TOTP secrets) was sealed under it, and changing it
+ * would make them all unreadable. Never rename it; a change needs a re-seal migration of every sealed field.
+ */
+const LEGACY_KDF_CONTEXT = "vector:bot-secrets:";
+
 function key() {
   const secret = process.env.AUTH_SECRET;
   if (!secret) throw new Error("AUTH_SECRET is not set");
-  return createHash("sha256").update(`vector:bot-secrets:${secret}`).digest();
+  return createHash("sha256").update(`${LEGACY_KDF_CONTEXT}${secret}`).digest();
 }
 
 /** "v1.<iv>.<tag>.<ciphertext>", all base64url. */

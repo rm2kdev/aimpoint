@@ -33,6 +33,7 @@ import { isClosedCategory, matchStatus, STATUS_STAGES, type Status, type StatusC
 import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
 import { StoppedChip } from "@/components/stop-work";
 import { PublicBadge } from "@/components/settings/project-public";
+import { adoptLegacyKey, storageKey } from "@/lib/stored-keys";
 
 export interface Scope {
   projectId?: string;
@@ -93,8 +94,8 @@ export function TaskWorkspace({
   const setFresh = freshStore.update;
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   // Manual (shared drag order) is the default for project views and All; My tasks keeps priority.
-  const [view, setView] = useViewState(`vector:view:${pathname}`, scope.archived ? "archived" : scope.mine ? "priority" : "manual");
-  const [collapsed, toggleGroup] = useCollapsedGroups(`vector:collapsed:${pathname}`);
+  const [view, setView] = useViewState(storageKey(`view:${pathname}`), scope.archived ? "archived" : scope.mine ? "priority" : "manual");
+  const [collapsed, toggleGroup] = useCollapsedGroups(storageKey(`collapsed:${pathname}`));
 
   useEffect(() => {
     setViewDefaults({ projectId: scope.projectId, assigneeId: scope.mine ? me.id : undefined });
@@ -1186,6 +1187,7 @@ function useCollapsedGroups(storageKey: string) {
   useEffect(() => {
     const entries: [string, boolean][] = [];
     try {
+      adoptLegacyKey(localStorage, storageKey);
       const raw: unknown = JSON.parse(localStorage.getItem(storageKey) ?? "{}");
       // Older format: an array of folded ids.
       if (Array.isArray(raw)) for (const x of raw) if (typeof x === "string") entries.push([x, true]);

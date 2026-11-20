@@ -725,11 +725,15 @@ export interface BotConnectionDoc {
   /** Model id for direct API methods. */
   model?: string;
   /** Aimpoint's origin, recorded at setup: task links in wake-ups, and the MCP URL for providers that call back. */
+  aimpointUrl?: string;
+  /** @deprecated pre-VEC-321 name of aimpointUrl, left on bots scripts/migrate-connection-fields.mjs hasn't reached. Read via connectionAimpointUrl. */
   vectorUrl?: string;
   /** AES-GCM sealed secret: Hermes API key, webhook signing secret or provider API key. */
   secretSealed?: string;
   secretHint?: string;
   /** Sealed copy of the bot's own Aimpoint key, for Claude/OpenAI, which call Aimpoint's MCP server on the bot's behalf. */
+  aimpointKeySealed?: string;
+  /** @deprecated pre-VEC-321 name of aimpointKeySealed. Read via connectionAimpointKeySealed. */
   vectorKeySealed?: string;
   updatedAt: Date;
   lastDelivery?: BotDelivery;

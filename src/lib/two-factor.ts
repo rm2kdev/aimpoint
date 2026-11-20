@@ -54,10 +54,17 @@ export const hasTwoFactor = (user: Pick<UserDoc, "twoFactor">) => !!user.twoFact
 // No 0/o/1/l/i, so codes read back without ambiguity.
 const RC_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 
+/**
+ * HMAC key context for recovery-code hashes. Keeps the pre-rename "vector" bytes on purpose (VEC-321): stored codes
+ * are one-way hashes under this key, so they can't be re-derived under a new one, and changing it would turn every
+ * existing recovery code into a wrong code. Never rename it.
+ */
+const LEGACY_RECOVERY_CONTEXT = "vector:recovery-codes:";
+
 function recoveryKey() {
   const secret = process.env.AUTH_SECRET;
   if (!secret) throw new Error("AUTH_SECRET is not set");
-  return createHash("sha256").update(`vector:recovery-codes:${secret}`).digest();
+  return createHash("sha256").update(`${LEGACY_RECOVERY_CONTEXT}${secret}`).digest();
 }
 
 const normaliseRecovery = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
