@@ -173,7 +173,26 @@ The step owner (bot: `complete_task`; person: "Complete step" in the task pane) 
   - a done status while a later required step remains -> refused for bots with a UserError naming the step
     ("Review (Testing Verification) still has to run; call complete_task without a status to hand it on");
     people may always do it;
-  - a cancelled status -> always allowed; leaves the flow.
+  - a cancelled status -> always allowed; leaves the flow;
+  - the step's own status, a working status no step uses (In Progress, or In Review when no step has it) or
+    the next step's status -> treated as "done with my step": handed on exactly as without a status
+    (VEC-315, `finishWithStatus` in flow-engine-core). A working status that belongs to an earlier step
+    (In Progress while at Test) is a send-back, as a person's drag is. Wait steps, the done step and Triage
+    keep the rules above.
+- Which steps hand on (VEC-315): `stepDriven` = the step or the next names an owner or has instructions, or
+  any step past Triage does (`flowDrives`). A quiet "its current assignee" step inside an active flow hands on;
+  the seeded default and a flow whose only note is on Triage stay as before.
+- Keep owners hand over too (VEC-315, `handoffKind`): moving a task to a "its current assignee" step on a flow
+  that drives the work hands that step to the assignee (a bot is woken again; a person notified), so a bot
+  owning consecutive steps is never left with a done claim on a step it was never told about (MAR-1 sat at
+  Research that way). A triage bot that assigned the task to itself mid-triage is handed the first work step
+  when it moves the task out of Triage. A bot moving its own task on with `set_status` while it still holds
+  its claim isn't re-woken: the reply tells it to carry on in the same run.
+- Pickup never moves a task into a later step's status: when every started status belongs to a later step
+  (Todo > Research > Write), the task stays in its step's status while it's worked.
+- The complete_task reply always says where the task went, or why nothing moved (not its assignee/creator,
+  paused, detached, last step), on a flow that drives the work. A refused status (a required step can't be
+  skipped) leaves the bot's claim as it was.
 - Advancing writes: `statusId` = next step's status, `assigneeId` = next owner (per `owner.kind`),
   `flow.stepId`/`enteredAt`/`version`, clears `ownerOverride`, and an activity `{kind: "flow_step", from:
   stepName, to: stepName, note: "advanced" | "back" | "skipped" | "synced" | "event"}`.

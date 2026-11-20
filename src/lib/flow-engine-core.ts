@@ -44,9 +44,9 @@ export function stepForStatus(flow: ResolvedFlow, statusId: string, fromStepId?:
 /**
  * The status a bot's pickup moves a step's task to (design 5.4): only from an unstarted-stage step or a backlog-stage
  * step that names its owner (VEC-274), to the
- * first started-stage status that no later step uses (so the work never lands on the tester's In Review), else the
- * first started status. Null = pickup leaves the status alone (the step already sits in a started status, such as
- * In Review for the tester or Deploying for CI, or the project has no started status).
+ * first started-stage status that no later step uses (so the work never lands on the tester's In Review). Null = pickup
+ * leaves the status alone (the step already sits in a started status, such as In Review for the tester or Deploying
+ * for CI, every started status belongs to a later step, or the project has no started status).
  */
 export function workingStatus(flow: ResolvedFlow, step: ResolvedStep, statuses: readonly FlowStatusLike[]): FlowStatusLike | null {
   if (!OPEN_PICKUP.includes(step.status.category)) return null;
@@ -54,7 +54,9 @@ export function workingStatus(flow: ResolvedFlow, step: ResolvedStep, statuses: 
   if (step.status.category === "backlog" && !namesOwner(step)) return null;
   const started = [...statuses].filter((s) => s.category === "started").sort((a, b) => a.order - b.order);
   const later = new Set(flow.steps.slice(stepIndex(flow, step.id) + 1).map((s) => s.status.id));
-  return started.find((s) => !later.has(s.id)) ?? started[0] ?? null;
+  // Every started status belongs to a later step (Todo > Research > Write): stay put. Moving it into the next step's
+  // status while it's still at this step is how MAR-1 sat in Research before its Todo step was done (VEC-315).
+  return started.find((s) => !later.has(s.id)) ?? null;
 }
 
 /**
@@ -115,6 +117,82 @@ export const moveNote = (flow: ResolvedFlow, from: ResolvedStep | null, to: Reso
 export function flowIsActive(flow: ResolvedFlow, step: ResolvedStep): boolean {
   const named = (s: ResolvedStep | null) => !!s && (s.owner.kind === "bot" || s.owner.kind === "person" || !!s.instructions.trim());
   return named(step) || named(nextStepOf(flow, step));
+}
+
+/**
+ * The flow drives the work (VEC-315): some step past Triage names an owner or carries instructions. Unlike
+ * flowIsActive (this step or the next), this looks at the whole pipeline, so a quiet step in the middle of an active
+ * flow (Build > Review, both "its current assignee", before a bot's Test) still hands on. The seeded default, and a
+ * flow whose only note is for its triage bots, don't drive anything.
+ */
+export function flowDrives(flow: ResolvedFlow): boolean {
+  return flow.steps.some((s) => s.status.category !== "triage" && (namesOwner(s) || !!s.instructions.trim()));
+}
+
+/** The flow drives this step: complete_task hands it on, the owner is briefed and hand-offs are logged. */
+export function stepDriven(flow: ResolvedFlow, step: ResolvedStep): boolean {
+  return flowIsActive(flow, step) || (step.status.category !== "triage" && flowDrives(flow));
+}
+
+/**
+ * complete_task WITH a status on a task at `current` (VEC-315). Models often pass the step's own status, a working
+ * status (In Progress, In Review) or the next step's status when they mean "I'm done with my step": all of those
+ * hand it on exactly as complete_task without a status does (`advance`). Everything else is taken as given
+ * (`explicit`): an earlier step's status sends it back, a later step's status is a jump (the skip rules apply), a
+ * done/cancelled status closes it, and a backlog/not-started status no step uses takes it out of the flow.
+ * Wait steps, the done step and triage keep their own rules (explicit).
+ */
+export function finishWithStatus(flow: ResolvedFlow, current: ResolvedStep, requested: FlowStatusLike): "advance" | "explicit" {
+  if (current.advance === "wait" || current.status.category === "done" || current.status.category === "triage") return "explicit";
+  if (closed(requested.category) || requested.category === "triage") return "explicit";
+  const next = nextStepOf(flow, current);
+  if (!next) return "explicit";
+  if (requested.id === current.status.id || requested.id === next.status.id) return "advance";
+  if (!stepForStatus(flow, requested.id, current.id)) {
+    // A status no step uses. A working status (started stage) of this step or a later one means "done with my step";
+    // the working status of an earlier step (In Progress while at Test) is a send-back, as a person's drag is; a
+    // backlog/not-started one leaves the flow.
+    if (requested.category !== "started") return "explicit";
+    const home = locateStep(flow, requested);
+    return home && stepIndex(flow, home.id) < stepIndex(flow, current.id) ? "explicit" : "advance";
+  }
+  return "explicit";
+}
+
+/** Who a flow move hands the task to, if anyone (VEC-175 / VEC-315). */
+export interface HandoffInput {
+  flow: ResolvedFlow;
+  /** The step it was at (null = it wasn't on the flow). */
+  from: ResolvedStep | null;
+  to: ResolvedStep;
+  /** The assignee after the write (hex), null = nobody. */
+  assignee: string | null;
+  /** The write (or triage) chose the assignee, so the step's named owner doesn't apply. */
+  ownerOverride: boolean;
+  /** The assignee was set while the task was in Triage, not in this write. */
+  assignedInTriage: boolean;
+  /** Who is writing (hex) and whether it's a bot. */
+  actor: string;
+  actorIsBot: boolean;
+}
+/**
+ * - `named`: the step names its bot/person, who gets it (an assignment, or a same-owner re-hand).
+ * - `keep`: the step's owner is "its current assignee" on a flow that drives the work: that assignee is handed the
+ *   new step (a bot is woken again; a person notified). Without this, a bot owning consecutive keep steps was told
+ *   "you'll be handed it again" and never was: MAR-1 sat at Research (VEC-315).
+ * - `triager`: the triage bot assigned the task to itself while triaging and now moves it out of Triage. Assigning
+ *   itself mid-triage woke nobody (it was busy with it), so leaving Triage hands it over.
+ * Null: nobody to hand to (unassigned, a done step, a pool step, a person's override, the seeded default).
+ */
+export function handoffKind(i: HandoffInput): "named" | "keep" | "triager" | null {
+  if (!i.assignee || i.to.status.category === "done" || i.to.status.category === "triage") return null;
+  if (i.from?.status.category === "triage") {
+    return i.actorIsBot && i.assignedInTriage && i.assignee === i.actor && stepDriven(i.flow, i.to) ? "triager" : i.ownerOverride ? null : namesOwner(i.to) ? "named" : null;
+  }
+  if (i.ownerOverride) return null;
+  if (namesOwner(i.to)) return "named";
+  if (i.to.owner.kind === "keep" && !!i.from && i.from.id !== i.to.id && flowDrives(i.flow)) return "keep";
+  return null;
 }
 
 /** What a status-changing write does to the task's flow position (the pure half of planFlowForUpdate). */

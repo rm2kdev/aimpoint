@@ -4,7 +4,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveFlowSteps, DEFAULT_FLOW_STEPS } from "./flow-model.ts";
-import { canPauseFlow, flowIsActive, flowStepAction, isParkedStatus, locateStep, moveNote, nextStepOf, ownerPlan, requiredBetween, stepById, syncByStatus, workingStatus } from "./flow-engine-core.ts";
+import {
+  canPauseFlow,
+  finishWithStatus,
+  flowDrives,
+  flowIsActive,
+  flowStepAction,
+  handoffKind,
+  isParkedStatus,
+  locateStep,
+  moveNote,
+  nextStepOf,
+  ownerPlan,
+  requiredBetween,
+  stepById,
+  stepDriven,
+  syncByStatus,
+  workingStatus,
+} from "./flow-engine-core.ts";
 
 const S = (id, name, category, order) => ({ id, name, category, order });
 const HERMES = "b".repeat(24);
@@ -344,4 +361,154 @@ test("pause / resume flow: creator, assignee or admin", () => {
   assert.ok(canPauseFlow({ ...base, me: "a", isAdmin: false }));
   assert.ok(canPauseFlow({ ...base, me: "x", isAdmin: true }));
   assert.ok(!canPauseFlow({ ...base, me: "x", isAdmin: false }));
+});
+
+/* ---------------- every way a step owner finishes moves the flow (VEC-315) ---------------- */
+
+// The reporter's flow (MAR-1 on app.aimpoint.dev): Ideas (Triage) > Todo > Research > Write > Ready to post (Ryan).
+// Every work step is "its current assignee"; only Research carries instructions and the done step names Ryan.
+const mar = [
+  S("idea", "Ideas", "backlog", 0),
+  S("mtri", "Triage", "triage", 1),
+  S("mtodo", "Todo", "unstarted", 2),
+  S("res", "Research", "started", 3),
+  S("wri", "Write", "started", 4),
+  S("post", "Ready to post", "done", 5),
+  S("mx", "Cancelled", "cancelled", 6),
+];
+const mstep = (id, name, statusId, owner, extra = {}) => step(id, name, statusId, owner, extra, mar);
+const marFlow = resolveFlowSteps(
+  [
+    mstep("triage", "Ideas", "mtri", { kind: "triage" }),
+    mstep("build", "Todo", "mtodo", { kind: "keep" }),
+    mstep("review", "Research", "res", { kind: "keep" }, { instructions: "Find credible sources." }),
+    mstep("write", "Write", "wri", { kind: "keep" }),
+    mstep("done", "Done", "post", { kind: "person", id: SOFIA }),
+  ],
+  mar,
+  dir,
+  { source: "project", version: 2 },
+);
+const ms = (id) => stepById(marFlow, id);
+const hand = (from, to, extra = {}) =>
+  handoffKind({ flow: marFlow, from: ms(from), to: ms(to), assignee: HERMES, ownerOverride: false, assignedInTriage: false, actor: HERMES, actorIsBot: true, ...extra });
+
+test("MAR-1: a keep step on a flow that drives the work hands the same bot the next step (the Research stall)", () => {
+  assert.equal(flowDrives(marFlow), true);
+  // Write (keep, no instructions) is followed by Ryan's done step, Todo by Research's instructions: all driven.
+  for (const id of ["build", "review", "write"]) assert.equal(stepDriven(marFlow, ms(id)), true, id);
+  // Todo -> Research and Research -> Write: the current assignee is handed the new step (was: no hand-off at all).
+  assert.equal(hand("build", "review"), "keep");
+  assert.equal(hand("review", "write"), "keep");
+  // A send-back to a keep step hands it over too, so it never sits silently.
+  assert.equal(hand("write", "review"), "keep");
+  // Not when nothing moved, nobody is assigned, or it reached the done step (closing hands nothing on).
+  assert.equal(hand("review", "review"), null);
+  assert.equal(hand("review", "write", { assignee: null }), null);
+  assert.equal(hand("write", "done"), null);
+  // Re-attaching a detached task by status isn't a hand-off.
+  assert.equal(handoffKind({ flow: marFlow, from: null, to: ms("write"), assignee: HERMES, ownerOverride: false, assignedInTriage: false, actor: HERMES, actorIsBot: true }), null);
+});
+
+test("MAR-1: the triager that assigned itself is handed the first work step when it leaves Triage (the Todo stall)", () => {
+  assert.equal(hand("triage", "build", { ownerOverride: true, assignedInTriage: true }), "triager");
+  // Someone else assigned during triage: their assignment already told them; the triager hands nothing.
+  assert.equal(hand("triage", "build", { ownerOverride: true, assignedInTriage: true, actor: TESTER }), null);
+  // A person moving it out of Triage, or an explicit assignee in the same write: no extra hand-off.
+  assert.equal(hand("triage", "build", { ownerOverride: true, assignedInTriage: true, actorIsBot: false }), null);
+  assert.equal(hand("triage", "build", { ownerOverride: true, assignedInTriage: false }), null);
+});
+
+test("MAR-1: pickup at Todo stays in Todo when every started status belongs to a later step", () => {
+  // Was: fell back to Research, so the task sat in the next step's status while still at Todo.
+  assert.equal(workingStatus(marFlow, ms("build"), mar), null);
+  // Started steps keep their own status as before.
+  assert.equal(workingStatus(marFlow, ms("review"), mar), null);
+  // The dev flow still has a free working status (In Progress).
+  assert.equal(workingStatus(devFlow, stepById(devFlow, "develop"), dev).name, "In Progress");
+});
+
+test("named owners still hand off as before; a person's override still wins", () => {
+  const h = (from, to, extra = {}) =>
+    handoffKind({ flow: devFlow, from: stepById(devFlow, from), to: stepById(devFlow, to), assignee: TESTER, ownerOverride: false, assignedInTriage: false, actor: HERMES, actorIsBot: true, ...extra });
+  assert.equal(h("develop", "test"), "named");
+  assert.equal(h("develop", "test", { ownerOverride: true }), null);
+  assert.equal(h("deploy", "done"), null);
+});
+
+test("complete_task with a status: the step's own, a working or the next step's status hands it on; others apply as given", () => {
+  const at = (id) => stepById(devFlow, id);
+  const f = (cur, statusId) => finishWithStatus(devFlow, at(cur), st(statusId));
+  // At Develop (Todo): Todo (its own), In Progress (its working status), In Review (Test's, the next step) -> advance.
+  assert.equal(f("develop", "todo"), "advance");
+  assert.equal(f("develop", "prog"), "advance");
+  assert.equal(f("develop", "rev"), "advance");
+  // Deploying is a later step's status: a jump, so the skip rules decide (a bot is refused past required Test).
+  assert.equal(f("develop", "dep"), "explicit");
+  // Done and Cancelled still close it; Backlog leaves the flow; Triage re-triages.
+  for (const id of ["done", "x", "bk", "tr"]) assert.equal(f("develop", id), "explicit", id);
+  // At Test (In Review): its own status or Deploying (next) hand on; Todo (Develop's) sends it back...
+  assert.equal(f("test", "rev"), "advance");
+  assert.equal(f("test", "dep"), "advance");
+  assert.equal(f("test", "todo"), "explicit");
+  // ...and so does In Progress, Develop's working status (an earlier step's), the same as a person's drag.
+  assert.equal(f("test", "prog"), "explicit");
+  // The reporter's flow: Research's own status or Write (next) both hand on from Research.
+  assert.equal(finishWithStatus(marFlow, ms("review"), st("res", mar)), "advance");
+  assert.equal(finishWithStatus(marFlow, ms("review"), st("wri", mar)), "advance");
+  assert.equal(finishWithStatus(marFlow, ms("review"), st("mtodo", mar)), "explicit");
+  // Ready to post from Write: the done step either way (sync closes it, as a status-less finish would).
+  assert.equal(finishWithStatus(marFlow, ms("write"), st("post", mar)), "explicit");
+});
+
+test("complete_task with a status: wait steps, the done step and Triage keep their own rules", () => {
+  const waitFlow = resolveFlowSteps(
+    [
+      bstep("outreach", "Outreach", "lead", { kind: "bot", id: OUTREACH }, { instructions: "Email the lead." }),
+      bstep("await", "Awaiting reply", "out", { kind: "bot", id: OUTREACH }, { advance: "wait", wait: { label: "Reply received", resolvers: [], remindAfterDays: null } }),
+      bstep("planning", "Planning", "plan", { kind: "bot", id: PLANNER }),
+      bstep("won", "Won", "won", { kind: "none" }),
+    ],
+    bld,
+    dir,
+    { source: "project", version: 1 },
+  );
+  assert.equal(finishWithStatus(waitFlow, stepById(waitFlow, "await"), st("plan", bld)), "explicit");
+  assert.equal(finishWithStatus(waitFlow, stepById(waitFlow, "won"), st("won", bld)), "explicit");
+  assert.equal(finishWithStatus(marFlow, ms("triage"), st("mtodo", mar)), "explicit");
+});
+
+test("a quiet step inside a flow that drives the work is driven; the seeded default and triage-only notes are not", () => {
+  // Build and Review are both "its current assignee" with no instructions; Test names a bot two steps later.
+  const quiet = resolveFlowSteps(
+    [
+      step("build", "Build", "todo", { kind: "keep" }),
+      step("review", "Review", "prog", { kind: "keep" }),
+      step("test", "Test", "rev", { kind: "bot", id: TESTER }),
+      step("done", "Done", "done", { kind: "none" }),
+    ],
+    dev,
+    dir,
+    { source: "project", version: 1 },
+  );
+  // flowIsActive (this step or the next) says no at Build; that left complete_task without a status moving nothing.
+  assert.equal(flowIsActive(quiet, stepById(quiet, "build")), false);
+  assert.equal(stepDriven(quiet, stepById(quiet, "build")), true);
+  assert.equal(handoffKind({ flow: quiet, from: stepById(quiet, "build"), to: stepById(quiet, "review"), assignee: HERMES, ownerOverride: false, assignedInTriage: false, actor: HERMES, actorIsBot: true }), "keep");
+  // The seeded default: nothing driven, no keep hand-offs (behaviour unchanged for projects without an active flow).
+  const std = [S("s1", "Triage", "triage", 1), S("s2", "Todo", "unstarted", 2), S("s3", "In Progress", "started", 3), S("s4", "In Review", "started", 4), S("s5", "Done", "done", 5)];
+  const def = resolveFlowSteps(DEFAULT_FLOW_STEPS, std, dir, { source: "org", version: 1 });
+  assert.equal(flowDrives(def), false);
+  assert.ok(def.steps.every((s) => !stepDriven(def, s)));
+  assert.equal(handoffKind({ flow: def, from: stepById(def, "build"), to: stepById(def, "review"), assignee: HERMES, ownerOverride: false, assignedInTriage: false, actor: HERMES, actorIsBot: true }), null);
+  assert.equal(handoffKind({ flow: def, from: stepById(def, "triage"), to: stepById(def, "build"), assignee: HERMES, ownerOverride: true, assignedInTriage: true, actor: HERMES, actorIsBot: true }), null);
+  // Instructions only on the Triage step (for triage bots) don't make Build -> optional Review hand on.
+  const triageNote = resolveFlowSteps(
+    DEFAULT_FLOW_STEPS.map((s) => (s.id === "triage" ? { ...s, instructions: "Split it up." } : s)),
+    std,
+    dir,
+    { source: "org", version: 2 },
+  );
+  assert.equal(flowDrives(triageNote), false);
+  assert.equal(stepDriven(triageNote, stepById(triageNote, "build")), false);
 });

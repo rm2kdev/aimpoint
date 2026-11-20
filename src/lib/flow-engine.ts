@@ -5,7 +5,10 @@ import { UserError } from "@/lib/result";
 import { loadStatuses } from "@/lib/statuses";
 import { loadFlowDirectory, resolveFlow } from "@/lib/flows";
 import {
+  finishWithStatus,
+  flowDrives,
   flowIsActive,
+  handoffKind,
   isParkedStatus,
   locateStep,
   moveNote,
@@ -13,6 +16,7 @@ import {
   ownerPlan,
   requiredBetween,
   stepById,
+  stepDriven,
   stepIndex,
   syncByStatus,
   workingStatus,
@@ -202,21 +206,32 @@ export async function planFlowForUpdate(input: FlowUpdateInput): Promise<FlowPla
 
   let assigneeId: ObjectId | null | undefined;
   let ownerOverride = false;
+  const assignedInTriage = current?.status.category === "triage" && !!input.assigneeAfter && !input.explicitAssignee;
   const plan = ownerPlan(target);
   if (input.explicitAssignee) {
     ownerOverride = true; // explicit beats flow
-  } else if (current?.status.category === "triage" && input.assigneeAfter) {
+  } else if (assignedInTriage) {
     ownerOverride = true; // assigned during triage: the triager (or creator) decided who does it
   } else if (plan.kind === "set") {
     const next = plan.id ? new ObjectId(plan.id) : null;
     if ((next ? hex(next) : null) !== (input.assigneeAfter ? hex(input.assigneeAfter) : null)) assigneeId = next;
   }
   const ownerAfter = assigneeId !== undefined ? assigneeId : input.assigneeAfter;
-  const named = target.owner.kind === "bot" || target.owner.kind === "person";
+  // Who is handed the new step (flow-engine-core handoffKind): a named owner, the current assignee of a keep step on a
+  // flow that drives the work, or a triager that assigned itself (VEC-315).
+  const kind = handoffKind({
+    flow,
+    from: current,
+    to: target,
+    assignee: ownerAfter ? hex(ownerAfter) : null,
+    ownerOverride,
+    assignedInTriage,
+    actor: hex(actor.id),
+    actorIsBot: !!actor.isBot,
+  });
+  const ownerKind: "bot" | "person" | null = !kind || !ownerAfter ? null : kind === "named" ? (target.owner.kind as "bot" | "person") : dir.bots.has(hex(ownerAfter)) ? "bot" : "person";
   const handoff: FlowHandoff | undefined =
-    !ownerOverride && named && ownerAfter && target.status.category !== "done"
-      ? { fromStep: fromName, toStep: target.name, ownerKind: target.owner.kind as "bot" | "person", ownerId: ownerAfter, sameOwner: assigneeId === undefined }
-      : undefined;
+    kind && ownerKind && ownerAfter ? { fromStep: fromName, toStep: target.name, ownerKind, ownerId: ownerAfter, sameOwner: assigneeId === undefined } : undefined;
   return {
     flow: position(flow, target, ownerOverride ? { ownerOverride: true } : {}),
     ...(assigneeId !== undefined ? { assigneeId } : {}),
@@ -245,27 +260,40 @@ export async function planFlowForCreate(orgId: ObjectId, projectId: ObjectId, st
   };
 }
 
-/** What complete_task without a status does on this task. */
+/** What complete_task does to this task's flow position. */
 export type AdvanceTarget =
   /** Hand it to the next step: move to `statusId` (unchanged when the next step shares the status). */
   | { kind: "advance"; from: ResolvedStep; to: ResolvedStep; statusChanges: boolean }
   /** A wait step: it moves on when what it waits for happens (advance_task / a person), not on complete_task. */
   | { kind: "wait"; step: ResolvedStep }
-  /** No flow, paused, detached, or already at the last step: today's behaviour (the claim is finished, nothing moves). */
-  | { kind: "none" };
+  /**
+   * No flow, paused, detached, closed, a flow that doesn't drive it, or already at the last step: the claim is finished
+   * and nothing moves (a passed status is applied as given). `why` says why on a flow that drives the work, for the reply.
+   */
+  | { kind: "none"; why?: string };
 
-export async function advanceTarget(task: TaskDoc): Promise<AdvanceTarget> {
-  if (task.flow?.paused) return { kind: "none" };
+/**
+ * complete_task on a flow task. Without `requested` (no status): the next step, a wait, or none. With a status the
+ * bot passed (VEC-315): `advance` when that status means "done with my step" (finishWithStatus: the step's own
+ * status, a working status, the next step's status), else `none` and the status is applied as given.
+ */
+export async function advanceTarget(task: TaskDoc, requested?: StatusDoc | null): Promise<AdvanceTarget> {
   const ctx = await loadTaskFlow(task);
-  if (!ctx?.current || !ctx.status) return { kind: "none" };
-  if (ctx.status.category === "done" || ctx.status.category === "cancelled") return { kind: "none" };
+  if (!ctx) return { kind: "none" };
+  const drives = flowDrives(ctx.flow);
+  const none = (why: string): AdvanceTarget => (drives && !requested ? { kind: "none", why } : { kind: "none" });
+  if (task.flow?.paused) return none("its flow is paused (it waits on the sub-tasks it was split into), so the flow didn't move it");
+  if (!ctx.current || !ctx.status) return none("it isn't at any step of its flow (its status belongs to none), so the flow didn't move it");
+  if (ctx.status.category === "done" || ctx.status.category === "cancelled") return none(`it's already ${ctx.status.name}`);
   const from = ctx.current;
+  if (requested && finishWithStatus(ctx.flow, from, toLike(requested)) !== "advance") return { kind: "none" };
   if (from.advance === "wait") return { kind: "wait", step: from };
   // A flow that says nothing here (the seeded default: keep owners, no instructions) moves nothing on complete_task,
   // as before flows (VEC-176): otherwise Build -> its optional Review step would park every finished task in In Review.
-  if (!flowIsActive(ctx.flow, from)) return { kind: "none" };
+  // A quiet step inside a flow that drives the work does hand on (VEC-315: stepDriven looks at the whole pipeline).
+  if (!stepDriven(ctx.flow, from)) return { kind: "none" };
   const to = nextStepOf(ctx.flow, from);
-  if (!to) return { kind: "none" };
+  if (!to) return none(`it's at ${from.name}, the last step of its flow, so there's nothing to hand on to`);
   return { kind: "advance", from, to, statusChanges: to.status.id !== ctx.status.id };
 }
 
@@ -341,7 +369,7 @@ export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: T
   if (task.flow?.paused) return null;
   const ctx = loaded !== undefined ? loaded : await loadTaskFlow(task);
   const step = ctx?.current;
-  if (!ctx || !step || step.status.category === "done" || !flowIsActive(ctx.flow, step)) return null;
+  if (!ctx || !step || step.status.category === "done" || !stepDriven(ctx.flow, step)) return null;
   const { flow, dir } = ctx;
   const i = stepIndex(flow, step.id);
   const next = nextStepOf(flow, step);
@@ -365,7 +393,8 @@ export async function flowBriefing(task: TaskDoc, projectKey: string, loaded?: T
   return {
     text,
     finish,
-    stays: step.status.category === "started" ? step.status.name : null,
+    // Pickup leaves it where it is: a started-stage step, or one whose every started status belongs to a later step (VEC-315).
+    stays: step.status.category === "started" || (step.status.category === "unstarted" && !workingStatus(flow, step, ctx.statuses)) ? step.status.name : null,
     payload: {
       step: { id: step.id, name: step.name, status: step.status.name, owner: ownerName(dir, step), instructions, advance: step.advance, number: i + 1, of: flow.steps.length },
       next: next ? { id: next.id, name: next.name, status: next.status.name, owner: ownerName(dir, next) } : null,

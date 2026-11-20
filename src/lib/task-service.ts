@@ -758,6 +758,17 @@ export async function updateTaskAs(
     await finishClaimOnUnassign(taskId, before.assigneeId ?? null, set.assigneeId);
     await resetClaimOnAssign(taskId, set.assigneeId);
   }
+  // The bot moved its own task on to a step it owns too while it's still working on it (set_status mid-run): it
+  // carries on with the new step in the same run, so no fresh hand-off and its claim stays (VEC-315).
+  if (
+    flowPlan.handoff?.sameOwner &&
+    flowPlan.handoff.ownerKind === "bot" &&
+    actor.isBot &&
+    actor.id.equals(flowPlan.handoff.ownerId) &&
+    (await c.agentClaims.findOne({ taskId, botId: actor.id, kind: { $ne: "triage" }, state: "in_progress" }, { projection: { _id: 1 } }))
+  ) {
+    flowPlan = { ...flowPlan, handoff: undefined };
+  }
   // The same bot owns the next step too: drop its finished claim before the broadcast, so it's handed the task afresh.
   if (flowPlan.handoff?.sameOwner && flowPlan.handoff.ownerKind === "bot") await reopenForNextStep(taskId, flowPlan.handoff.ownerId);
   if (closed) await finishClaimsOnClose(actor.orgId, taskId);

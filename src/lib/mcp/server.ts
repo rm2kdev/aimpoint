@@ -31,7 +31,7 @@ import {
   ToolInputError,
   type ImageBlock,
 } from "@/lib/mcp/context";
-import { ANALYTICS_GRANULARITIES, isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type TaskDoc } from "@/lib/types";
+import { ANALYTICS_GRANULARITIES, isClosedCategory, isTaskType, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc } from "@/lib/types";
 
 /* ---------------- types ---------------- */
 
@@ -355,19 +355,22 @@ async function openDeps(orgId: ObjectId, ids: ObjectId[]): Promise<ObjectId[]> {
  * complete_task without a status on a flow task (VEC-175): the step to hand it to, when this bot may move the task
  * (its assignee, creator, or triager right now). Null when there's no flow step to advance from.
  */
-async function flowAdvanceFor(ctx: McpCtx, task: TaskDoc, triaging: boolean): Promise<AdvanceTarget | null> {
+async function flowAdvanceFor(ctx: McpCtx, task: TaskDoc, triaging: boolean, requested?: StatusDoc | null): Promise<AdvanceTarget | null> {
   const access = taskAccess({ createdBy: task.createdBy.toHexString(), assigneeId: task.assigneeId?.toHexString() ?? null }, ctx.bot._id.toHexString(), false);
-  const t = await advanceTarget(task);
+  const t = await advanceTarget(task, requested);
   // A wait step moves nothing either way, so anyone finishing there is told how it moves on (advance_task).
   if (t.kind === "wait") return t;
-  if (access === "comment" && !triaging) return null;
-  return t.kind === "none" ? null : t;
+  if (access === "comment" && !triaging) {
+    // Not its assignee or creator: the flow isn't this bot's to move. Say so rather than going quiet (VEC-315).
+    return t.kind === "advance" && !requested ? { kind: "none", why: `you're not its assignee or creator, so the flow didn't move it on to ${t.to.name}` } : null;
+  }
+  return t.kind === "none" && !t.why ? null : t;
 }
 
 /** What the flow did, for the complete_task reply: " Moved to In Review and handed to Testing Verification for Test." */
 async function flowReplyNote(ctx: McpCtx, taskId: ObjectId, step: AdvanceTarget): Promise<string> {
+  if (step.kind === "none") return step.why ? ` Nothing moved: ${step.why}.` : "";
   if (step.kind === "wait") return ` It's at the ${step.step.name} step, which waits for "${step.step.wait?.label ?? "an outside event"}"; it moves on when that happens (advance_task, or a person moves it), not on complete_task.`;
-  if (step.kind !== "advance") return "";
   const c = await cols();
   const after = await c.tasks.findOne({ _id: taskId }, { projection: { assigneeId: 1, flow: 1 } });
   if (after?.flow?.paused) return ` Its flow is paused (it waits on the sub-tasks it was split into), so it moved to ${step.to.status.name} and nobody new was assigned.`;
@@ -666,8 +669,13 @@ const TOOLS: Record<string, ToolImpl> = {
       const now = new Date();
       const claim = await c.agentClaims.findOne({ botId: ctx.bot._id, taskId: task._id });
       const triageClaim = claim?.kind === "triage";
-      // Without a status, a task on a flow step is handed to the next step (VEC-175); an explicit status always wins.
-      const step = !status ? await flowAdvanceFor(ctx, task, triageClaim) : null;
+      // Resolved before anything changes, so a bad name leaves the claim and comments as they were.
+      const requested = status ? await resolveStatus(ctx, status, task.projectId) : null;
+      // Without a status, a task on a flow step is handed to the next step (VEC-175). With one that only means
+      // "done with my step" (the step's own status, a working status, the next step's), it's handed on the same way;
+      // any other status (an earlier step's, Done, Cancelled, a jump) is applied as given (VEC-315).
+      const step = requested && triageClaim ? null : await flowAdvanceFor(ctx, task, triageClaim, requested);
+      const advancing = step?.kind === "advance";
       if (!triageClaim) {
         // Finish this bot's round first, so a flow hand-off back to the same bot (it owns the next step too) can start
         // a fresh one, and the move's broadcast already shows the working ring cleared.
@@ -678,12 +686,29 @@ const TOOLS: Record<string, ToolImpl> = {
         );
         if (comment) await addCommentAs(ctx.actor, task._id, comment);
       }
-      const moved = status
-        ? await updateTaskAs(ctx.actor, task._id, { statusId: (await resolveStatus(ctx, status, task.projectId))._id.toHexString() })
-        : step?.kind === "advance"
+      const moved =
+        step?.kind === "advance"
           ? await updateTaskAs(ctx.actor, task._id, step.statusChanges ? { statusId: step.to.status.id } : {}, { flowTo: step.to.id })
-          : null;
+          : requested
+            ? await updateTaskAs(ctx.actor, task._id, { statusId: requested._id.toHexString() }).catch(async (err) => {
+                // Refused (e.g. a required step can't be skipped): nothing moved, so the bot is still on its step. Put
+                // its claim back as it was, or the task would sit as finished Stalled with nobody on it (VEC-315).
+                if (!triageClaim) {
+                  if (claim) await c.agentClaims.updateOne({ _id: claim._id }, { $set: { state: claim.state, finishedAt: claim.finishedAt ?? null } });
+                  else await c.agentClaims.deleteOne({ botId: ctx.bot._id, taskId: task._id, kind: { $ne: "triage" } });
+                }
+                throw err;
+              })
+            : null;
       const flowNote = step ? await flowReplyNote(ctx, task._id, step) : "";
+      // The status the bot passed, and what became of it.
+      const statusNote = !requested
+        ? ""
+        : advancing
+          ? ` You passed ${requested.name}, which ${
+              requested._id.equals(step.to.status.id) ? "is the next step's status" : requested._id.equals(step.from.status.id) ? "is this step's own status" : "is a working status, not a step"
+            }, so it was handed on as complete_task without a status does.`
+          : ` Moved to ${requested.name}.`;
       if (triageClaim && comment) await addCommentAs(ctx.actor, task._id, comment);
       if (claim?.kind === "triage") {
         const after = await c.tasks.findOne({ _id: task._id }, { projection: { statusId: 1 } });
@@ -704,7 +729,9 @@ const TOOLS: Record<string, ToolImpl> = {
         // Out of Triage: the triage is over. Drop the claim so the task is ordinary work again (also for you, if you assigned it to yourself).
         await c.agentClaims.deleteOne({ _id: claim._id });
         if (claim.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
-        return { content: [text(`Finished triaging ${key}.${status ? ` Moved to ${status}.` : ""}${flowNote}${comment ? " Comment posted." : ""}`)] };
+        // Where it went and who has it (VEC-315: a triager that assigned itself is handed the next step now).
+        const where = step?.kind === "advance" ? "" : await whereNow(ctx, task._id);
+        return { content: [text(`Finished triaging ${key}.${statusNote}${flowNote}${where}${comment ? " Comment posted." : ""}`)] };
       }
       // Finishing is also the end of its close-out, if one was pending: the task can show as "finished" Stalled now (VEC-89).
       const resolved = await resolveCloseout(task._id, ctx.bot._id);
@@ -714,12 +741,12 @@ const TOOLS: Record<string, ToolImpl> = {
       // A flow hand-off gave the task its next owner (an advance, or an explicit status that sent it to another step's
       // owner, e.g. a tester failing it back to Develop): nothing is left waiting on this bot, so no review note.
       // At a wait step nothing is left for a reviewer either: it moves on with advance_task (VEC-181).
-      const handoff = step?.kind === "advance" || step?.kind === "wait" || (moved && (await handedOnByFlow(task._id, ctx.bot._id))) ? "" : await reviewHandoff(ctx, task._id, key, comment);
+      const handoff = advancing || step?.kind === "wait" || (moved && (await handedOnByFlow(task._id, ctx.bot._id))) ? "" : await reviewHandoff(ctx, task._id, key, comment);
       // Parked behind open dependencies nobody owns (the status didn't change, or no status was given): take them (VEC-107).
       const owned = [...assignedBlockersOf(moved), ...(await ownUnownedBlockers(ctx.actor, task._id))];
       // Where it is now and who has it (VEC-176), unless the flow note already said so.
-      const where = step?.kind === "advance" ? "" : await whereNow(ctx, task._id);
-      return { content: [text(`Marked your work on ${key} as finished.${status ? ` Moved to ${status}.` : ""}${flowNote}${where}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
+      const where = advancing ? "" : await whereNow(ctx, task._id);
+      return { content: [text(`Marked your work on ${key} as finished.${statusNote}${flowNote}${where}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
     },
   },
 
@@ -921,7 +948,14 @@ const TOOLS: Record<string, ToolImpl> = {
       const { task } = await findTask(ctx, str(args, "task", true)!);
       const st = await resolveStatus(ctx, str(args, "status", true)!, task.projectId);
       const t = await updateTaskAs(ctx.actor, task._id, { statusId: st._id.toHexString() });
-      return { content: [text(`${t.key} is now ${st.name}.${blockersNote(assignedBlockersOf(t))}`)] };
+      // Where it is in its flow now and who has it (VEC-315), so a step owner moving it on sees the hand-off.
+      const after = await (await cols()).tasks.findOne({ _id: task._id }, { projection: { flow: 1, assigneeId: 1 } });
+      const stepMoved = !!after?.flow?.stepId && after.flow.stepId !== task.flow?.stepId && !after.flow.paused;
+      const mine = stepMoved && !!after?.assigneeId?.equals(ctx.bot._id) && !!task.assigneeId?.equals(ctx.bot._id);
+      const where = stepMoved ? await whereNow(ctx, task._id) : "";
+      const working = mine && !!(await (await cols()).agentClaims.findOne({ taskId: task._id, botId: ctx.bot._id, kind: { $ne: "triage" }, state: "in_progress" }, { projection: { _id: 1 } }));
+      const carryOn = !mine ? "" : working ? " You own that step too: carry on with it here, and finish with complete_task (without a status to hand it on)." : " You own that step too: you'll be handed it for that step.";
+      return { content: [text(`${t.key} is now ${st.name}.${where}${carryOn}${blockersNote(assignedBlockersOf(t))}`)] };
     },
   },
 

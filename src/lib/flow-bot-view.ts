@@ -2,7 +2,7 @@ import "server-only";
 import type { ObjectId } from "mongodb";
 import { loadFlowDirectory, resolveOrgFlows } from "@/lib/flows";
 import { flowBriefing, loadTaskFlow, ownerName } from "@/lib/flow-engine";
-import { flowIsActive, nextStepOf, stepIndex } from "@/lib/flow-engine-core";
+import { flowIsActive, nextStepOf, stepDriven, stepIndex } from "@/lib/flow-engine-core";
 import type { FlowDirectory, ResolvedFlow, ResolvedStep } from "@/lib/flow-model";
 import type { TaskDoc } from "@/lib/types";
 
@@ -88,7 +88,7 @@ export async function botOrgFlows(orgId: ObjectId): Promise<Map<string, BotProje
 export interface BotTaskFlow {
   source: ResolvedFlow["source"];
   version: number;
-  /** The flow drives this task: its step or the next names an owner or carries instructions. False on the seeded default. */
+  /** The flow drives this task (stepDriven): its step or the next, or any step past Triage, names an owner or carries instructions. False on the seeded default. */
   active: boolean;
   /** Paused (a triage umbrella waiting on its sub-tasks, or switched off for this task): Vector treats it as if there were no flow. */
   paused: boolean;
@@ -119,7 +119,8 @@ export async function botTaskFlow(task: TaskDoc, projectKey: string, holder: str
   const current = paused ? null : ctx.current;
   const at = current ? stepIndex(flow, current.id) : -1;
   const next = current ? nextStepOf(flow, current) : null;
-  const active = !!current && flowIsActive(flow, current);
+  // Driven by the whole pipeline (VEC-315), so a quiet step inside an active flow still says how to hand it on.
+  const active = !!current && stepDriven(flow, current);
   const briefing = active ? await flowBriefing(task, projectKey, ctx) : null;
   const howToFinish = paused
     ? PAUSED_FINISH
