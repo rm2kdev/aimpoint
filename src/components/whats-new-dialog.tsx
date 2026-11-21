@@ -220,6 +220,12 @@ export function WhatsNewDialog({
 }) {
   // The focus target on open and on switching views: Next / Got it in the tour, the current row in the list.
   const primaryRef = useRef<HTMLButtonElement>(null);
+  /**
+   * The current view's arrow/Home/End handler, run from DialogContent rather than from the view's own element
+   * (VEC-399): Safari doesn't focus a clicked button, so after a click on Next, Back, a dot or plain text focus sits
+   * on DialogContent itself (tabindex=-1), above the view, and a handler on the view never sees the keys.
+   */
+  const keysRef = useRef<((e: React.KeyboardEvent) => void) | null>(null);
   const rows = useMemo(() => historyRows(MILESTONES), []);
   // Index and origin stay set after closing: the exit animation needs the image and focus goes back to `from`.
   const [lightbox, setLightbox] = useState<{ open: boolean; index: number; from: HTMLElement | null }>({ open: false, index: 0, from: null });
@@ -237,6 +243,10 @@ export function WhatsNewDialog({
           data-whats-new={history ? "history" : milestone!.id}
           // With a summary Radix wires it up as the description; without one there is nothing to describe.
           {...(history || milestone!.summary ? {} : { "aria-describedby": undefined })}
+          onKeyDown={(e) => {
+            if (isTypingTarget(e.target)) return;
+            keysRef.current?.(e);
+          }}
           onOpenAutoFocus={(e) => {
             // Start on the primary action (Next / Got it), so Enter walks the tour and Esc still closes.
             e.preventDefault();
@@ -252,7 +262,7 @@ export function WhatsNewDialog({
           )}
         >
           {history ? (
-            <History rows={rows} currentId={milestone?.id ?? null} focusRef={primaryRef} onPick={onPick!} />
+            <History rows={rows} currentId={milestone?.id ?? null} focusRef={primaryRef} keysRef={keysRef} onPick={onPick!} />
           ) : (
             <Tour
               // A fresh tour (back to the first slide) every time it opens, and for each milestone picked.
@@ -261,6 +271,7 @@ export function WhatsNewDialog({
               date={date}
               indexOf={gallery!.indexOf}
               primaryRef={primaryRef}
+              keysRef={keysRef}
               fromHistory={fromHistory}
               onShowHistory={onPick ? onShowHistory : undefined}
               onDone={() => onOpenChange(false)}
@@ -269,7 +280,7 @@ export function WhatsNewDialog({
           )}
         </DialogContent>
       </Dialog>
-      {/* A sibling, not a child of the content: the lightbox's own keys must not bubble into the tour's handler. */}
+      {/* A sibling, not a child of the content: the lightbox's own keys must not bubble into DialogContent's handler. */}
       <ImageLightbox
         images={gallery?.images ?? []}
         index={lightbox.index}
@@ -281,11 +292,30 @@ export function WhatsNewDialog({
   );
 }
 
+/** Keys typed into a field are text, never slide or row moves. */
+function isTypingTarget(t: EventTarget) {
+  return t instanceof HTMLElement && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+}
+
+/** Hands a view's key handler to DialogContent (see `keysRef`), refreshed every render so it sees current state. */
+function useDialogKeys(keysRef: React.RefObject<((e: React.KeyboardEvent) => void) | null>, onKeyDown: (e: React.KeyboardEvent) => void) {
+  useEffect(() => {
+    keysRef.current = onKeyDown;
+  });
+  useEffect(
+    () => () => {
+      keysRef.current = null;
+    },
+    [keysRef],
+  );
+}
+
 function Tour({
   milestone,
   date,
   indexOf,
   primaryRef,
+  keysRef,
   fromHistory,
   onShowHistory,
   onDone,
@@ -295,6 +325,7 @@ function Tour({
   date: string;
   indexOf: number[];
   primaryRef: React.RefObject<HTMLButtonElement | null>;
+  keysRef: React.RefObject<((e: React.KeyboardEvent) => void) | null>;
   fromHistory: boolean;
   onShowHistory?: () => void;
   onDone: () => void;
@@ -341,6 +372,7 @@ function Tour({
     e.stopPropagation();
     go(to);
   };
+  useDialogKeys(keysRef, onKeyDown);
 
   // Touch swipe: the track follows the finger sideways; a vertical drag stays a scroll (touch-action: pan-y).
   const onPointerDown = (e: React.PointerEvent) => {
@@ -369,7 +401,7 @@ function Tour({
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="shrink-0 px-5 pt-5 pr-12 pb-3">
         {fromHistory && onShowHistory && (
           <button
@@ -574,11 +606,13 @@ function History({
   rows,
   currentId,
   focusRef,
+  keysRef,
   onPick,
 }: {
   rows: HistoryRow[];
   currentId: string | null;
   focusRef: React.RefObject<HTMLButtonElement | null>;
+  keysRef: React.RefObject<((e: React.KeyboardEvent) => void) | null>;
   onPick: (milestone: ChangelogMilestone) => void;
 }) {
   const listRef = useRef<HTMLUListElement>(null);
@@ -600,6 +634,7 @@ function History({
     e.stopPropagation();
     buttons[to]?.focus();
   };
+  useDialogKeys(keysRef, onKeyDown);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -608,7 +643,7 @@ function History({
         <DialogDescription className="mt-1 text-[12.5px] text-faint">Every What&apos;s new release, newest first.</DialogDescription>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t">
-        <ul ref={listRef} aria-label="Releases" className="flex flex-col p-2" onKeyDown={onKeyDown}>
+        <ul ref={listRef} aria-label="Releases" className="flex flex-col p-2">
           {rows.map((row, i) => {
             const milestone = MILESTONES.find((m) => m.id === row.id)!;
             return (
