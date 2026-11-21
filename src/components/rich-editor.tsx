@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Image from "@tiptap/extension-image";
 import Placeholder from "@tiptap/extension-placeholder";
 import { NodeSelection, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
 import { GapCursor } from "@tiptap/pm/gapcursor";
@@ -23,6 +22,8 @@ import {
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
+import { EXPAND_IMAGE_EVENT, expandableImage, type ExpandImageDetail } from "@/components/image-node-view";
 
 export async function uploadImage(orgSlug: string, file: File): Promise<string> {
   const body = new FormData();
@@ -152,6 +153,15 @@ export function RichEditor({
   });
   const doUpload: ImageUploader = (file) => uploadRef.current.upload(file);
 
+  // Lightbox over every image in this editor (VEC-334), opened from an image's expand button.
+  const [lightbox, setLightbox] = useState<{ images: LightboxImage[]; index: number; open: boolean; opener: HTMLElement | null }>({
+    images: [],
+    index: 0,
+    open: false,
+    opener: null,
+  });
+  const rootRef = useRef<HTMLDivElement>(null);
+
   const editor = useEditor({
     immediatelyRender: false,
     editable,
@@ -162,7 +172,8 @@ export function RichEditor({
         link: { openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener noreferrer", target: "_blank" } },
       }),
       // Without the Image node the schema itself drops images from pasted HTML and setContent.
-      ...(images ? [Image.configure({ inline: false, allowBase64: false })] : []),
+      // The node view adds the expand button (editor DOM only, never saved).
+      ...(images ? [expandableImage().configure({ inline: false, allowBase64: false })] : []),
       Placeholder.configure({ placeholder }),
     ],
     content: value,
@@ -199,6 +210,25 @@ export function RichEditor({
     editorRef.current = editor;
   }, [editor]);
 
+  // An image's expand button (node view) asks for the lightbox; it cycles through every image in the doc.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !editor) return;
+    const onExpand = (e: Event) => {
+      const { pos, button } = (e as CustomEvent<ExpandImageDetail>).detail;
+      const list: LightboxImage[] = [];
+      let index = 0;
+      editor.state.doc.descendants((node, at) => {
+        if (node.type.name !== "image" || !node.attrs.src) return;
+        if (at === pos) index = list.length;
+        list.push({ src: String(node.attrs.src), alt: String(node.attrs.alt ?? "") });
+      });
+      if (list.length) setLightbox({ images: list, index, open: true, opener: button });
+    };
+    root.addEventListener(EXPAND_IMAGE_EVENT, onExpand);
+    return () => root.removeEventListener(EXPAND_IMAGE_EVENT, onExpand);
+  }, [editor]);
+
   // Apply remote changes when the user isn't editing.
   useEffect(() => {
     if (!editor || editor.isFocused) return;
@@ -213,7 +243,7 @@ export function RichEditor({
   const fileInput = useRef<HTMLInputElement>(null);
 
   return (
-    <div className={cn("group/editor", className)}>
+    <div ref={rootRef} className={cn("group/editor", className)}>
       {editor && editable && (
         <div
           role="toolbar"
@@ -278,6 +308,15 @@ export function RichEditor({
         </div>
       )}
       <EditorContent editor={editor} />
+      {images && (
+        <ImageLightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          open={lightbox.open}
+          returnFocus={lightbox.opener}
+          onOpenChange={(open) => setLightbox((l) => ({ ...l, open }))}
+        />
+      )}
     </div>
   );
 }

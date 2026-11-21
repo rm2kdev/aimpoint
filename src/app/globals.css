@@ -218,6 +218,24 @@
 .prose-aimpoint img { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--border); }
 /* Only editable editors show a selected image; read-only ones keep ProseMirror's selection but no ring (VEC-244). */
 .prose-aimpoint[contenteditable="true"] img.ProseMirror-selectednode { outline: 2px solid var(--ring); outline-offset: 2px; }
+/* Image node view (VEC-334): the wrapper hugs the image so the expand button sits on its bottom-right corner.
+   The button is editor DOM only (never in saved HTML); shown on hover/focus, always on touch screens. */
+.prose-aimpoint .aimpoint-image { position: relative; width: fit-content; max-width: 100%; }
+.prose-aimpoint .aimpoint-image > img { display: block; }
+.aimpoint-image-expand {
+  position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 7px; cursor: zoom-in;
+  color: #fff; background: rgb(0 0 0 / 0.55); box-shadow: 0 0 0 1px rgb(255 255 255 / 0.18), 0 1px 3px rgb(0 0 0 / 0.25);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  opacity: 0; transition: opacity 120ms ease, background-color 120ms ease;
+}
+.aimpoint-image-expand svg { width: 15px; height: 15px; }
+.aimpoint-image-expand:hover { background: rgb(0 0 0 / 0.72); }
+.aimpoint-image-expand:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.aimpoint-image:hover .aimpoint-image-expand,
+.aimpoint-image-expand:focus-visible,
+.prose-aimpoint[contenteditable="true"] .aimpoint-image[data-selected] .aimpoint-image-expand { opacity: 1; }
+@media (hover: none) { .aimpoint-image-expand { opacity: 1; } }
 .ProseMirror { outline: none; min-height: 6rem; }
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
