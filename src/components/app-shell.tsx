@@ -14,6 +14,7 @@ import { NewTaskDialog, type NewTaskDefaults } from "@/components/new-task-dialo
 import { cn } from "@/lib/utils";
 import { DragProvider } from "@/components/ui/drag-provider";
 import { InstallPrompt } from "@/components/install-prompt";
+import { OpenWhatsNewContext, WhatsNewDialog, useWhatsNew } from "@/components/whats-new-dialog";
 import { orgPath, taskPath } from "@/lib/paths";
 
 interface ShellCtx {
@@ -52,6 +53,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const viewDefaults = useRef<NewTaskDefaults>({});
   const setViewDefaults = useCallback((d: NewTaskDefaults) => void (viewDefaults.current = d), []);
   const newTask = useCallback((d?: NewTaskDefaults) => setCreating({ ...viewDefaults.current, ...d }), []);
+  const whatsNew = useWhatsNew();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -73,6 +75,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{ newTask, setViewDefaults, openSearch: () => setSearch(true), openNav: () => setNavOpen(true) }}>
+      <OpenWhatsNewContext.Provider value={whatsNew.openLatest}>
       {/* Drag sessions live above the page so a drag survives client-side navigation. */}
       <DragProvider>
       {/* Column: the app row fills what's left above the bot status tray, so every scroll area and the task pane end above it. */}
@@ -101,17 +104,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {drawerMounted && <Sidebar onSearch={openSearch} onNavigate={closeNav} />}
           </aside>
           <div className="flex min-w-0 flex-1">{children}</div>
-          {/* Add to Home Screen (VEC-157): floats over the content, above the bot tray, clear of the desktop sidebar. */}
-          <div className="pointer-events-none absolute inset-x-3 bottom-3 z-30 flex justify-center sm:inset-x-auto sm:left-4 lg:left-[264px]">
-            <InstallPrompt />
-          </div>
+          {/* Add to Home Screen (VEC-157): floats over the content, above the bot tray, clear of the desktop sidebar.
+              Held back while the What's new pop-up is open or about to open, so the two never stack (VEC-374). */}
+          {!whatsNew.holdOthers && (
+            <div className="pointer-events-none absolute inset-x-3 bottom-3 z-30 flex justify-center sm:inset-x-auto sm:left-4 lg:left-[264px]">
+              <InstallPrompt />
+            </div>
+          )}
         </div>
         <BotStatusTray />
       </div>
       <NotificationToasts />
       <CommandMenu open={search} onOpenChange={setSearch} />
       <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} />
+      <WhatsNewDialog milestone={whatsNew.milestone} open={whatsNew.open} onOpenChange={whatsNew.onOpenChange} />
       </DragProvider>
+      </OpenWhatsNewContext.Provider>
     </Ctx.Provider>
   );
 }

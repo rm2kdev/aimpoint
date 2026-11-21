@@ -74,6 +74,24 @@ Each person has `UserDoc.changelogSeen`: the id of the newest milestone they dis
 - Dismissing calls the `dismissChangelog(milestoneId)` server action (`src/app/actions/changelog.ts`). It only
   moves the marker forward: dismissing twice, with an older id or with an unknown id changes nothing.
 
+## The pop-up
+
+`src/components/whats-new-dialog.tsx` (VEC-374), mounted once in `AppShell`:
+
+- `useWhatsNew()` opens it about 0.6 s after the first load of an org page when `useOrg().changelog` is set, once
+  per tab, and waits while another dialog (search, new task) is open. The install banner is held back while the
+  pop-up is open or about to open, so the two never show at once.
+- One slide per entry: screenshot (16:10 box, fitted), title, Markdown body (`markdownToHtml` + `prose-aimpoint`).
+  Back/Next, the dots (with an `n / total` label), Left/Right/Home/End and a touch swipe move between slides; the
+  slide change is announced to screen readers. The expand button (or a click on the screenshot) opens the
+  ImageLightbox over all of the milestone's screenshots. Phones (under 640 px) get a full-height sheet.
+- Close (X), Esc, the backdrop and "Got it" on the last slide all close it the same way, which dismisses the
+  milestone once. The provider hides it at once; a failed save shows a toast and doesn't reopen it (it may show
+  again on the next load).
+- The user menu's "What's new" entry reopens the newest milestone at any time. Opening it doesn't touch the seen
+  marker; closing it dismisses only if it is the person's unseen milestone.
+- Pure helpers (slide clamp, keys, gallery, date line, announcement) live in `src/lib/whats-new-core.ts`.
+
 ## Where the data flows
 
 - `src/app/o/[org]/layout.tsx` computes `changelogFor(user)` from the user document it already loaded, and passes

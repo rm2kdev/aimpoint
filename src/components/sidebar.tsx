@@ -24,6 +24,7 @@ import {
   UserIcon,
   UsersIcon,
   GlobeIcon,
+  SparklesIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
@@ -43,6 +44,7 @@ import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
 import { moveTaskAction } from "@/app/actions/tasks";
 import { startInstall, useInstallState } from "@/components/install-prompt";
+import { useOpenWhatsNew } from "@/components/whats-new-dialog";
 import { accountPath, analyticsPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import { matchStatus, type Project, type Task } from "@/lib/types";
@@ -451,6 +453,7 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
   const { org, me } = useOrg();
   const router = useRouter();
   const install = useInstallState();
+  const openWhatsNew = useOpenWhatsNew();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -488,6 +491,18 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
             className="gap-2.5"
           >
             <DownloadIcon className="size-4" /> Install app
+          </DropdownMenuItem>
+        )}
+        {/* The newest changelog milestone, any time (VEC-374); reopening it doesn't change the seen marker. */}
+        {openWhatsNew && (
+          <DropdownMenuItem
+            onSelect={() => {
+              onNavigate?.();
+              openWhatsNew();
+            }}
+            className="gap-2.5"
+          >
+            <SparklesIcon className="size-4" /> What&apos;s new
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onSelect={() => logoutAction()} className="gap-2.5">
