@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ChevronLeftIcon, ChevronRightIcon, HistoryIcon, ImageOffIcon, Maximize2Icon, SparklesIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -20,7 +21,11 @@ import {
   rowForKey,
   slideAnnouncement,
   slideForKey,
+  parseWhatsNewParam,
+  WHATS_NEW_PARAM,
+  withoutWhatsNewParam,
   type HistoryRow,
+  type WhatsNewLink,
 } from "@/lib/whats-new-core";
 
 /**
@@ -114,6 +119,21 @@ export function useWhatsNew() {
     [latest, changelog],
   );
 
+  /**
+   * A `?whats-new=` link (VEC-384): the list, or one milestone's tour. Counts as the tab's auto-open like the menu
+   * entries, and dismisses only when the milestone it shows is the person's unseen one.
+   */
+  const openLink = useCallback(
+    (link: WhatsNewLink) => {
+      if (changelog) setHandled(changelog.id);
+      const m = link.view === "tour" ? MILESTONES.find((x) => x.id === link.id) : undefined;
+      if (m) setShown({ milestone: m, view: "tour", fromHistory: false, dismisses: changelog?.id === m.id });
+      else setShown({ milestone: null, view: "history", fromHistory: false, dismisses: false });
+      setOpen(true);
+    },
+    [changelog],
+  );
+
   /** "All updates" from the tour's header, and Back from a milestone opened from the list. */
   const showHistory = useCallback(() => setShown((s) => (s ? { ...s, view: "history" } : s)), []);
   /** A row in the list: that milestone in the same slide viewer. Seeing the unseen one counts; older ones don't. */
@@ -135,10 +155,30 @@ export function useWhatsNew() {
     open,
     onOpenChange,
     openFromMenu,
+    openLink,
     showHistory,
     pickMilestone,
     holdOthers: open || pending,
   };
+}
+
+/**
+ * Opens the dialog from a link (VEC-384): `?whats-new=all` on any org page shows the "All updates" list,
+ * `?whats-new=<milestone id>` that milestone's tour (an unknown id falls back to the list), then the parameter is
+ * taken out of the address bar with history.replaceState (no navigation or server round trip), so a reload or a
+ * shared copy of the URL doesn't open it again. Renders nothing; its own component so search-param changes (every
+ * `?task=` open) re-render only this, not the shell.
+ */
+export function WhatsNewDeepLink({ onOpen }: { onOpen: (link: WhatsNewLink) => void }) {
+  const value = useSearchParams().get(WHATS_NEW_PARAM);
+  useEffect(() => {
+    if (value === null) return;
+    const link = parseWhatsNewParam(value, MILESTONES.map((m) => m.id));
+    const { pathname, search, hash } = window.location;
+    window.history.replaceState(window.history.state, "", `${pathname}${withoutWhatsNewParam(search)}${hash}`);
+    if (link) onOpen(link);
+  }, [value, onOpen]);
+  return null;
 }
 
 /**

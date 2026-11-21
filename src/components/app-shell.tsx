@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { MenuIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -14,7 +14,7 @@ import { NewTaskDialog, type NewTaskDefaults } from "@/components/new-task-dialo
 import { cn } from "@/lib/utils";
 import { DragProvider } from "@/components/ui/drag-provider";
 import { InstallPrompt } from "@/components/install-prompt";
-import { OpenWhatsNewContext, WhatsNewDialog, useWhatsNew } from "@/components/whats-new-dialog";
+import { OpenWhatsNewContext, WhatsNewDeepLink, WhatsNewDialog, useWhatsNew } from "@/components/whats-new-dialog";
 import { orgPath, taskPath } from "@/lib/paths";
 
 interface ShellCtx {
@@ -126,6 +126,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         onShowHistory={whatsNew.showHistory}
         onPick={whatsNew.pickMilestone}
       />
+      {/* ?whats-new=all / ?whats-new=<id> (VEC-384). Suspense: useSearchParams must not hold up the shell. */}
+      <Suspense fallback={null}>
+        <WhatsNewDeepLink onOpen={whatsNew.openLink} />
+      </Suspense>
       </DragProvider>
       </OpenWhatsNewContext.Provider>
     </Ctx.Provider>

@@ -1,5 +1,6 @@
 // Pure helpers for the "What's new" pop-up (VEC-374): slide stepping, the milestone's lightbox gallery, the
-// release date line, the screen-reader announcement and the "All updates" history rows (VEC-377). No DOM or React, so `pnpm test` (node --test) covers it.
+// release date line, the screen-reader announcement, the "All updates" history rows (VEC-377) and the `?whats-new=`
+// deep link (VEC-384). No DOM or React, so `pnpm test` (node --test) covers it.
 // The milestone model and who-sees-what rules live in lib/changelog-core.ts (VEC-373); docs/changelog.md.
 
 import { sortMilestones, type ChangelogMilestone } from "./changelog-core";
@@ -103,4 +104,33 @@ export function rowForKey(key: string, i: number, n: number): number | null {
   if (to === null) return null;
   const next = clampSlide(to, n);
   return next === i ? null : next;
+}
+
+/** The query parameter that opens the dialog from a link (VEC-384): `?whats-new=all` or `?whats-new=<milestone id>`. */
+export const WHATS_NEW_PARAM = "whats-new";
+
+/** What a `?whats-new=` link opens: the "All updates" list, or one milestone's tour. */
+export type WhatsNewLink = { view: "history" } | { view: "tour"; id: string };
+
+/**
+ * What `?whats-new=<value>` opens, given the shipped milestone ids, or null when there is nothing to open (no
+ * parameter, or no milestone has shipped). `all` (or an empty value) opens the list; a known milestone id opens its
+ * tour; anything else (a typo, a milestone that was never shipped) falls back to the list rather than doing nothing.
+ */
+export function parseWhatsNewParam(value: string | null | undefined, ids: readonly string[]): WhatsNewLink | null {
+  if (value == null || ids.length === 0) return null;
+  const v = value.trim().toLowerCase();
+  if (v && v !== "all" && ids.includes(v)) return { view: "tour", id: v };
+  return { view: "history" };
+}
+
+/**
+ * `search` (a location.search string, with or without the leading "?") without the `?whats-new=` parameter, as a
+ * string ready to append to a path: "" when nothing is left, else "?a=1&b=2" with the other parameters in order.
+ */
+export function withoutWhatsNewParam(search: string): string {
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  params.delete(WHATS_NEW_PARAM);
+  const rest = params.toString();
+  return rest ? `?${rest}` : "";
 }

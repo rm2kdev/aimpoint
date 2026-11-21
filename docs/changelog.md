@@ -98,8 +98,17 @@ Every milestone can be reopened from a list inside the same dialog (VEC-377). It
 page: the changelog is product-level and the dialog already carries the slide viewer, so there is no
 `/o/<org>/changelog` route to link to.
 
-- Reach it from the "All updates" link next to the release date in the pop-up's header, the user menu's "All updates"
-  entry (under "What's new") and the command menu (Actions: "What's new", "All updates").
+- Reach it from the sidebar's "What's new" item (VEC-384; under Settings, in the desktop sidebar and the phone
+  drawer, absent until a milestone has shipped), the "All updates" link next to the release date in the pop-up's
+  header, the user menu's "All updates" entry (under "What's new") and the command menu (Actions: "What's new",
+  "All updates"). The sidebar item carries a small dot while the person has an unseen milestone; opening the list
+  from it doesn't dismiss that milestone.
+- Link to it with `?whats-new=all` on any org page (for example `/o/<org>/my?whats-new=all`), or to one milestone's
+  tour with `?whats-new=<milestone id>`; an unknown id falls back to the list. The parameter is taken out of the
+  address bar once the dialog opens (other parameters such as `?task=` stay), so reloading doesn't reopen it. The
+  link follows the same rules as the menu entries: it counts as the tab's auto-open, and closing dismisses only when
+  it showed the person's unseen milestone. `WhatsNewDeepLink` (in `whats-new-dialog.tsx`, mounted in AppShell) reads
+  it; `parseWhatsNewParam` / `withoutWhatsNewParam` in `whats-new-core.ts` are tested.
 - The list shows every milestone in `MILESTONES`, newest first (sorted with `sortMilestones`, whatever the index
   order): first screenshot as a thumbnail (a sparkles tile when there is none), title, release date, change count
   and the summary (or the entry titles). The newest is marked "Latest". With one milestone it is a one-row list, and
@@ -109,7 +118,7 @@ page: the changelog is product-level and the dialog already carries the slide vi
 - Browsing never moves the seen marker: only an opening that showed the person's unseen milestone dismisses on close
   (the auto pop-up, "What's new" while it is unseen, or picking the unseen one from the list). Opening the list or
   the menu also counts as this tab's auto-open, so the pop-up never re-triggers on top of it.
-- State lives in `useWhatsNew()` (`view`, `fromHistory`, `showHistory`, `pickMilestone`; `openFromMenu` = the
+- State lives in `useWhatsNew()` (`view`, `fromHistory`, `showHistory`, `pickMilestone`, `openLink`; `openFromMenu` = the
   `OpenWhatsNewContext` value `{latest, history}`). Row data comes from `historyRows` in `src/lib/whats-new-core.ts`
   (tested in `whats-new-core.test.mjs`).
 

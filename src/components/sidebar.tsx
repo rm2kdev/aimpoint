@@ -115,6 +115,7 @@ export const Sidebar = memo(function Sidebar({ onSearch, onNavigate }: { onSearc
         >
           Settings
         </NavItem>
+        <WhatsNewNavItem onNavigate={onNavigate} />
       </div>
 
       <div className="mt-2 flex items-center gap-1 border-t border-sidebar-border pt-2">
@@ -331,6 +332,41 @@ const ProjectRow = memo(function ProjectRow({
   );
 });
 
+const NAV_ITEM =
+  "group mb-px flex h-[30px] shrink-0 items-center gap-2.5 rounded-[7px] px-2 text-[13.5px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&_svg]:size-4 [&_svg]:shrink-0";
+
+/**
+ * "What's new" in the nav (VEC-384): opens the "All updates" list of every changelog milestone, so the history is
+ * findable without the user menu. Absent until a milestone has shipped. The dot marks an unseen milestone; opening
+ * the list never dismisses it (only an opening that shows that milestone does, per useWhatsNew).
+ */
+function WhatsNewNavItem({ onNavigate }: { onNavigate?: () => void }) {
+  const openWhatsNew = useOpenWhatsNew();
+  const { changelog } = useOrg();
+  if (!openWhatsNew) return null;
+  return (
+    <button
+      type="button"
+      data-whats-new-nav=""
+      onClick={() => {
+        onNavigate?.();
+        openWhatsNew.history();
+      }}
+      className={cn(NAV_ITEM, "w-full text-left text-sidebar-foreground hover:bg-sidebar-accent")}
+    >
+      <span className="flex text-muted-foreground">
+        <SparklesIcon />
+      </span>
+      <span className="truncate">What&apos;s new</span>
+      {changelog && (
+        <span className="ml-auto mr-1 size-[7px] shrink-0 rounded-full bg-brand" data-whats-new-unseen="">
+          <span className="sr-only">, new update</span>
+        </span>
+      )}
+    </button>
+  );
+}
+
 function NavItem({
   href,
   active,
@@ -376,7 +412,7 @@ function NavItem({
       data-drop-over={dropState ? dropState : undefined}
       {...handleProps}
       className={cn(
-        "group mb-px flex h-[30px] shrink-0 items-center gap-2.5 rounded-[7px] px-2 text-[13.5px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset [&_svg]:size-4 [&_svg]:shrink-0",
+        NAV_ITEM,
         active ? "bg-selected font-medium text-selected-foreground" : "text-sidebar-foreground hover:bg-sidebar-accent",
         dragging && "cursor-grabbing",
         dropState && "bg-brand/10 text-brand shadow-[inset_0_0_0_1px_var(--color-brand)] hover:bg-brand/10",

@@ -16,8 +16,19 @@ registerHooks({
     }
   },
 });
-const { changeCountLabel, clampSlide, historyRows, milestoneGallery, releaseDateLabel, rowForKey, slideAnnouncement, slideForKey } =
-  await import("./whats-new-core.ts");
+const {
+  changeCountLabel,
+  clampSlide,
+  historyRows,
+  milestoneGallery,
+  parseWhatsNewParam,
+  releaseDateLabel,
+  rowForKey,
+  slideAnnouncement,
+  slideForKey,
+  WHATS_NEW_PARAM,
+  withoutWhatsNewParam,
+} = await import("./whats-new-core.ts");
 
 test("clampSlide keeps the slide inside the tour and never wraps", () => {
   assert.equal(clampSlide(-1, 4), 0);
@@ -112,4 +123,29 @@ test("changeCountLabel and rowForKey", () => {
   assert.equal(rowForKey("ArrowUp", 0, 3), null);
   assert.equal(rowForKey("ArrowDown", 0, 1), null);
   assert.equal(rowForKey("Enter", 0, 3), null);
+});
+
+test("parseWhatsNewParam: all opens the list, a shipped id its tour, anything else falls back to the list", () => {
+  const ids = ["2026-11-21", "2026-11-14-forms"];
+  assert.equal(WHATS_NEW_PARAM, "whats-new");
+  assert.deepEqual(parseWhatsNewParam("all", ids), { view: "history" });
+  assert.deepEqual(parseWhatsNewParam("ALL", ids), { view: "history" });
+  assert.deepEqual(parseWhatsNewParam("", ids), { view: "history" });
+  assert.deepEqual(parseWhatsNewParam("2026-11-21", ids), { view: "tour", id: "2026-11-21" });
+  assert.deepEqual(parseWhatsNewParam(" 2026-11-14-forms ", ids), { view: "tour", id: "2026-11-14-forms" });
+  assert.deepEqual(parseWhatsNewParam("2020-01-01", ids), { view: "history" });
+  assert.deepEqual(parseWhatsNewParam("<script>", ids), { view: "history" });
+  // No parameter, or nothing shipped: nothing to open.
+  assert.equal(parseWhatsNewParam(null, ids), null);
+  assert.equal(parseWhatsNewParam(undefined, ids), null);
+  assert.equal(parseWhatsNewParam("all", []), null);
+});
+
+test("withoutWhatsNewParam strips only the deep link and keeps the rest in order", () => {
+  assert.equal(withoutWhatsNewParam("?whats-new=all"), "");
+  assert.equal(withoutWhatsNewParam("whats-new=all"), "");
+  assert.equal(withoutWhatsNewParam(""), "");
+  assert.equal(withoutWhatsNewParam("?task=VEC-1&whats-new=2026-11-21&view=list"), "?task=VEC-1&view=list");
+  assert.equal(withoutWhatsNewParam("?whats-new=all&whats-new=x&q=a+b"), "?q=a+b");
+  assert.equal(withoutWhatsNewParam("?task=VEC-1"), "?task=VEC-1");
 });
