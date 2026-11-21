@@ -16,6 +16,12 @@ import {
   shapePublicTask,
   shapePublicComment,
   parsePublicRef,
+  computeStats,
+  shapeBadge,
+  isBadgeMetric,
+  BADGE_METRICS,
+  STATS_TYPES,
+  PUBLIC_STATS_CACHE,
 } from "./project-public-core.ts";
 import { publicSanitize } from "./task-intake-core.ts";
 
@@ -171,4 +177,86 @@ test("intakeSkips flags a default that isn't the new-task status (AIM-2)", () =>
 test("a project seeded from its new-task status files public tickets there (AIM-2)", () => {
   const allowed = pruneSubmitStatuses(initialSubmitStatuses([], T, statuses), statuses);
   assert.deepEqual(pickSubmitStatus(undefined, allowed), { ok: true, id: T });
+});
+
+/* ---------------- public stats + badges (VEC-363) ---------------- */
+
+const statRows = [
+  { stage: "backlog", type: "issue", count: 2 },
+  { stage: "triage", type: "feature", count: 1 },
+  { stage: "unstarted", type: "issue", count: 3 },
+  { stage: "started", type: "issue", count: 1 },
+  { stage: "started", type: "feature", count: 2 },
+  { stage: "done", type: "issue", count: 5 },
+  { stage: "done", type: "task", count: 1 },
+  { stage: "cancelled", type: "feature", count: 4 },
+];
+
+test("computeStats counts by stage overall and per type", () => {
+  const s = computeStats(statRows);
+  assert.deepEqual(
+    { total: s.total, open: s.open, inProgress: s.inProgress, done: s.done, cancelled: s.cancelled },
+    { total: 19, open: 9, inProgress: 3, done: 6, cancelled: 4 },
+  );
+  assert.deepEqual(s.byType.issue, { total: 11, open: 6, inProgress: 1, done: 5, cancelled: 0 });
+  assert.deepEqual(s.byType.feature, { total: 7, open: 3, inProgress: 2, done: 0, cancelled: 4 });
+  assert.deepEqual(s.byType.task, { total: 1, open: 0, inProgress: 0, done: 1, cancelled: 0 });
+  assert.deepEqual(Object.keys(s.byType).sort(), [...STATS_TYPES].sort());
+});
+
+test("computeStats: rows split across custom statuses of one stage add up; empty project is all zeros", () => {
+  const split = computeStats([
+    { stage: "started", type: "issue", count: 1 },
+    { stage: "started", type: "issue", count: 2 },
+  ]);
+  assert.equal(split.inProgress, 3);
+  assert.equal(split.open, 3);
+  const empty = computeStats([]);
+  assert.deepEqual({ ...empty, byType: undefined }, { total: 0, open: 0, inProgress: 0, done: 0, cancelled: 0, byType: undefined });
+  assert.equal(empty.byType.feature.open, 0);
+});
+
+test("computeStats: unknown status counts in total only, unknown type overall only, bad counts ignored", () => {
+  const s = computeStats([
+    { stage: null, type: "issue", count: 2 },
+    { stage: "backlog", type: "epic", count: 1 },
+    { stage: "done", type: "issue", count: -3 },
+    { stage: "done", type: "issue", count: Number.NaN },
+  ]);
+  assert.equal(s.total, 3);
+  assert.equal(s.open, 1);
+  assert.equal(s.done, 0);
+  assert.deepEqual(s.byType.issue, { total: 2, open: 0, inProgress: 0, done: 0, cancelled: 0 });
+});
+
+test("shapeBadge returns exactly the shields.io endpoint fields for every metric", () => {
+  const s = computeStats(statRows);
+  const want = {
+    open: { label: "open", message: "9", color: "blue" },
+    "in-progress": { label: "in progress", message: "3", color: "yellow" },
+    done: { label: "done", message: "6", color: "brightgreen" },
+    total: { label: "tasks", message: "19", color: "informational" },
+    bugs: { label: "open bugs", message: "6", color: "red" },
+    features: { label: "feature requests", message: "3", color: "blueviolet" },
+  };
+  assert.deepEqual([...BADGE_METRICS].sort(), Object.keys(want).sort());
+  for (const m of BADGE_METRICS) {
+    const b = shapeBadge(m, s);
+    assert.deepEqual(b, { schemaVersion: 1, ...want[m] }, m);
+    assert.deepEqual(Object.keys(b).sort(), ["color", "label", "message", "schemaVersion"]);
+    assert.equal(typeof b.message, "string");
+  }
+});
+
+test("shapeBadge: no open bugs is green, unknown metrics are null", () => {
+  const s = computeStats([{ stage: "done", type: "issue", count: 2 }]);
+  assert.deepEqual(shapeBadge("bugs", s), { schemaVersion: 1, label: "open bugs", message: "0", color: "brightgreen" });
+  for (const bad of ["", "Open", "issues", "__proto__", "toString", null, undefined, 1]) {
+    assert.equal(isBadgeMetric(bad), false, String(bad));
+    assert.equal(shapeBadge(bad, s), null, String(bad));
+  }
+});
+
+test("stats are cached by shared caches for 5 minutes", () => {
+  assert.equal(PUBLIC_STATS_CACHE, "public, s-maxage=300, stale-while-revalidate=600");
 });

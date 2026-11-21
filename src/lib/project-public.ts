@@ -14,6 +14,7 @@ import { loadDirectory, personName } from "@/lib/mcp/context";
 import {
   PUBLIC_COMMENTS_MAX,
   PUBLIC_RATE_LIMITS,
+  PUBLIC_STATS_RATE_LIMIT,
   PUBLIC_TASKS_MAX,
   PUBLIC_UNAVAILABLE,
   PUBLIC_UPLOAD_FILE,
@@ -25,6 +26,9 @@ import {
   rewritePublicImages,
   shapePublicComment,
   shapePublicTask,
+  computeStats,
+  type PublicProjectStats,
+  type StatsRow,
 } from "@/lib/project-public-core";
 import {
   TASK_TYPES,
@@ -66,6 +70,8 @@ export interface PublicAccessPatch {
   enabled?: boolean;
   submitStatusIds?: string[];
   showComments?: boolean;
+  /** Serve public task counts + shields.io badges (VEC-363). Default off. */
+  showStats?: boolean;
 }
 
 const oid = (id: string, what: string) => {
@@ -82,6 +88,7 @@ export function toPublicAccess(projectId: ObjectId, a: ProjectPublicAccessDoc | 
     enabled: !!a?.enabled,
     submitStatusIds: (a?.submitStatusIds ?? []).map((id) => id.toHexString()),
     showComments: !!a?.showComments,
+    showStats: !!a?.showStats,
     updatedAt: a?.updatedAt ? a.updatedAt.toISOString() : null,
     updatedBy: a?.updatedBy ? a.updatedBy.toHexString() : null,
   };
@@ -117,6 +124,7 @@ export async function setProjectPublicAccess(actor: PublicSettingsActor, project
   const prev = project.publicAccess;
   if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") throw new UserError("`enabled` is true or false.");
   if (patch.showComments !== undefined && typeof patch.showComments !== "boolean") throw new UserError("`showComments` is true or false.");
+  if (patch.showStats !== undefined && typeof patch.showStats !== "boolean") throw new UserError("`showStats` is true or false.");
   const enabled = patch.enabled ?? !!prev?.enabled;
   if (enabled && !prev?.enabled) {
     if (project.archivedAt) throw new UserError(`${project.name} (${project.key}) is archived. Restore it before making it public.`);
@@ -138,6 +146,7 @@ export async function setProjectPublicAccess(actor: PublicSettingsActor, project
     enabled,
     submitStatusIds: submitStatusIds.map((id) => new ObjectId(id)),
     showComments: patch.showComments ?? !!prev?.showComments,
+    showStats: patch.showStats ?? !!prev?.showStats,
     updatedAt: new Date(),
     updatedBy: actor.userId,
   };
@@ -300,6 +309,39 @@ export async function publicImageName(slug: unknown, key: unknown, file: unknown
     { projection: { _id: 1 } },
   );
   return hitDoc ? name : null;
+}
+
+/* ---------------- public stats (VEC-363) ---------------- */
+
+export type PublicStatsResult =
+  | { ok: true; project: { key: string; name: string }; stats: PublicProjectStats }
+  | { ok: false; status: 404 }
+  | { ok: false; status: 429; retryAfter: number };
+
+/**
+ * Task counts of a public project for the stats and shields.io badge routes. Served only when the project is public,
+ * not archived, its org isn't locked (plan feature) and `publicAccess.showStats` is on; anything else is a bare 404,
+ * like the public page. Rate limited per client IP per project. One aggregation over the project's non-archived tasks
+ * (grouped by status + type, nothing else read), with stages from the project's statuses.
+ */
+export async function loadPublicStats(slug: unknown, key: unknown, ip: string): Promise<PublicStatsResult> {
+  const f = await findPublicProject(slug, key);
+  if (!f || !f.available || !f.project.publicAccess?.showStats) return { ok: false, status: 404 };
+  const wait = await hit(`public-stats:${ipKey(ip)}:${f.project._id.toHexString()}`, PUBLIC_STATS_RATE_LIMIT);
+  if (wait !== null) return { ok: false, status: 429, retryAfter: wait };
+  const c = await cols();
+  const [groups, statuses] = await Promise.all([
+    c.tasks
+      .aggregate<{ _id: { statusId: ObjectId; type: string }; count: number }>([
+        { $match: { orgId: f.project.orgId, projectId: f.project._id, archivedAt: null } },
+        { $group: { _id: { statusId: "$statusId", type: "$type" }, count: { $sum: 1 } } },
+      ])
+      .toArray(),
+    loadStatuses(f.project.orgId, f.project._id),
+  ]);
+  const stageOf = new Map(statuses.map((s) => [s._id.toHexString(), s.category]));
+  const rows: StatsRow[] = groups.map((g) => ({ stage: stageOf.get(String(g._id.statusId)) ?? null, type: g._id.type, count: g.count }));
+  return { ok: true, project: { key: f.project.key, name: f.project.name }, stats: computeStats(rows) };
 }
 
 /* ---------------- submitting ---------------- */

@@ -221,12 +221,15 @@ export interface ProjectDoc {
  * sanitised public view (lib/project-public.ts), and any signed-in Aimpoint account can submit a ticket into
  * `submitStatusIds` (this project's own statuses, stage backlog / triage / unstarted, same rule as
  * FORM_DESTINATION_STAGES; the first is the default destination; empty = read-only). `showComments` adds comments
- * to the public view (author display names only). Kept valid by the status/project hooks in lib/project-public.ts.
+ * to the public view (author display names only). `showStats` (VEC-363, absent = off) serves task counts at
+ * `/api/public/<org>/<KEY>/stats` and shields.io badges at `.../badge/<metric>`. Kept valid by the status/project
+ * hooks in lib/project-public.ts.
  */
 export interface ProjectPublicAccessDoc {
   enabled: boolean;
   submitStatusIds: ObjectId[];
   showComments: boolean;
+  showStats?: boolean;
   updatedAt: Date;
   updatedBy: ObjectId;
 }
@@ -236,6 +239,7 @@ export interface ProjectPublicAccess {
   enabled: boolean;
   submitStatusIds: string[];
   showComments: boolean;
+  showStats: boolean;
   updatedAt: string | null;
   updatedBy: string | null;
 }

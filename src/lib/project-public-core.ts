@@ -188,3 +188,97 @@ export function parsePublicRef(slug: unknown, key: unknown): { slug: string; key
   if (!/^[a-z0-9][a-z0-9-]{0,59}$/.test(s) || !/^[A-Z][A-Z0-9]{1,9}$/.test(k)) return null;
   return { slug: s, key: k };
 }
+
+/* ---------------- public stats + shields.io badges (VEC-363) ---------------- */
+
+/** Task counts by status stage. `open` = backlog + triage + not started + started; `inProgress` = started only. */
+export interface PublicStatsCounts {
+  total: number;
+  open: number;
+  inProgress: number;
+  done: number;
+  cancelled: number;
+}
+
+/** A public project's statistics: counts over its non-archived tasks, overall and per task type. */
+export interface PublicProjectStats extends PublicStatsCounts {
+  byType: Record<TaskType, PublicStatsCounts>;
+}
+
+/** One row of the stats aggregation: how many tasks of one type sit in one status (stage resolved, null = unknown). */
+export interface StatsRow {
+  stage: StatusCategory | null | undefined;
+  type: TaskType | string | null | undefined;
+  count: number;
+}
+
+/** Task types counted per type (types.ts TASK_TYPES; repeated here since node --test can't load types.ts at runtime). */
+export const STATS_TYPES = ["issue", "feature", "task"] as const satisfies readonly TaskType[];
+// Compile-time guard that every TaskType is counted.
+const allTypes: TaskType extends (typeof STATS_TYPES)[number] ? true : never = true;
+void allTypes;
+
+const OPEN_STAGES: readonly StatusCategory[] = ["backlog", "triage", "unstarted", "started"];
+
+const zero = (): PublicStatsCounts => ({ total: 0, open: 0, inProgress: 0, done: 0, cancelled: 0 });
+
+function add(c: PublicStatsCounts, stage: StatusCategory | null | undefined, n: number) {
+  c.total += n;
+  if (!stage) return;
+  if (OPEN_STAGES.includes(stage)) c.open += n;
+  if (stage === "started") c.inProgress += n;
+  if (stage === "done") c.done += n;
+  if (stage === "cancelled") c.cancelled += n;
+}
+
+/**
+ * Counts the aggregation rows by stage, so custom status names don't matter. A task whose status can't be resolved
+ * (stage null) counts in `total` only; an unknown type counts overall but in no `byType` bucket. Bad counts are 0.
+ */
+export function computeStats(rows: readonly StatsRow[]): PublicProjectStats {
+  const out: PublicProjectStats = { ...zero(), byType: { issue: zero(), feature: zero(), task: zero() } };
+  for (const r of rows) {
+    const n = Number.isFinite(r.count) && r.count > 0 ? Math.floor(r.count) : 0;
+    if (!n) continue;
+    add(out, r.stage, n);
+    const bucket = (STATS_TYPES as readonly string[]).includes(String(r.type)) ? out.byType[r.type as TaskType] : null;
+    if (bucket) add(bucket, r.stage, n);
+  }
+  return out;
+}
+
+/** Metrics served by `/api/public/<org>/<KEY>/badge/<metric>`. */
+export const BADGE_METRICS = ["open", "in-progress", "done", "total", "bugs", "features"] as const;
+export type BadgeMetric = (typeof BADGE_METRICS)[number];
+export const isBadgeMetric = (v: unknown): v is BadgeMetric => typeof v === "string" && (BADGE_METRICS as readonly string[]).includes(v);
+
+/** The shields.io endpoint badge schema (https://shields.io/badges/endpoint-badge), exactly these four fields. */
+export interface ShieldsBadge {
+  schemaVersion: 1;
+  label: string;
+  message: string;
+  color: string;
+}
+
+const BADGES: Record<BadgeMetric, { label: string; value: (s: PublicProjectStats) => number; color: (n: number) => string }> = {
+  open: { label: "open", value: (s) => s.open, color: () => "blue" },
+  "in-progress": { label: "in progress", value: (s) => s.inProgress, color: () => "yellow" },
+  done: { label: "done", value: (s) => s.done, color: () => "brightgreen" },
+  total: { label: "tasks", value: (s) => s.total, color: () => "informational" },
+  bugs: { label: "open bugs", value: (s) => s.byType.issue.open, color: (n) => (n > 0 ? "red" : "brightgreen") },
+  features: { label: "feature requests", value: (s) => s.byType.feature.open, color: () => "blueviolet" },
+};
+
+/** The shields.io endpoint JSON for one metric, or null for an unknown metric (the route answers 404). */
+export function shapeBadge(metric: unknown, stats: PublicProjectStats): ShieldsBadge | null {
+  if (!isBadgeMetric(metric)) return null;
+  const b = BADGES[metric];
+  const n = b.value(stats);
+  return { schemaVersion: 1, label: b.label, message: String(n), color: b.color(n) };
+}
+
+/** Requests per client IP per public project to the stats + badge routes in each window. */
+export const PUBLIC_STATS_RATE_LIMIT = { max: 120, windowMs: 60_000 } as const;
+
+/** Cache header for stats and badges: shared caches (Vercel CDN, shields.io) keep them 5 minutes. */
+export const PUBLIC_STATS_CACHE = "public, s-maxage=300, stale-while-revalidate=600";
