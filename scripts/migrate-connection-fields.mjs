@@ -3,6 +3,8 @@
 // MONGODB_URI / MONGODB_DB in the environment, which win). Idempotent: a bot that already has the new field keeps it
 // (a leftover old copy is dropped), and a second run reports 0 changes. The app reads the old field as a fallback
 // (src/lib/connection-fields.ts), so dispatch keeps working before and after this runs.
+// VEC-319 also sets mcpServerName to "aimpoint" on bots that have none (set up before VEC-198) or still say "vector":
+// the app no longer falls back to the old server name (src/lib/mcp-name.ts).
 // Usage: node scripts/migrate-connection-fields.mjs [--dry-run]
 import fs from "node:fs";
 import { MongoClient } from "mongodb";
@@ -39,6 +41,9 @@ try {
     const s = await bots.updateMany(stale, { $unset: { [oldF]: "" } });
     console.log(`${oldF} -> ${newF}: renamed ${r.modifiedCount}, dropped ${s.modifiedCount} stale old copies`);
   }
+  const unnamed = { $or: [{ mcpServerName: { $exists: false } }, { mcpServerName: null }, { mcpServerName: "vector" }] };
+  if (dryRun) console.log(`mcpServerName -> aimpoint: ${await bots.countDocuments(unnamed)} to set`);
+  else console.log(`mcpServerName -> aimpoint: set ${(await bots.updateMany(unnamed, { $set: { mcpServerName: "aimpoint" } })).modifiedCount}`);
   const left = await bots.countDocuments({ $or: Object.keys(LEGACY_CONNECTION_FIELDS).map((f) => ({ [`connection.${f}`]: { $exists: true } })) });
   console.log(`bots still holding an old field: ${left}`);
 } finally {

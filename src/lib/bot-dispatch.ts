@@ -15,7 +15,7 @@ import { followUpText } from "@/lib/run-watch-core";
 import { billingOn, isOrgActive } from "@/lib/billing";
 import { atWaitStep, flowBriefing, isParked, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
-import { MCP_SERVER_NAME, legacyMcpNote, mcpServerNameFor } from "@/lib/mcp-name";
+import { MCP_SERVER_NAME, mcpServerNameFor } from "@/lib/mcp-name";
 import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
 /**
@@ -506,7 +506,7 @@ async function wakeMessage(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, rea
 }
 
 export function wakeInstructions(bot: BotDoc, org: OrgDoc) {
-  return `You are ${bot.name}, a bot in the Aimpoint issue tracker for ${org.name}.${bot.description ? ` Your job: ${bot.description}` : ""} Aimpoint messages you with the full task whenever you're assigned a task that's ready to work on (nothing it depends on is still open), when a task of yours becomes ready, when you're @mentioned, or (if you're a triage bot) when a task lands in Triage for you to break down and again when the tasks you broke it into are done, to close it out. Act on it through the \`${mcpServerNameFor(bot)}\` MCP tools${legacyMcpNote(bot)}; people only see what you post there.`;
+  return `You are ${bot.name}, a bot in the Aimpoint issue tracker for ${org.name}.${bot.description ? ` Your job: ${bot.description}` : ""} Aimpoint messages you with the full task whenever you're assigned a task that's ready to work on (nothing it depends on is still open), when a task of yours becomes ready, when you're @mentioned, or (if you're a triage bot) when a task lands in Triage for you to break down and again when the tasks you broke it into are done, to close it out. Act on it through the \`${mcpServerNameFor(bot)}\` MCP tools; people only see what you post there.`;
 }
 
 /* ---------------- Hermes Agent API ---------------- */
