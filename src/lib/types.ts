@@ -887,7 +887,8 @@ export interface BotMentionDoc {
 /** Something a person should look at. Bots get wake-ups and check_for_work instead. */
 /** "review": a bot finished a task but left it open (e.g. In Review) while other tasks wait on it.
  * "undelivered": Aimpoint couldn't hand a task to its push bot after retrying (actorId = the bot).
- * "stalled": an open, ready task nobody is assigned to is holding other open tasks up (VEC-108).
+ * "stalled": an open, ready task is holding other open tasks up: nobody is assigned to it (VEC-108) or its bot's runs
+ *   ended without finishing it (VEC-316). `reason` says which (VEC-394; older rows have none).
  * "waiting": a task has sat at a flow wait step longer than its `remindAfterDays` (VEC-182, once per entry). */
 export type NotificationKind = "assigned" | "mentioned" | "ready" | "review" | "undelivered" | "stalled" | "waiting";
 export interface NotificationDoc {
@@ -901,6 +902,8 @@ export interface NotificationDoc {
   commentId?: ObjectId | null;
   /** Short extra line, e.g. "WEB-1 is done" or "Waiting on WEB-1". */
   detail?: string | null;
+  /** "stalled" only (VEC-394): why it stalled, so the headline can say so. Absent on rows from before VEC-394. */
+  reason?: StalledReason | null;
   createdAt: Date;
   readAt: Date | null;
 }
@@ -1111,6 +1114,8 @@ export interface Notification {
   taskArchived: boolean;
   actorId: string | null;
   detail: string | null;
+  /** "stalled" only (VEC-394); null on other kinds and on older stalled rows. */
+  reason?: StalledReason | null;
   createdAt: string;
   read: boolean;
 }

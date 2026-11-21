@@ -2,7 +2,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { publish } from "@/lib/realtime/server";
-import type { Notification, NotificationDoc, NotificationKind } from "@/lib/types";
+import type { Notification, NotificationDoc, NotificationKind, StalledReason } from "@/lib/types";
 
 /**
  * People's inbox. Bots hear about the same events through wake-ups and check_for_work;
@@ -15,6 +15,8 @@ export interface NotifyInput {
   actorId: ObjectId | null;
   commentId?: ObjectId | null;
   detail?: string | null;
+  /** "stalled" only (VEC-394). */
+  reason?: StalledReason | null;
 }
 
 /** Notifies org members among `recipients` (bots and non-members are skipped). Never throws into the caller. */
@@ -38,6 +40,7 @@ export async function notify(orgId: ObjectId, recipients: ObjectId[], input: Not
       actorId: input.actorId,
       commentId: input.commentId ?? null,
       detail: input.detail ?? null,
+      ...(input.reason ? { reason: input.reason } : {}),
       createdAt: now,
       readAt: null,
     }));
@@ -65,6 +68,7 @@ function toNotification(d: NotificationDoc, task: { key: string; title: string; 
     taskArchived: task.archived,
     actorId: d.actorId?.toHexString() ?? null,
     detail: d.detail ?? null,
+    reason: d.reason ?? null,
     createdAt: d.createdAt.toISOString(),
     read: !!d.readAt,
   };

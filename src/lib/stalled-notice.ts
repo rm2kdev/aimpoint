@@ -43,6 +43,7 @@ export async function syncStalledNotice(orgId: string, task: Task) {
       const blocking = task.stalled!.blocking.length ? ` ${task.stalled!.blocking.join(", ")} ${task.stalled!.blocking.length === 1 ? "is" : "are"} waiting on it.` : "";
       await notify(org, await unfinishedRecipients(org, _id, doc), {
         kind: "stalled",
+        reason: "unfinished",
         taskId: _id,
         actorId: task.stalled!.botId ? new ObjectId(task.stalled!.botId) : null,
         detail: `${bot?.name ?? "Its bot"} ended its run twice without finishing it, so nothing moved it on.${blocking} Check its last comments, then move it on, reassign it or @mention the bot.`.slice(0, 200),
@@ -52,7 +53,7 @@ export async function syncStalledNotice(orgId: string, task: Task) {
     const recipients = await stalledRecipients(org, _id, doc.createdBy);
     const keys = task.stalled!.blocking;
     const waiting = keys.length === 1 ? `${keys[0]} is waiting on it` : `${keys.join(", ")} are waiting on it`;
-    await notify(org, recipients, { kind: "stalled", taskId: _id, actorId: null, detail: `${waiting}. Assign it to someone.`.slice(0, 200) });
+    await notify(org, recipients, { kind: "stalled", reason: "unassigned", taskId: _id, actorId: null, detail: `${waiting}. Assign it to someone.`.slice(0, 200) });
   } catch (err) {
     console.error("[stalled notice]", err);
   }
