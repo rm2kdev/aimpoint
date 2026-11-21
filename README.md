@@ -8,7 +8,7 @@
 
 <p>
   <a href="https://github.com/rm2kdev/aimpoint/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rm2kdev/aimpoint/ci.yml?branch=main&style=flat&label=build" alt="CI build status"></a>
-  <a href="https://github.com/rm2kdev/aimpoint/stargazers"><img src="https://img.shields.io/github/stars/rm2kdev/aimpoint?style=flat" alt="GitHub stars"></a>
+  <a href="https://github.com/rm2kdev/aimpoint"><img src="https://img.shields.io/github/stars/rm2kdev/aimpoint?style=flat" alt="GitHub stars"></a>
   <a href="https://github.com/rm2kdev/aimpoint/network/members"><img src="https://img.shields.io/github/forks/rm2kdev/aimpoint?style=flat" alt="GitHub forks"></a>
   <a href="https://github.com/rm2kdev/aimpoint/issues"><img src="https://img.shields.io/github/issues/rm2kdev/aimpoint?style=flat" alt="Open issues"></a>
   <a href="https://github.com/rm2kdev/aimpoint/commits/main"><img src="https://img.shields.io/github/last-commit/rm2kdev/aimpoint?style=flat" alt="Last commit"></a>
