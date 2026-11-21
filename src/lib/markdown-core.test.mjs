@@ -73,3 +73,38 @@ test("agent-written backslash escapes read as the plain character", () => {
   assert.equal(markdownToHtml("\\[x\\] and \\`tick\\`"), "<p>[x] and `tick`</p>");
   assert.equal(markdownToHtml("`code \\[kept\\]`"), "<p><code>code \\[kept\\]</code></p>");
 });
+
+test("a tag inside a code span doesn't make Markdown pass through as HTML (AIM-10)", () => {
+  const md = 'Part of **AIM-4**.\n\n- a URL is never an `<a target="_blank">` at all\n- [ ] then `<p>` and `<br>`';
+  assert.equal(
+    markdownToHtml(md),
+    "<p>Part of <strong>AIM-4</strong>.</p>" +
+      '<ul><li><p>a URL is never an <code>&lt;a target=&quot;_blank&quot;&gt;</code> at all</p></li>' +
+      "<li><p>[ ] then <code>&lt;p&gt;</code> and <code>&lt;br&gt;</code></p></li></ul>",
+  );
+  assert.equal(markdownToHtml("## Fix\nUse `<strong>` here"), "<h2>Fix</h2><p>Use <code>&lt;strong&gt;</code> here</p>");
+});
+
+test("HTML in a fenced code block is code, not HTML input (AIM-10)", () => {
+  const md = "Before **bold**\n\n```html\n<p>hi <a href=\"x\">y</a></p>\n```\n\nAfter";
+  const html = markdownToHtml(md);
+  assert.notEqual(html, md);
+  assert.ok(html.includes("<strong>bold</strong>"), html);
+  assert.ok(html.includes('<pre><code class="language-html">&lt;p&gt;hi &lt;a href=&quot;x&quot;&gt;y&lt;/a&gt;&lt;/p&gt;</code></pre>'), html);
+  assert.ok(!/<a\b/.test(html), html);
+  // An unclosed fence runs to the end, as the converter reads it.
+  assert.ok(!/<p>hi/.test(markdownToHtml("x\n\n```\n<p>hi</p>")));
+});
+
+test("real HTML input still passes through untouched (AIM-10)", () => {
+  for (const html of [
+    "<p>Hello <strong>there</strong></p>",
+    "<p>see <code>&lt;a&gt;</code></p><ul><li><p>x</p></li></ul>",
+    "Intro text then <a href=\"https://example.com\">a link</a>",
+    "<p>a `tick` b</p><h2>t</h2>",
+    "<pre><code>```\nx\n```</code></pre>",
+  ]) assert.equal(markdownToHtml(html), html);
+  // A tag outside the code span still counts as HTML.
+  const mixed = "`<a>` and <strong>real</strong>";
+  assert.equal(markdownToHtml(mixed), mixed);
+});

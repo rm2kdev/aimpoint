@@ -98,11 +98,30 @@ function inlineMd(t: string): string {
 }
 
 /**
+ * The text the HTML sniff looks at: Markdown with its fenced code blocks and inline code spans removed (read the way
+ * markdownToHtml reads them: fences line by line, spans per line with backslash escapes first), so a tag written as code
+ * (an anchor tag in backticks, say) doesn't make the whole Markdown pass through as HTML.
+ */
+function outsideCode(src: string): string {
+  const lines = src.replace(/\r\n?/g, "\n").split("\n");
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^```\s*[\w-]*\s*$/.test(lines[i])) {
+      i++;
+      while (i < lines.length && !/^```\s*$/.test(lines[i])) i++;
+      continue;
+    }
+    kept.push(lines[i].replace(new RegExp(`\`[^\`]+\`|\\\\[${PUNCT}]`, "g"), (m) => (m[0] === "`" ? "" : m)));
+  }
+  return kept.join("\n");
+}
+
+/**
  * Agent-written Markdown (or plain text) -> description HTML. HTML input passes straight to the sanitiser; an escaped
- * `\<img ...>` is text, not HTML.
+ * `\<img ...>` is text, not HTML, and so is a tag inside a code span or fenced code block.
  */
 export function markdownToHtml(src: string): string {
-  if (/(?<!\\)<(p|h[1-3]|ul|ol|li|pre|img|a|strong|em|br|blockquote)\b[^>]*>/i.test(src)) return src;
+  if (/(?<!\\)<(p|h[1-3]|ul|ol|li|pre|img|a|strong|em|br|blockquote)\b[^>]*>/i.test(outsideCode(src))) return src;
   const lines = src.replace(/\r\n?/g, "\n").split("\n");
   const out: string[] = [];
   let i = 0;
