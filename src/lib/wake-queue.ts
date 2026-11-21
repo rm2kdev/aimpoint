@@ -1,12 +1,14 @@
 import "server-only";
+import { after } from "next/server";
 import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { isPush } from "@/lib/bot-connect";
-import { deliver, markHandedOver, wakeTriage, type WakeReason } from "@/lib/bot-dispatch";
+import { deliver, isBotEnabledNow, markHandedOver, wakeTriage, type WakeReason } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
 import { billingOn, isOrgActive } from "@/lib/billing";
 import { notify } from "@/lib/notifications";
 import { isParked } from "@/lib/flow-engine";
+import { ENABLED_BOT_FILTER, isBotEnabled } from "@/lib/bot-enabled";
 // Starts the wait-step reminder sweeper (VEC-182) alongside this one: every server path that writes tasks loads this module.
 import "@/lib/wait-reminders";
 import { isClosedCategory, type BotDoc, type BotWakeDoc, type OrgDoc, type QueuedWakeKind } from "@/lib/types";
@@ -105,6 +107,8 @@ export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReaso
   if (reason.kind !== "mentioned" && (await isStopped(reason.taskId))) return;
   await c.botWakes.deleteMany({ botId: bot._id, taskId: reason.taskId, kind: reason.kind });
   const gated = await gatedWake(org);
+  // VEC-344: a disabled bot isn't woken. The wake-up is queued as held (no attempt) and goes out when it's enabled.
+  const off = !gated && !(await isBotEnabledNow(bot));
   const now = new Date();
   const wake: BotWakeDoc = {
     _id: new ObjectId(),
@@ -121,7 +125,7 @@ export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReaso
     failedAt: null,
     notifiedAt: null,
     // Locked org: queued as held, sent by the sweep once it's usable again.
-    ...(gated ? { gated: true, heldAt: now } : {}),
+    ...(gated ? { gated: true, heldAt: now } : off ? { heldAt: now } : {}),
   };
   try {
     await c.botWakes.insertOne(wake);
@@ -129,7 +133,7 @@ export async function dispatchWake(bot: BotDoc, org: OrgDoc, reason: QueuedReaso
     if ((err as { code?: number }).code === 11000) return; // the same hand-off is being sent right now
     throw err;
   }
-  if (!gated) await attempt(bot, org, wake);
+  if (!gated && !off) await attempt(bot, org, wake);
 }
 
 /** Is the org locked (VEC-263)? Then the wake-up is held rather than sent. Billing off never holds. */
@@ -146,6 +150,7 @@ export async function releaseHeld(bot: BotDoc, org: OrgDoc): Promise<number> {
   const c = await cols();
   let sent = 0;
   if (await gatedWake(org)) return 0;
+  if (!(await isBotEnabledNow(bot))) return 0; // VEC-344: held until the bot is enabled again
   for (let guard = 0; guard < 50; guard++) {
     const next = await c.botWakes.find({ botId: bot._id, heldAt: { $ne: null }, failedAt: null }).sort({ createdAt: 1, _id: 1 }).limit(1).next();
     if (!next) break;
@@ -202,11 +207,27 @@ async function releaseAllHeld(): Promise<number> {
       console.error("[bot wake] releasing held wake-ups failed", err);
     }
   }
-  // Triage: unmark and offer again once the org is usable (wakeTriage marks it again if it's still locked).
-  const held = await c.tasks.find({ "triageHeld.at": { $exists: true }, archivedAt: null }, { projection: { description: 0 } }).limit(50).toArray();
+  await releaseHeldTriage();
+
+  return sent;
+}
+
+/**
+ * Triage tasks held back (a locked org, VEC-263, or only disabled push triagers, VEC-344): unmark and offer again once
+ * the org is usable and an enabled push triager exists (wakeTriage marks it again if it still can't go out).
+ * `orgId` limits it to one org (a bot was just enabled there).
+ */
+async function releaseHeldTriage(orgId?: ObjectId) {
+  const c = await cols();
+  const held = await c.tasks.find({ ...(orgId ? { orgId } : {}), "triageHeld.at": { $exists: true }, archivedAt: null }, { projection: { description: 0 } }).limit(50).toArray();
+  const triagerCache = new Map<string, boolean>();
   for (const t of held) {
-    const org = await orgOf(t.orgId);
+    const org = await c.orgs.findOne({ _id: t.orgId });
     if (org && (await gatedWake(org))) continue;
+    const exclude = t.triageHeld!.exclude ?? null;
+    const cacheKey = `${hex(t.orgId)}:${exclude ? hex(exclude) : ""}`;
+    if (!triagerCache.has(cacheKey)) triagerCache.set(cacheKey, await hasEnabledPushTriager(t.orgId, exclude));
+    if (!triagerCache.get(cacheKey)) continue; // only disabled triagers: it keeps waiting in Triage
     const un = await c.tasks.updateOne({ _id: t._id, "triageHeld.at": t.triageHeld!.at }, { $set: { triageHeld: null } });
     if (!un.modifiedCount || t.stopped) continue;
     const [status, claim, project] = await Promise.all([
@@ -215,9 +236,42 @@ async function releaseAllHeld(): Promise<number> {
       c.projects.findOne({ _id: t.projectId }, { projection: { key: 1 } }),
     ]);
     if (status?.category !== "triage" || claim || !project) continue;
-    wakeTriage(t.orgId, { taskId: t._id, taskKey: `${project.key}-${t.number}`, title: t.title, by: "Aimpoint", ...(t.triageHeld!.exclude ? { exclude: t.triageHeld!.exclude } : {}) });
+    wakeTriage(t.orgId, { taskId: t._id, taskKey: `${project.key}-${t.number}`, title: t.title, by: "Aimpoint", ...(exclude ? { exclude } : {}) });
   }
-  return sent;
+}
+
+/** Is there an enabled, push-connected bot whose role allows check_for_triage (other than `exclude`)? */
+async function hasEnabledPushTriager(orgId: ObjectId, exclude: ObjectId | null): Promise<boolean> {
+  const c = await cols();
+  const roles = await c.botRoles.find({ orgId, "tools.check_for_triage": true }, { projection: { _id: 1 } }).toArray();
+  if (!roles.length) return false;
+  const bots = await c.bots
+    .find({ orgId, roleId: { $in: roles.map((r) => r._id) }, "connection.method": { $exists: true }, ...ENABLED_BOT_FILTER, ...(exclude ? { _id: { $ne: exclude } } : {}) }, { projection: { connection: 1 } })
+    .toArray();
+  return bots.some((b) => b.connection && isPush(b.connection.method));
+}
+
+/**
+ * VEC-344: a bot was just enabled again. The wake-ups it missed while disabled were queued as held (dispatchWake), so
+ * they go out now through the same release path as an unlocked org (oldest first, each re-checked as still owed);
+ * Triage tasks that waited for an enabled triager are offered again. Polling bots just get their work from
+ * check_for_work. Runs after the response; never throws into the caller.
+ */
+export function wakeReEnabledBot(bot: BotDoc, org: OrgDoc) {
+  const job = async () => {
+    try {
+      const sent = await releaseHeld(bot, org);
+      await releaseHeldTriage(org._id);
+      if (sent) console.info(`[bot wake] ${bot.name} enabled again: sent ${sent} held wake-up${sent === 1 ? "" : "s"}`);
+    } catch (err) {
+      console.error("[bot wake] re-enable", err);
+    }
+  };
+  try {
+    after(job);
+  } catch {
+    void job();
+  }
 }
 
 async function attempt(bot: BotDoc, org: OrgDoc, wake: BotWakeDoc) {
@@ -313,6 +367,11 @@ async function retryOne(wake: BotWakeDoc) {
     await c.botWakes.deleteOne({ _id: wake._id });
     return;
   }
+  // VEC-344: disabled while this was waiting for a retry: hold it (no attempt, no give-up) until it's enabled again.
+  if (!isBotEnabled(bot)) {
+    await c.botWakes.updateOne({ _id: wake._id }, { $set: { heldAt: new Date(), updatedAt: new Date() } });
+    return;
+  }
   const owed = await stillOwed(wake);
   if (owed === "drop") {
     await c.botWakes.deleteOne({ _id: wake._id });
@@ -363,7 +422,8 @@ async function actorName(id: ObjectId) {
  */
 async function reconcile(): Promise<number> {
   const c = await cols();
-  const pushBots = (await c.bots.find({ "connection.method": { $exists: true } }).toArray()).filter((b) => b.connection && isPush(b.connection.method));
+  // Disabled bots (VEC-344) are left out: their hand-offs are held, and sent when they're enabled again.
+  const pushBots = (await c.bots.find({ "connection.method": { $exists: true }, ...ENABLED_BOT_FILTER }).toArray()).filter((b) => b.connection && isPush(b.connection.method));
   if (!pushBots.length) return 0;
   const botById = new Map(pushBots.map((b) => [hex(b._id), b]));
   const botIds = pushBots.map((b) => b._id);

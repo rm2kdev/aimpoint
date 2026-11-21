@@ -9,6 +9,7 @@ import { isParked, parkedReason } from "@/lib/flow-engine";
 import { botNewTaskViews } from "@/lib/project-defaults";
 import { taskUrl as orgTaskUrl } from "@/lib/paths";
 import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
+import { isBotEnabled } from "@/lib/bot-enabled";
 import { decodeEntities as decode, htmlToMarkdown, markdownToHtml } from "@/lib/markdown-core";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 
@@ -21,6 +22,8 @@ export interface Person {
   email?: string;
   role?: string;
   description?: string;
+  /** VEC-344: a disabled bot. Kept so its name resolves on old tasks; left out of what agents are listed. */
+  disabled?: boolean;
 }
 
 /**
@@ -53,7 +56,7 @@ export async function loadDirectory(orgId: ObjectId): Promise<Directory> {
   const out = new Directory();
   for (const id of deleted) out.deleted.add(id);
   for (const u of users) out.set(u._id.toHexString(), { id: u._id.toHexString(), name: u.name, kind: "user", email: u.email, role: roles.get(u._id.toHexString()) });
-  for (const b of bots) out.set(b._id.toHexString(), { id: b._id.toHexString(), name: b.name, kind: "bot", description: b.description || undefined });
+  for (const b of bots) out.set(b._id.toHexString(), { id: b._id.toHexString(), name: b.name, kind: "bot", description: b.description || undefined, ...(isBotEnabled(b) ? {} : { disabled: true }) });
   return out;
 }
 

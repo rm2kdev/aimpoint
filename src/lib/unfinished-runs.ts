@@ -3,6 +3,7 @@ import type { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { unseal } from "@/lib/secrets";
 import { isPush } from "@/lib/bot-connect";
+import { isBotEnabled } from "@/lib/bot-enabled";
 import { hermesBase } from "@/lib/bot-dispatch";
 import { dispatchWake } from "@/lib/wake-queue";
 import { publishWorking } from "@/lib/claims";
@@ -98,6 +99,9 @@ async function checkClaim(claim: AgentClaimDoc): Promise<"followup" | "unfinishe
     await clear();
     return null;
   }
+  // VEC-344: a disabled bot isn't followed up (or marked unfinished) while it's off; the watch stays, so the check
+  // picks up again once it's enabled.
+  if (!isBotEnabled(bot)) return null;
   const status = await c.statuses.findOne({ _id: task.statusId }, { projection: { category: 1, name: 1 } });
   const ctx = task.flow?.paused ? null : await loadTaskFlow(task);
   const input: RunCheck = {

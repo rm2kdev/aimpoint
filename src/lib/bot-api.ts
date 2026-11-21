@@ -25,6 +25,8 @@ export interface BotCtx {
 export function botRoute<P>(handler: (req: Request, ctx: BotCtx, params: P) => Promise<unknown>, tool?: string) {
   return async (req: Request, routeCtx: { params: Promise<P> }) => {
     const auth = await authenticateBot(req);
+    // VEC-344: the key is right but the bot is disabled: 403 with the reason, nothing runs.
+    if (auth && "refused" in auth) return Response.json({ error: auth.error, disabled: true }, { status: 403 });
     if (!auth) {
       return Response.json(
         { error: "Missing or invalid API key. Send `Authorization: Bearer vec_…`." },

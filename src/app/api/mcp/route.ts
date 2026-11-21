@@ -61,6 +61,8 @@ async function handle(msg: RpcMessage, ctx: McpCtx) {
 
 export async function POST(req: Request) {
   const auth = await authenticateBot(req);
+  // VEC-344: the key is right but the bot is disabled: 403 with the reason, nothing runs.
+  if (auth && "refused" in auth) return Response.json(rpcError(null, -32003, auth.error), { status: 403 });
   if (!auth) {
     return Response.json(rpcError(null, -32001, "Missing or invalid API key. Send the bot's key as `Authorization: Bearer <key>`."), {
       status: 401,

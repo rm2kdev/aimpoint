@@ -5,6 +5,7 @@ import { UserError } from "@/lib/result";
 import { findTaskByKey, projectContext } from "@/lib/data";
 import { groupStatusesByProject, loadStatusWords, resolveProjectStatus, reviewWord, statusFilterIds } from "@/lib/statuses";
 import { toolsForBot } from "@/lib/bots";
+import { listedToAgents } from "@/lib/bot-enabled";
 import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, flowLastNote, wakeTriage } from "@/lib/bot-dispatch";
@@ -312,7 +313,8 @@ async function workspaceSummary(ctx: McpCtx) {
     })),
     newTasks: NEW_TASKS_NOTE,
     flows: FLOWS_NOTE,
-    people: [...dir.values()],
+    // Disabled bots (VEC-344) aren't offered: they can't be assigned or woken. The directory still names them.
+    people: listedToAgents([...dir.values()]),
   };
 }
 
@@ -972,7 +974,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   assign_task: {
     description:
-      'Assign a task to a person or bot (name, email or id), to yourself ("me"), or to nobody (null or "none"). Works on tasks you created or are assigned to. Once you hand a task you didn\'t create to someone else, you can only comment on it, so set its status first. A bot assigned to a task in a backlog-stage status (Backlog) isn\'t woken and the task doesn\'t move: it\'s parked, held until someone moves it to a not-started or started status (such as Todo), which hands it to the bot then.',
+      'Assign a task to a person or bot (name, email or id), to yourself ("me"), or to nobody (null or "none"). Works on tasks you created or are assigned to. A bot an admin has disabled can\'t be assigned (it\'s left out of get_workspace). Once you hand a task you didn\'t create to someone else, you can only comment on it, so set its status first. A bot assigned to a task in a backlog-stage status (Backlog) isn\'t woken and the task doesn\'t move: it\'s parked, held until someone moves it to a not-started or started status (such as Todo), which hands it to the bot then.',
     inputSchema: {
       type: "object",
       properties: { task: TASK_ARG, assignee: { type: ["string", "null"], description: 'Name, email, id, "me", or null / "none" to unassign.' } },

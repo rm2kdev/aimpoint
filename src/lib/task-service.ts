@@ -18,6 +18,7 @@ import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type
 import { requireFormDestination } from "@/lib/project-forms";
 import { plainTextToHtml as plainToHtml } from "@/lib/form-fields-core";
 import { assertNotStopped } from "@/lib/stop-guard";
+import { disabledAssigneeMessage, isBotEnabled } from "@/lib/bot-enabled";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -369,14 +370,18 @@ async function finishClaimsOnClose(orgId: ObjectId, taskId: ObjectId) {
   await c.agentClaims.updateMany(filter, { $set: { state: "done", finishedAt: now } });
 }
 
-/** Assignees can be org members or the org's bots. */
+/** Assignees can be org members or the org's enabled bots (a disabled bot keeps what it has, VEC-344). */
 async function assertAssignable(orgId: ObjectId, id: ObjectId) {
   const c = await cols();
   const [m, b] = await Promise.all([
     c.memberships.findOne({ orgId, userId: id }, { projection: { _id: 1 } }),
-    c.bots.findOne({ orgId, _id: id }, { projection: { _id: 1 } }),
+    c.bots.findOne({ orgId, _id: id }, { projection: { _id: 1, name: 1, disabledAt: 1 } }),
   ]);
   if (!m && !b) throw new UserError("That assignee isn't a member or bot of this organisation.");
+  if (b && !isBotEnabled(b)) {
+    const org = await c.orgs.findOne({ _id: orgId }, { projection: { name: 1 } });
+    throw new UserError(disabledAssigneeMessage(b.name, org?.name ?? "this organisation"));
+  }
 }
 
 export interface NewTaskInput {

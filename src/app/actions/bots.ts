@@ -20,7 +20,8 @@ import { orgPath } from "@/lib/paths";
 import { MCP_SERVER_NAME } from "@/lib/mcp-name";
 import { flowOwnerRemoved } from "@/lib/flows";
 import { assertOrgActive } from "@/lib/billing";
-import { botEnabledFlipFilter, botEnabledUpdate } from "@/lib/bot-enabled";
+import { botEnabledFlipFilter, botEnabledUpdate, disabledWakeMessage, isBotEnabled } from "@/lib/bot-enabled";
+import { wakeReEnabledBot } from "@/lib/wake-queue";
 
 export interface BotInput {
   name: string;
@@ -111,6 +112,8 @@ export async function setBotEnabled(slug: string, id: string, enabled: boolean):
     }
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
+    // VEC-344: back on, so the wake-ups it missed while disabled go out now (the held queue, like an unlocked org).
+    if (enabled) wakeReEnabledBot(bot, org);
     return toBot(bot);
   });
 }
@@ -277,6 +280,8 @@ export async function testBotConnection(slug: string, id: string): Promise<Resul
     const c = await cols();
     const bot = await c.bots.findOne({ _id: botId(id), orgId: org._id });
     if (!bot?.connection) throw new UserError("Set up a connection first.");
+    // VEC-344: a disabled bot isn't woken, not even by a test.
+    if (!isBotEnabled(bot)) throw new UserError(disabledWakeMessage(bot.name));
     await deliver(bot, org, { kind: "test" });
     return toBot((await c.bots.findOne({ _id: bot._id }))!);
   });

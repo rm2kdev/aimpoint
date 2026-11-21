@@ -16,6 +16,7 @@ import { billingOn, isOrgActive } from "@/lib/billing";
 import { atWaitStep, flowBriefing, isParked, type FlowBriefing } from "@/lib/flow-engine";
 import { DEFAULT_STATUS_WORDS, loadStatusWords, reviewWord, type StatusWords } from "@/lib/statuses";
 import { MCP_SERVER_NAME, mcpServerNameFor } from "@/lib/mcp-name";
+import { disabledWakeMessage, isBotEnabled, triageOrder } from "@/lib/bot-enabled";
 import { BOT_DELIVERY_HISTORY, isClosedCategory, type BotConnectionDoc, type BotDelivery, type BotDoc, type OrgDoc } from "@/lib/types";
 
 /**
@@ -190,9 +191,14 @@ export function wakeTriage(
           .toArray(),
       ]);
       if (!org) return;
-      const first = task.prefer ? bots.filter((b) => b._id.equals(task.prefer!)) : [];
-      const ordered = [...first, ...bots.filter((b) => !first.includes(b))];
-      const pushed = ordered.filter((b) => b.connection && isPush(b.connection.method));
+      // VEC-344: disabled triagers are skipped; the next enabled one gets it. With only disabled push triagers left,
+      // the task waits in Triage (marked triageHeld) and the wake sweep offers it once one is enabled again.
+      const pushBots = bots.filter((b) => b.connection && isPush(b.connection.method));
+      const { order: pushed, waiting } = triageOrder(pushBots, { prefer: task.prefer });
+      if (waiting) {
+        await c.tasks.updateOne({ _id: task.taskId, archivedAt: null }, { $set: { triageHeld: { at: new Date(), exclude: task.exclude ?? null } } });
+        return;
+      }
       // VEC-263: a locked (unpaid) org wakes no triager. The task is marked so the wake sweep offers it again once
       // the org is usable.
       if (pushed.length && (await billingOn()) && !isOrgActive(org)) {
@@ -200,7 +206,7 @@ export function wakeTriage(
         return;
       }
       for (const bot of pushed) {
-        const reason: WakeReason = { kind: "triage", taskId: task.taskId, taskKey: task.taskKey, title: task.title, by: task.by, ...(first.includes(bot) ? { resumed: true } : {}) };
+        const reason: WakeReason = { kind: "triage", taskId: task.taskId, taskKey: task.taskKey, title: task.title, by: task.by, ...(task.prefer && bot._id.equals(task.prefer) ? { resumed: true } : {}) };
         const claimId = new ObjectId();
         try {
           await c.agentClaims.insertOne({ _id: claimId, orgId, botId: bot._id, taskId: task.taskId, kind: "triage", state: "in_progress", claimedAt: new Date(), finishedAt: null });
@@ -240,6 +246,11 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
   const conn = bot.connection!;
   let out: BotDelivery;
   const meta = wake ? { wakeId: wake.wakeId, attempt: wake.attempt } : {};
+  // VEC-344: a disabled bot is never woken (the last line of defence: callers hold or skip it first). Only a stop
+  // signal still goes out, since it ends a run rather than starting one. Re-read, so a toggle mid-queue counts.
+  if (reason.kind !== "stopped" && !(await isBotEnabledNow(bot))) {
+    return { at: new Date(), ok: false, reason: reasonLabel(reason), error: disabledWakeMessage(bot.name), ...meta };
+  }
   try {
     const msg = await wakeMessage(bot, org, conn, reason);
     const res = await send(bot, org, conn, reason, msg, wake);
@@ -264,6 +275,13 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
     { $set: { "connection.lastDelivery": out }, $push: { "connection.deliveries": { $each: [out], $slice: -BOT_DELIVERY_HISTORY } } },
   );
   return out;
+}
+
+/** Whether the bot is enabled right now (the doc in hand may predate a toggle). */
+export async function isBotEnabledNow(bot: Pick<BotDoc, "_id" | "disabledAt">): Promise<boolean> {
+  if (!isBotEnabled(bot)) return false;
+  const fresh = await (await cols()).bots.findOne({ _id: bot._id }, { projection: { disabledAt: 1 } });
+  return !!fresh && isBotEnabled(fresh);
 }
 
 export function friendlyNetworkError(e: Error) {
