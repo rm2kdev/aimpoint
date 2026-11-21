@@ -6,11 +6,13 @@ import { useRouter } from "next/navigation";
 import { RichEditor } from "@/components/rich-editor";
 import { LogoMark } from "@/components/logo";
 import { PriorityIcon, ProjectDot, StatusRing, TypeTag } from "@/components/bits";
+import { StatusTrackBar } from "@/components/status-track-bar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { submitPublicTicket } from "@/app/actions/project-public";
 import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
+import { statusTrack } from "@/lib/status-track";
 import { TASK_TYPES, type PublicComment, type PublicProjectView, type PublicStatus, type PublicTask, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { loginHref, publicPageHref, signupHref } from "./href";
@@ -49,7 +51,6 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
   const slug = view.org.slug;
   const key = view.project.key;
   const statuses = useMemo(() => view.statuses.map(asStatus), [view.statuses]);
-  const statusOf = (t: PublicTask) => (t.status ? statuses.find((s) => s.id === t.status!.id) : undefined);
   const canSubmit = view.submitStatuses.length > 0;
   const here = publicPageHref(slug, key, { view: p.mode === "mine" ? "mine" : null, task: p.detail?.task.key });
   const submitHref = p.me ? publicPageHref(slug, key, { submit: true }) : loginHref(publicPageHref(slug, key, { submit: true }));
@@ -128,7 +129,7 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
         )}
 
         {p.mode === "task" && p.detail && (
-          <TaskDetail slug={slug} projectKey={key} task={p.detail.task} comments={p.detail.comments} status={statusOf(p.detail.task)} statuses={statuses} />
+          <TaskDetail slug={slug} projectKey={key} task={p.detail.task} comments={p.detail.comments} statuses={statuses} />
         )}
         {p.mode === "submit" && (
           <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} limits={p.limits} />
@@ -290,14 +291,12 @@ function TaskDetail({
   projectKey,
   task,
   comments,
-  status,
   statuses,
 }: {
   slug: string;
   projectKey: string;
   task: PublicTask;
   comments: PublicComment[] | null;
-  status: Status | undefined;
   statuses: Status[];
 }) {
   return (
@@ -308,12 +307,10 @@ function TaskDetail({
       <div className="mt-3 rounded-xl border border-border bg-background p-5 sm:p-7">
         <p className="font-mono text-[12px] text-faint">{task.key}</p>
         <h2 className="mt-1 text-[19px] leading-snug font-semibold tracking-[-0.015em] break-words">{task.title}</h2>
+        {/* The task pane's status bar (VEC-330), read-only: the public view carries no flow, so the track is the
+            project's statuses (statusTrack's no-flow fallback); no owners or step actions here. */}
+        <StatusTrackBar track={statusTrack({ statuses, statusId: task.status?.id ?? "" })} className="mt-4" />
         <dl className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12.5px] text-muted-foreground">
-          <div className="flex items-center gap-1.5">
-            <dt className="sr-only">Status</dt>
-            <StatusRing status={status} statuses={statuses} size={15} />
-            <dd className="text-foreground">{task.status?.name ?? "Unknown"}</dd>
-          </div>
           <div className="flex items-center">
             <dt className="sr-only">Type</dt>
             <dd>

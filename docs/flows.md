@@ -381,9 +381,19 @@ As built (`lib/flow-bot-view.ts` builds every JSON shape below; `lib/bot-api-too
   name for the default), owner picker (People / Bots / Any triage bot / Keep / Unassigned), advance mode,
   wait label + resolvers + reminder, required toggle, instructions (Markdown). Shows the in-flight task count
   per step; deleting a step with tasks on it asks where they go (like deleting a status).
-- Task pane: a stepper under the header (done / current / upcoming), "Complete step" or the wait label
-  button for the current owner, Pause/Resume flow in the menu; `flow_step` activity entries ("Hermes finished
-  Develop; handed to Testing Verification for Test").
+- Task pane: a status bar under the header on every task, flow or not (VEC-329/330). At a flow step it is the
+  flow's steps (done / current / upcoming) with Now/Next owners, "Complete step" or the wait label button for the
+  current owner. Otherwise (the project has no flow, the flow is paused, or the status is off the flow, e.g.
+  Cancelled) it falls back to the project's statuses in order with the current one highlighted (triage and
+  cancelled statuses only when the task is in one; on Cancelled the rest read "not reached"). Paused / off-flow /
+  stopped / archived are a note under the bar, never a replacement; archived and stopped tasks show it read-only.
+  Pause/Resume flow in the menu; `flow_step` activity entries ("Hermes finished Develop; handed to Testing
+  Verification for Test").
+- One renderer: `StatusTrackBar` (`src/components/status-track-bar.tsx`) draws the steps of a `statusTrack()`
+  (`src/lib/status-track.ts`); the pane's `TaskStatusBar` (`task-flow.tsx`) adds the flow rows and notes around it.
+  The public project page's ticket detail shows the same bar read-only from the status fallback (the public view
+  carries no flow, owners or actions). List rows, pickers and dependency/command-menu rows keep the one-icon
+  `StatusRing` / `TaskStatusRing`.
 - List rows: the step name as a small chip when it differs from the status name, "Waiting 6d" for wait steps.
 
 ## 8. Migration
