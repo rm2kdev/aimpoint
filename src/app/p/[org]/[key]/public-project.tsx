@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { TaskComposer, usePendingUploads } from "@/components/task-composer";
 import { LogoMark } from "@/components/logo";
+import { LinkedText } from "@/components/linked-text";
 import { PriorityIcon, ProjectDot, StatusRing, TypeTag } from "@/components/bits";
 import { StatusTrackBar } from "@/components/status-track-bar";
 import { Button } from "@/components/ui/button";
@@ -348,7 +349,9 @@ function TaskDetail({
                       {timeAgo(c.createdAt)}
                     </span>
                   </p>
-                  <p className="mt-1 text-[13.5px] whitespace-pre-wrap break-words">{c.body}</p>
+                  <p className="mt-1 text-[13.5px] whitespace-pre-wrap break-words">
+                    <LinkedText text={c.body} />
+                  </p>
                 </li>
               ))}
             </ol>

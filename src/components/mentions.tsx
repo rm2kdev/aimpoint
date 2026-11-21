@@ -11,6 +11,7 @@ import { botPickerEntries, disabledBotNote, DISABLED_BOT_HINT, isBotDisabled, st
 import { Button } from "@/components/ui/button";
 import { uploadImage } from "@/components/rich-editor";
 import { imageToken, insertBlock, splitCommentBody } from "@/lib/comment-images";
+import { LinkedText } from "@/components/linked-text";
 import type { Member } from "@/lib/types";
 
 /** Same types as the description editor's upload button (the server accepts these). */
@@ -36,7 +37,7 @@ interface Token {
 /* ---------- Rendering: <@id> tokens become chips, this org's upload images become thumbnails ---------- */
 
 /**
- * A comment: plain text, <@id> mention chips, and `![alt](url)` thumbnails for this org's uploads only (VEC-335;
+ * A comment: plain text with http(s) links (AIM-7), <@id> mention chips, and `![alt](url)` thumbnails for this org's uploads only (VEC-335;
  * any other URL, <img> tag or escaped `\![...]` stays text). `onExpandImage(n, opener)` opens the n-th image of
  * this comment in the thread gallery.
  */
@@ -52,7 +53,7 @@ export function CommentBody({ body, onExpandImage }: { body: string; onExpandIma
           <Fragment key={j}>
             {b.text.split(TOKEN).map((p, i) => {
               // [text, id, text, id, ...]
-              if (i % 2 === 0) return <Fragment key={i}>{p}</Fragment>;
+              if (i % 2 === 0) return <LinkedText key={i} text={p} />;
               const m = memberById.get(p);
               if (!m) return <span key={i} className="text-faint">@former member</span>;
               return <MentionChip key={i} member={m} isMe={m.id === me.id} />;
