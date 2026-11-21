@@ -20,6 +20,7 @@ import {
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
 import { CommentBody, MentionComposer } from "@/components/mentions";
+import { useThreadGallery, type OpenGallery } from "@/components/thread-gallery";
 import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
@@ -67,6 +68,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const [confirmDelete, setConfirmDelete] = useState(false);
   const canRetry = useCanRetry(task);
   const retry = useRetryTask();
+  // VEC-335: one lightbox over the thread's images (description, then comments oldest first).
+  const gallery = useThreadGallery(task?.description ?? "", feed);
   // The flow actions (VEC-183) answer with the moved task: update the list and this pane before the broadcast lands.
   const onFlowTask = (t: Task) => {
     onTask(t);
@@ -525,6 +528,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               placeholder={canEdit ? "Add a description…" : "No description"}
               value={task.description}
               syncKey={descSync}
+              onExpandImage={(images, index, opener) => gallery.open({ from: "description", index, images }, opener)}
               onChange={(html) => {
                 pendingDesc.current = html;
                 setSaveState("idle");
@@ -537,7 +541,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </p>
           </div>
 
-          <Feed feed={feed} source={task.source ?? null} />
+          <Feed feed={feed} source={task.source ?? null} onExpandImage={gallery.open} />
           <MentionComposer
             onSend={async (body) => {
               const r = await addComment(org.slug, task.id, body);
@@ -549,6 +553,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               return true;
             }}
           />
+          {gallery.lightbox}
         </div>
       </div>
 
@@ -752,7 +757,7 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
   );
 }
 
-function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null }) {
+function Feed({ feed, source, onExpandImage }: { feed: FeedItem[]; source: TaskSource | null; onExpandImage: OpenGallery }) {
   const { memberById, statusById, projectById, me } = useOrg();
   const [, tick] = useState(0);
   useEffect(() => {
@@ -927,7 +932,7 @@ function Feed({ feed, source }: { feed: FeedItem[]; source: TaskSource | null })
                     f.mentions?.includes(me.id) && "border-selected-foreground/25",
                   )}
                 >
-                  <CommentBody body={f.body ?? ""} />
+                  <CommentBody body={f.body ?? ""} onExpandImage={(index, opener) => onExpandImage({ from: "comment", id: f.id, index }, opener)} />
                 </div>
               </div>
             </li>

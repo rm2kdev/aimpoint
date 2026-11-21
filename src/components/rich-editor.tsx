@@ -120,6 +120,7 @@ export function RichEditor({
   images = true,
   onUploadError,
   onTextChange,
+  onExpandImage,
   ariaLabel = "Description",
 }: {
   /** Org whose session upload (`POST /api/uploads`) is used when no `upload` is given. */
@@ -140,6 +141,8 @@ export function RichEditor({
   onUploadError?: (message: string) => void;
   /** Plain text of the content on every change (for counters that count text, not HTML). */
   onTextChange?: (text: string) => void;
+  /** Opens a lightbox the caller owns (VEC-335: the task pane's thread gallery) instead of this editor's own. */
+  onExpandImage?: (images: LightboxImage[], index: number, opener: HTMLElement) => void;
   ariaLabel?: string;
 }) {
   const onChangeRef = useRef(onChange);
@@ -152,6 +155,10 @@ export function RichEditor({
     uploadRef.current = { upload: upload ?? ((file) => uploadImage(orgSlug, file)), images, onError: onUploadError, onText: onTextChange };
   });
   const doUpload: ImageUploader = (file) => uploadRef.current.upload(file);
+  const expandRef = useRef(onExpandImage);
+  useEffect(() => {
+    expandRef.current = onExpandImage;
+  });
 
   // Lightbox over every image in this editor (VEC-334), opened from an image's expand button.
   const [lightbox, setLightbox] = useState<{ images: LightboxImage[]; index: number; open: boolean; opener: HTMLElement | null }>({
@@ -223,7 +230,9 @@ export function RichEditor({
         if (at === pos) index = list.length;
         list.push({ src: String(node.attrs.src), alt: String(node.attrs.alt ?? "") });
       });
-      if (list.length) setLightbox({ images: list, index, open: true, opener: button });
+      if (!list.length) return;
+      if (expandRef.current) expandRef.current(list, index, button);
+      else setLightbox({ images: list, index, open: true, opener: button });
     };
     root.addEventListener(EXPAND_IMAGE_EVENT, onExpand);
     return () => root.removeEventListener(EXPAND_IMAGE_EVENT, onExpand);

@@ -11,6 +11,7 @@ import { taskUrl as orgTaskUrl } from "@/lib/paths";
 import { DELETED_USER_NAME, loadDeletedUserIds } from "@/lib/deleted-users";
 import { isBotEnabled } from "@/lib/bot-enabled";
 import { decodeEntities as decode, htmlToMarkdown, markdownToHtml } from "@/lib/markdown-core";
+import { commentImages } from "@/lib/comment-images";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 
 /* ---------------- people directory ---------------- */
@@ -170,6 +171,19 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const block = opts.includeImages !== false && blocks.length < MAX_IMAGES ? await loadImage(orgHex, src) : null;
     if (block) blocks.push(block);
     images.push({ index: i + 1, url: src.startsWith("/") ? `${opts.origin}${src}` : src, attached: !!block });
+  }
+  // Comment images (VEC-335): this org's uploads only, attached after the description's within the same cap.
+  const commentImageList = new Map<string, { url: string; attached: boolean }[]>();
+  for (const cm of comments) {
+    const own = commentImages(cm.body, orgHex);
+    if (!own.length) continue;
+    const list: { url: string; attached: boolean }[] = [];
+    for (const { src } of own) {
+      const block = opts.includeImages !== false && blocks.length < MAX_IMAGES ? await loadImage(orgHex, src) : null;
+      if (block) blocks.push(block);
+      list.push({ url: src.startsWith("/") ? `${opts.origin}${src}` : src, attached: !!block });
+    }
+    commentImageList.set(cm._id.toHexString(), list);
   }
 
   const describe = (a: ActivityDoc) => {
@@ -336,6 +350,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       body: renderBody(cm.body, dir),
       mentions: (cm.mentions ?? []).map((m) => personRef(dir, m)),
       mentionsYou: !!cm.mentions?.some((m) => m.equals(bot._id)),
+      images: commentImageList.get(cm._id.toHexString()),
       new: highlight.has(cm._id.toHexString()) || undefined,
       createdAt: cm.createdAt.toISOString(),
     })),

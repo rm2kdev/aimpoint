@@ -2,11 +2,18 @@
 
 import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ImagePlusIcon, Maximize2Icon } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { BotAvatar, Kbd, UserAvatar } from "@/components/bits";
 import { Button } from "@/components/ui/button";
+import { uploadImage } from "@/components/rich-editor";
+import { imageToken, insertBlock, splitCommentBody } from "@/lib/comment-images";
 import type { Member } from "@/lib/types";
+
+/** Same types as the description editor's upload button (the server accepts these). */
+const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/avif";
 
 const TOKEN = /<@([a-f0-9]{24})>/g;
 
@@ -25,20 +32,56 @@ interface Token {
   end: number;
 }
 
-/* ---------- Rendering: <@id> tokens become chips ---------- */
+/* ---------- Rendering: <@id> tokens become chips, this org's upload images become thumbnails ---------- */
 
-export function CommentBody({ body }: { body: string }) {
-  const { memberById, me } = useOrg();
-  const parts = body.split(TOKEN); // [text, id, text, id, ...]
+/**
+ * A comment: plain text, <@id> mention chips, and `![alt](url)` thumbnails for this org's uploads only (VEC-335;
+ * any other URL, <img> tag or escaped `\![...]` stays text). `onExpandImage(n, opener)` opens the n-th image of
+ * this comment in the thread gallery.
+ */
+export function CommentBody({ body, onExpandImage }: { body: string; onExpandImage?: (index: number, opener: HTMLElement) => void }) {
+  const { memberById, me, org } = useOrg();
+  const blocks = useMemo(() => splitCommentBody(body, org.id), [body, org.id]);
   return (
     <>
-      {parts.map((p, i) => {
-        if (i % 2 === 0) return <Fragment key={i}>{p}</Fragment>;
-        const m = memberById.get(p);
-        if (!m) return <span key={i} className="text-faint">@former member</span>;
-        return <MentionChip key={i} member={m} isMe={m.id === me.id} />;
-      })}
+      {blocks.map((b, j) =>
+        b.kind === "image" ? (
+          <CommentImage key={j} src={b.src} alt={b.alt} onExpand={onExpandImage && ((el) => onExpandImage(b.index, el))} />
+        ) : (
+          <Fragment key={j}>
+            {b.text.split(TOKEN).map((p, i) => {
+              // [text, id, text, id, ...]
+              if (i % 2 === 0) return <Fragment key={i}>{p}</Fragment>;
+              const m = memberById.get(p);
+              if (!m) return <span key={i} className="text-faint">@former member</span>;
+              return <MentionChip key={i} member={m} isMe={m.id === me.id} />;
+            })}
+          </Fragment>
+        ),
+      )}
     </>
+  );
+}
+
+/** A comment image: a lazy thumbnail with the same bottom-right expand button as description images (VEC-334). */
+function CommentImage({ src, alt, onExpand }: { src: string; alt: string; onExpand?: (opener: HTMLElement) => void }) {
+  return (
+    <span className="aimpoint-image relative my-1.5 block w-fit max-w-full" data-comment-image="">
+      {/* eslint-disable-next-line @next/next/no-img-element -- user uploads of any size, served by our own route */}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        onClick={onExpand && ((e) => onExpand(e.currentTarget.nextElementSibling as HTMLElement))}
+        className={cn("block max-h-60 max-w-full rounded-lg border border-border bg-background object-contain", onExpand && "cursor-zoom-in")}
+      />
+      {onExpand && (
+        <button type="button" className="aimpoint-image-expand" aria-label={alt ? `Expand image: ${alt}` : "Expand image"} title="Expand image" onClick={(e) => onExpand(e.currentTarget)}>
+          <Maximize2Icon aria-hidden />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -68,13 +111,16 @@ function MentionChip({ member, isMe }: { member: Member; isMe: boolean }) {
 /* ---------- Composer with @ autocomplete ---------- */
 
 export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<boolean> }) {
-  const { members, me } = useOrg();
+  const { members, me, org } = useOrg();
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Member[]>([]);
   const [token, setToken] = useState<Token | null>(null);
   const query = token?.query ?? null;
   const [active, setActive] = useState(0);
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(0);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -202,8 +248,40 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
       .sort((a, b) => b.name.length - a.name.length)
       .reduce((acc, m) => acc.split(`@${m.name}`).join(`<@${m.id}>`), s);
 
+  /**
+   * Uploads images (paste, drop or the attach button) with the description editor's upload and toasts, and puts
+   * a `![name](url)` token on its own line at the caret once each one is stored (VEC-335).
+   */
+  const attach = (files: File[]) => {
+    const imgs = files.filter((f) => f.type.startsWith("image/"));
+    if (!imgs.length) return false;
+    for (const file of imgs) {
+      const id = toast.loading(`Uploading ${file.name || "image"}…`);
+      setUploading((n) => n + 1);
+      uploadImage(org.slug, file)
+        .then((url) => {
+          const el = ref.current;
+          const value = el?.value ?? "";
+          // A blurred textarea keeps its selection, so this is where the caret was (end of the text by default).
+          const from = el?.selectionStart ?? value.length;
+          const to = el?.selectionEnd ?? value.length;
+          const next = insertBlock(value, from, to, imageToken(file.name, url));
+          setText(next.text);
+          setTimeout(() => {
+            el?.focus();
+            el?.setSelectionRange(next.caret, next.caret);
+            autosize();
+          }, 0);
+          toast.success("Image added", { id, duration: 1500 });
+        })
+        .catch((e: Error) => toast.error(e.message, { id }))
+        .finally(() => setUploading((n) => n - 1));
+    }
+    return true;
+  };
+
   const send = async () => {
-    if (!text.trim() || sending) return;
+    if (!text.trim() || sending || uploading) return;
     setSending(true);
     if (await onSend(encode(text))) {
       setText("");
@@ -243,7 +321,25 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           </div>,
           document.body,
         )}
-      <div ref={boxRef} data-keyboard-reveal className="scroll-mb-3 rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+      <div
+        ref={boxRef}
+        data-keyboard-reveal
+        className={cn(
+          "scroll-mb-3 rounded-[10px] border border-input bg-background transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
+          dragOver && "border-ring ring-2 ring-ring/20",
+        )}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setDragOver(true);
+        }}
+        onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDragOver(false)}
+        onDrop={(e) => {
+          setDragOver(false);
+          if (attach(Array.from(e.dataTransfer.files))) e.preventDefault();
+        }}
+      >
         {/* The textarea's own text is transparent; this mirror draws the same text underneath with the
             picked @mentions highlighted. Both share font, padding, line height and wrapping exactly. */}
         <div className="relative">
@@ -289,6 +385,9 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
             detect(e.target, true);
           }}
           onClick={() => detect()}
+          onPaste={(e) => {
+            if (attach(Array.from(e.clipboardData.files))) e.preventDefault();
+          }}
           onBlur={() => setTimeout(() => setToken(null), 120)}
           onKeyDown={(e) => {
             if (open) {
@@ -313,11 +412,31 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
             "selection:bg-[color-mix(in_srgb,var(--brand)_28%,transparent)] selection:text-transparent",
           )}
         />
+          <button
+            type="button"
+            aria-label="Attach image"
+            title="Attach image"
+            onClick={() => fileInput.current?.click()}
+            className="absolute top-1.5 right-1.5 grid size-7 place-items-center rounded-md text-faint transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 focus-visible:outline-none"
+          >
+            <ImagePlusIcon className="size-4" aria-hidden />
+          </button>
+          <input
+            ref={fileInput}
+            type="file"
+            accept={IMAGE_ACCEPT}
+            multiple
+            hidden
+            onChange={(e) => {
+              attach(Array.from(e.target.files ?? []));
+              e.target.value = "";
+            }}
+          />
         </div>
-        <div className={cn("flex items-center justify-end gap-2 px-2 pb-2", !text.trim() && "hidden")}>
+        <div className={cn("flex items-center justify-end gap-2 px-2 pb-2", !text.trim() && !uploading && "hidden")}>
           <Kbd>⌘↵</Kbd>
-          <Button size="sm" onClick={send} disabled={sending}>
-            {sending ? "Sending…" : "Comment"}
+          <Button size="sm" onClick={send} disabled={sending || uploading > 0}>
+            {sending ? "Sending…" : uploading ? "Uploading…" : "Comment"}
           </Button>
         </div>
       </div>
@@ -326,7 +445,7 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
 }
 
 /** Typography shared by the textarea and its highlight mirror; any drift misaligns the highlight. */
-const MIRROR = "px-3 pt-2.5 pb-2.5 font-sans text-[13.5px] pointer-coarse:text-[16px] leading-[20px] tracking-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
+const MIRROR = "pl-3 pr-10 pt-2.5 pb-2.5 font-sans text-[13.5px] pointer-coarse:text-[16px] leading-[20px] tracking-normal whitespace-pre-wrap break-words [overflow-wrap:anywhere]";
 
 function highlightSegments(text: string, picked: Member[]) {
   const names = [...picked].sort((a, b) => b.name.length - a.name.length);
