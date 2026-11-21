@@ -8,7 +8,7 @@ import { loadOrgDefaults } from "@/lib/org-defaults";
 import { loadClientFlows } from "@/lib/flow-view";
 import { loadBillingSummary } from "@/lib/billing-summary";
 import { sweepSeatSyncsSoon } from "@/lib/seat-sync";
-import { changelogFor } from "@/lib/changelog";
+import { changelogFor, changelogUnseenCount } from "@/lib/changelog";
 import { OrgProvider } from "@/components/org-provider";
 import { AppShell } from "@/components/app-shell";
 import { SubscribeGate } from "@/components/subscribe-gate";
@@ -45,6 +45,7 @@ export default async function OrgLayout({ children, params }: LayoutProps<"/o/[o
       flows={flows}
       billing={billing}
       changelog={changelogFor(user)}
+      changelogUnseen={changelogUnseenCount(user)}
       counts={shell.counts}
       unread={unread}
       workload={workload}

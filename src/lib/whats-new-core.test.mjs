@@ -27,6 +27,8 @@ const {
   slideAnnouncement,
   slideForKey,
   WHATS_NEW_PARAM,
+  whatsNewBadge,
+  whatsNewBadgeLabel,
   withoutWhatsNewParam,
 } = await import("./whats-new-core.ts");
 
@@ -148,4 +150,22 @@ test("withoutWhatsNewParam strips only the deep link and keeps the rest in order
   assert.equal(withoutWhatsNewParam("?task=VEC-1&whats-new=2026-11-21&view=list"), "?task=VEC-1&view=list");
   assert.equal(withoutWhatsNewParam("?whats-new=all&whats-new=x&q=a+b"), "?q=a+b");
   assert.equal(withoutWhatsNewParam("?task=VEC-1"), "?task=VEC-1");
+});
+
+test("whatsNewBadge: nothing for 0, New for 1, the number up to 9, 9+ above (VEC-388)", () => {
+  assert.equal(whatsNewBadge(0), null);
+  assert.equal(whatsNewBadge(1), "New");
+  assert.equal(whatsNewBadge(2), "2");
+  assert.equal(whatsNewBadge(9), "9");
+  assert.equal(whatsNewBadge(10), "9+");
+  assert.equal(whatsNewBadge(-3), null);
+  assert.equal(whatsNewBadge(Number.NaN), null);
+});
+
+test("whatsNewBadgeLabel: singular, plural with the real count, null for 0 (VEC-388)", () => {
+  assert.equal(whatsNewBadgeLabel(0), null);
+  assert.equal(whatsNewBadgeLabel(1), "1 new update");
+  assert.equal(whatsNewBadgeLabel(2), "2 new updates");
+  assert.equal(whatsNewBadgeLabel(9), "9 new updates");
+  assert.equal(whatsNewBadgeLabel(10), "10 new updates");
 });

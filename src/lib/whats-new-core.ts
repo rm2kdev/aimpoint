@@ -1,6 +1,6 @@
 // Pure helpers for the "What's new" pop-up (VEC-374): slide stepping, the milestone's lightbox gallery, the
 // release date line, the screen-reader announcement, the "All updates" history rows (VEC-377) and the `?whats-new=`
-// deep link (VEC-384). No DOM or React, so `pnpm test` (node --test) covers it.
+// deep link (VEC-384) and the sidebar's unseen-update badge (VEC-388). No DOM or React, so `pnpm test` (node --test) covers it.
 // The milestone model and who-sees-what rules live in lib/changelog-core.ts (VEC-373); docs/changelog.md.
 
 import { sortMilestones, type ChangelogMilestone } from "./changelog-core";
@@ -133,4 +133,25 @@ export function withoutWhatsNewParam(search: string): string {
   params.delete(WHATS_NEW_PARAM);
   const rest = params.toString();
   return rest ? `?${rest}` : "";
+}
+
+/** The most the sidebar badge spells out; above it reads "9+". */
+export const WHATS_NEW_BADGE_MAX = 9;
+
+/**
+ * What the sidebar's What's new badge shows for `count` unseen milestones (VEC-388): nothing for 0, "New" for one,
+ * the number for 2..9 and "9+" above. Non-numbers and negatives count as 0.
+ */
+export function whatsNewBadge(count: number): string | null {
+  const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (n === 0) return null;
+  if (n === 1) return "New";
+  return n > WHATS_NEW_BADGE_MAX ? `${WHATS_NEW_BADGE_MAX}+` : String(n);
+}
+
+/** Screen-reader text for the badge: "1 new update" / "N new updates" (the real count, not "9+"), or null for 0. */
+export function whatsNewBadgeLabel(count: number): string | null {
+  const n = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0;
+  if (n === 0) return null;
+  return n === 1 ? "1 new update" : `${n} new updates`;
 }

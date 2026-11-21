@@ -78,6 +78,12 @@ interface Ctx {
    * released after they joined), or null for no pop-up. Arrives with the org layout, so navigating costs nothing.
    */
   changelog: ChangelogMilestone | null;
+  /**
+   * How many milestones the signed-in person hasn't seen (VEC-388), counted by the same rule as `changelog`
+   * (per person, from UserDoc.changelogSeen). 0 when `changelog` is null, and 0 at once after dismissChangelog():
+   * the marker moves to the newest unseen milestone, which covers every older one. Render with whatsNewBadge().
+   */
+  changelogUnseen: number;
   /** Dismiss `changelog`: hidden here at once, saved with the dismissChangelog action (forward only, idempotent). */
   dismissChangelog: () => Promise<Result<{ seen: string | null }>>;
 }
@@ -100,6 +106,7 @@ export type OrgBase = Omit<
   | "reorderProjects"
   | "billing"
   | "changelog"
+  | "changelogUnseen"
   | "dismissChangelog"
 >;
 
@@ -145,6 +152,7 @@ export function OrgProvider({
   flows: serverFlows,
   billing: serverBilling,
   changelog: serverChangelog = null,
+  changelogUnseen: serverChangelogUnseen = 0,
   counts: initialCounts,
   unread: initialUnread,
   workload: initialWorkload,
@@ -164,6 +172,7 @@ export function OrgProvider({
   flows?: Record<string, ResolvedFlow>;
   billing?: BillingSummary;
   changelog?: ChangelogMilestone | null;
+  changelogUnseen?: number;
   counts: Counts;
   unread: number;
   workload: WorkloadSnapshot;
@@ -347,6 +356,8 @@ export function OrgProvider({
   if ((stableChangelog?.id ?? null) !== (serverChangelog?.id ?? null)) setStableChangelog(serverChangelog);
   const changelog = stableChangelog && !(dismissedChangelog && stableChangelog.id <= dismissedChangelog) ? stableChangelog : null;
   const changelogId = changelog?.id ?? null;
+  // `changelog` is the newest unseen milestone, so once it is dismissed (or the server says none) nothing is unseen.
+  const changelogUnseen = changelog ? Math.max(1, serverChangelogUnseen) : 0;
   const dismissChangelog = useCallback(async (): Promise<Result<{ seen: string | null }>> => {
     if (!changelogId) return { ok: true, data: { seen: dismissedChangelog } };
     setDismissedChangelog((cur) => (cur && cur >= changelogId ? cur : changelogId));
@@ -386,9 +397,10 @@ export function OrgProvider({
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
       changelog,
+      changelogUnseen,
       dismissChangelog,
     }),
-    [base, projects, reorderProjects, billing, counts, unread, setUnread, connected, online, workloadSnap, changelog, dismissChangelog],
+    [base, projects, reorderProjects, billing, counts, unread, setUnread, connected, online, workloadSnap, changelog, changelogUnseen, dismissChangelog],
   );
   return (
     <OrgBaseCtx.Provider value={base}>

@@ -122,12 +122,32 @@ page: the changelog is product-level and the dialog already carries the slide vi
   `OpenWhatsNewContext` value `{latest, history}`). Row data comes from `historyRows` in `src/lib/whats-new-core.ts`
   (tested in `whats-new-core.test.mjs`).
 
+## Unseen count (sidebar badge)
+
+The sidebar's What's new item can show how many milestones the person hasn't seen yet (VEC-388), so a release
+doesn't hide behind a small dot.
+
+- The count is `unseenMilestones(MILESTONES, user.changelogSeen, user.createdAt).length`: the same rule as the
+  pop-up (milestones whose id sorts after the person's seen marker and that were released after the account was
+  created), so it is per person, never per org. `changelogUnseenCount(user)` in `src/lib/changelog.ts` computes it.
+- New signups are stamped at signup and see 0. An existing account with no marker counts every milestone released
+  after it was created. It is 0 whenever there is no pop-up milestone.
+- It clears when the person dismisses the pop-up milestone (closing the auto pop-up, or any opening that showed
+  the unseen milestone, see above): the marker moves to the newest unseen milestone, and every older one sorts
+  before it, so they all count as seen. In the tab it drops to 0 at once, before the save lands. Browsing the list
+  or an older milestone doesn't clear it. A new release raises it again on the next page load (it ships with the
+  deploy).
+- Render it with `whatsNewBadge(count)` (`src/lib/whats-new-core.ts`): nothing for 0, "New" for 1, the number for
+  2 to 9, "9+" above. `whatsNewBadgeLabel(count)` is the screen-reader text ("1 new update" / "N new updates",
+  always the real number).
+
 ## Where the data flows
 
 - `src/app/o/[org]/layout.tsx` computes `changelogFor(user)` from the user document it already loaded, and passes
   it to `OrgProvider` as `changelog`. It arrives with the app shell on every org page and costs no extra query or
-  request when navigating.
-- Client components read `const { changelog, dismissChangelog } = useOrg()`. `changelog` is the milestone to show
-  (or null); `dismissChangelog()` hides it in the tab at once and saves the marker.
+  request when navigating. `changelogUnseenCount(user)` goes along as `changelogUnseen` the same way.
+- Client components read `const { changelog, changelogUnseen, dismissChangelog } = useOrg()`. `changelog` is the
+  milestone to show (or null), `changelogUnseen` how many are unseen (0 when `changelog` is null);
+  `dismissChangelog()` hides it in the tab at once, drops the count to 0 and saves the marker.
 - Screenshots are plain static files. `/changelog` is excluded from the legacy `/:org` redirect in
   `next.config.ts`, which would otherwise send `/changelog/...` to `/o/changelog/...`.
