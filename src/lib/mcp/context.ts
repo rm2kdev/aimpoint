@@ -346,6 +346,8 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
     description,
+    /** VEC-403: the triager's plan (VEC-402 field) as Markdown, next to the untouched description; null when unset. */
+    plan: task.triagePlan ? htmlToMarkdown(task.triagePlan) : null,
     images,
     comments: comments.map((cm) => ({
       id: cm._id.toHexString(),

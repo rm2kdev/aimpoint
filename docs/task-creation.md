@@ -132,3 +132,11 @@ surface passes its extras as props/slots and keeps nothing of its own for title,
 
 Internal-only fields (assignee, priority, due date, dependencies) exist only in the in-app property row; the public
 surfaces never render or send them.
+
+## After creation: the description stays the reporter's (VEC-401..403)
+
+Whatever surface a task came from, its description is the original report. Triage does not replace it: the triage
+bot writes its breakdown into the separate plan field (`TaskDoc.triagePlan`, MCP `update_task` `plan`, REST PATCH
+`plan`), which get_task returns as `plan` (Markdown, null when unset) beside the untouched `description`. A triaging
+bot that sends `description` is refused with guidance to use `plan`; the creator and admins can still edit the
+description, and each change keeps the previous text in a `description` activity entry (see `docs/flows.md` 5.5).

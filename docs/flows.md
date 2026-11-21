@@ -255,6 +255,13 @@ The status changes made by pickup are "within the step" and don't re-position it
   - No dependencies (the triager decided it's one task) -> normal advance to the next step, unless the
     triager assigned it explicitly during the triage (explicit beats flow).
 - Re-entering Triage (`enterTriage`) re-positions the task at the triage step and clears `paused`.
+- The triager never rewrites the reporter's description (VEC-401..403). Its write-up goes in the task's separate
+  plan field (`TaskDoc.triagePlan`, Markdown in via MCP `update_task` `plan` / REST PATCH `plan`, sanitised like the
+  description). While a bot holds the triage claim `description` is not in `TRIAGE_FIELDS`, so update_task refuses it
+  with "While triaging you can't replace the reporter's description; put your plan in `plan` instead."; the creator
+  and admins can still edit both. get_task / the wake-up context carry `plan` (null when unset) next to the untouched
+  `description`, and every description or plan change writes an activity entry (kinds `description` / `plan`) that
+  keeps the replaced text. TRIAGE_STEPS step 4, check_for_triage and the server instructions all say to set `plan`.
 
 ### 5.6 Manual edits by people (the flow must not fight them)
 
