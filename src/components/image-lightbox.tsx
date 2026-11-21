@@ -341,7 +341,7 @@ function Viewer({ images, start, onClose }: { images: LightboxImage[]; start: nu
       </div>
 
       {/* Top bar: counter left, zoom + close right. The bar itself lets gestures through to the stage. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 px-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] sm:px-4">
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-center justify-between gap-2 pt-[calc(env(safe-area-inset-top)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pl-[calc(env(safe-area-inset-left)+0.75rem)] sm:pr-[calc(env(safe-area-inset-right)+1rem)] sm:pl-[calc(env(safe-area-inset-left)+1rem)]">
         <span className="pointer-events-auto min-w-0 rounded-full bg-black/45 px-2.5 py-1 text-[13px] font-medium tabular-nums text-white/90 ring-1 ring-white/15" aria-live="polite" hidden={n < 2}>
           {index + 1} / {n}
         </span>
@@ -372,10 +372,10 @@ function Viewer({ images, start, onClose }: { images: LightboxImage[]; start: nu
 
       {n > 1 && (
         <>
-          <Control label="Previous image" onClick={() => go(-1)} className="absolute top-1/2 left-2 size-11 -translate-y-1/2 sm:left-3">
+          <Control label="Previous image" onClick={() => go(-1)} className="absolute top-1/2 left-[calc(env(safe-area-inset-left)+0.5rem)] size-11 -translate-y-1/2 sm:left-[calc(env(safe-area-inset-left)+0.75rem)]">
             <ChevronLeftIcon />
           </Control>
-          <Control label="Next image" onClick={() => go(1)} className="absolute top-1/2 right-2 size-11 -translate-y-1/2 sm:right-3">
+          <Control label="Next image" onClick={() => go(1)} className="absolute top-1/2 right-[calc(env(safe-area-inset-right)+0.5rem)] size-11 -translate-y-1/2 sm:right-[calc(env(safe-area-inset-right)+0.75rem)]">
             <ChevronRightIcon />
           </Control>
         </>

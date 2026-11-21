@@ -240,6 +240,8 @@ export function WhatsNewDialog({
             // Phones: a full-height sheet (no centring transform), clear of the notch and the home indicator.
             "max-sm:inset-0 max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:ring-0",
             "max-sm:pt-[env(safe-area-inset-top)] max-sm:pr-[env(safe-area-inset-right)] max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-[env(safe-area-inset-left)]",
+            // DialogContent's X is absolute against the padding box, so the inset padding doesn't move it: offset it too (VEC-395).
+            "max-sm:[&>[data-slot=dialog-close]]:top-[calc(env(safe-area-inset-top)+0.5rem)] max-sm:[&>[data-slot=dialog-close]]:right-[calc(env(safe-area-inset-right)+0.5rem)]",
           )}
         >
           {history ? (
