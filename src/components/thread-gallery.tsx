@@ -13,9 +13,10 @@ export type OpenGallery = (target: GalleryTarget, opener: HTMLElement | null) =>
 /**
  * One lightbox over the whole task thread (VEC-335): description images first, then comment images oldest to
  * newest, so prev/next walks across both. The task pane owns it and hands `open` to the description editor and
- * the comment feed; `lightbox` is the element to render. The list is taken when it opens.
+ * the comment feed; `lightbox` is the element to render. The list is taken when it opens; `description` is read
+ * then too, so it can return the editor's live html (VEC-370).
  */
-export function useThreadGallery(description: string, feed: FeedItem[]): { open: OpenGallery; lightbox: React.ReactNode } {
+export function useThreadGallery(description: () => string, feed: FeedItem[]): { open: OpenGallery; lightbox: React.ReactNode } {
   const { org } = useOrg();
   const [state, setState] = useState<{ images: LightboxImage[]; index: number; open: boolean; opener: HTMLElement | null }>({
     images: [],
@@ -25,7 +26,7 @@ export function useThreadGallery(description: string, feed: FeedItem[]): { open:
   });
   const open = useCallback<OpenGallery>(
     (target, opener) => {
-      const desc = target.from === "description" && target.images ? target.images : collectImages(description);
+      const desc = target.from === "description" && target.images ? target.images : collectImages(description());
       const comments = feed.filter((f) => f.kind === "comment").map((f) => ({ id: f.id, body: f.body ?? "" }));
       const { images, offsets } = threadGallery(desc, comments, org.id);
       const index = target.from === "description" ? target.index : (offsets.get(target.id) ?? -1) + target.index;

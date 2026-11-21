@@ -78,6 +78,15 @@ export function insertBlock(text: string, from: number, to: number, token: strin
 }
 
 /**
+ * The description html the thread gallery collects from (VEC-370): the pane's latest local edit when there is
+ * one (saved or still debouncing), else the task's stored description. Our own saves aren't echoed back to the
+ * pane, so reading only the stored value missed images just added there.
+ */
+export function galleryDescription(stored: string, edited: string | null | undefined): string {
+  return edited ?? stored;
+}
+
+/**
  * One gallery over the whole thread (VEC-335): the description's images, then each comment's images, oldest
  * comment first. `offsets` maps a comment id to the gallery index of its first image.
  */

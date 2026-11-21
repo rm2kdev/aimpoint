@@ -21,6 +21,7 @@ import {
 import { RichEditor } from "@/components/rich-editor";
 import { CommentBody, MentionComposer } from "@/components/mentions";
 import { useThreadGallery, type OpenGallery } from "@/components/thread-gallery";
+import { galleryDescription } from "@/lib/comment-images";
 import { DueBadge, DuePicker } from "@/components/due-date";
 import { stalledText, TaskSearchPicker, toRef } from "@/components/dependencies";
 import { useShell } from "@/components/app-shell";
@@ -70,7 +71,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const canRetry = useCanRetry(task);
   const retry = useRetryTask();
   // VEC-335: one lightbox over the thread's images (description, then comments oldest first).
-  const gallery = useThreadGallery(task?.description ?? "", feed);
+  // VEC-370: the description part reads the editor's latest html (a local edit isn't echoed back to `task` by the broadcast).
+  const editedDesc = useRef<string | null>(null);
+  const gallery = useThreadGallery(() => galleryDescription(task?.description ?? "", editedDesc.current), feed);
   // The flow actions (VEC-183) answer with the moved task: update the list and this pane before the broadcast lands.
   const onFlowTask = (t: Task) => {
     onTask(t);
@@ -95,6 +98,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     if (!r.ok) return setError(r.error);
     setTask(r.data!.task);
     setFeed(r.data!.feed);
+    editedDesc.current = null;
     setDescSync((n) => n + 1);
   }, [org.slug, taskKey]);
 
@@ -129,6 +133,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
         getTaskDetail(org.slug, e.task.key).then((r) => {
           if (r.ok) {
             setTask((t) => (t ? { ...t, description: r.data!.task.description } : t));
+            editedDesc.current = null;
             setDescSync((n) => n + 1);
           }
         });
@@ -187,7 +192,12 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     if (!r.ok) {
       toast.error(r.error);
       setSaveState("idle");
-    } else setSaveState("saved");
+    } else {
+      setSaveState("saved");
+      // VEC-370: keep `task` in step with what was saved; the broadcast skips our own description edits.
+      const id = task.id;
+      setTask((t) => (t && t.id === id ? { ...t, description: html } : t));
+    }
   }, [org.slug, task]);
   useEffect(() => () => void flushDesc(), [flushDesc]);
 
@@ -532,6 +542,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               onExpandImage={(images, index, opener) => gallery.open({ from: "description", index, images }, opener)}
               onChange={(html) => {
                 pendingDesc.current = html;
+                editedDesc.current = html;
                 setSaveState("idle");
                 clearTimeout(descTimer.current);
                 descTimer.current = setTimeout(flushDesc, 700);

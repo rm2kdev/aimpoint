@@ -2,7 +2,8 @@
 // everything else stays literal text (VEC-243 rule), and the thread gallery orders description then comments.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commentImages, imageToken, insertBlock, isOrgUploadUrl, splitCommentBody, threadGallery } from "./comment-images.ts";
+import { commentImages, galleryDescription, imageToken, insertBlock, isOrgUploadUrl, splitCommentBody, threadGallery } from "./comment-images.ts";
+import { collectImages } from "./image-lightbox-core.ts";
 
 const ORG = "6af98310a81f713925ea19bc";
 const OTHER = "6af98310a81f713925ea19bd";
@@ -113,4 +114,23 @@ test("thread gallery: description images first, then comment images oldest first
   assert.equal(g.offsets.get("a") + 0 + 1, 3);
   assert.equal(g.offsets.get("c"), 3);
   assert.equal(g.offsets.has("b"), false);
+});
+
+test("a comment-opened gallery includes description images just added in the pane (VEC-370)", () => {
+  const d1 = up("desc1aaaaaaaaaaa");
+  const d2 = up("desc2aaaaaaaaaaa");
+  const c1 = up("comm1aaaaaaaaaaa");
+  const stored = `<p>spec</p><img src="${d1}" alt="one">`;
+  const edited = `${stored}<img src="${d2}" alt="two">`;
+  const comments = [{ id: "a", body: `see ![c1](${c1})` }];
+  const gallery = (html) => threadGallery(collectImages(html), comments, ORG);
+  // No local edit yet: the stored description.
+  assert.equal(galleryDescription(stored, null), stored);
+  assert.deepEqual(gallery(galleryDescription(stored, null)).images.map((i) => i.src), [d1, c1]);
+  // After adding an image in the pane (task.description not yet updated): 3 images, the comment's is 3 / 3.
+  const g = gallery(galleryDescription(stored, edited));
+  assert.deepEqual(g.images.map((i) => i.src), [d1, d2, c1]);
+  assert.equal(g.offsets.get("a") + 1, 3);
+  // An edit that removed every image wins over the stored html too.
+  assert.deepEqual(collectImages(galleryDescription(stored, "<p>spec</p>")), []);
 });
