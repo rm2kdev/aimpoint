@@ -30,6 +30,7 @@ import { TaskStatusBar, useFlowPause, useStalledMoveOn } from "@/components/task
 import { StopConfirm, StoppedBanner, useStopWork, WorkingStrip } from "@/components/stop-work";
 import { FormCreator, FormSubmitter, submitterLabel } from "@/components/task-source";
 import { ParkedNote, parkedPickerNote, useParkedBot, useParkedIn } from "@/components/parked";
+import { PlanSection, sameRichText, TextHistoryRow, type PlanFields } from "@/components/task-plan";
 import { formatDay, formatDue, formatDueAbsolute } from "@/lib/dates";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,6 +67,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const [error, setError] = useState<string>();
   const [deleted, setDeleted] = useState(false);
   const [descSync, setDescSync] = useState(0);
+  const [planSync, setPlanSync] = useState(0);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const canRetry = useCanRetry(task);
@@ -100,6 +102,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     setFeed(r.data!.feed);
     editedDesc.current = null;
     setDescSync((n) => n + 1);
+    setPlanSync((n) => n + 1);
   }, [org.slug, taskKey]);
 
   useEffect(() => {
@@ -132,9 +135,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
       if (e.descriptionChanged && e.actorId !== me.id) {
         getTaskDetail(org.slug, e.task.key).then((r) => {
           if (r.ok) {
-            setTask((t) => (t ? { ...t, description: r.data!.task.description } : t));
+            const d = r.data!.task;
+            setTask((t) => (t ? { ...t, description: d.description, triagePlan: d.triagePlan, triagePlanBy: d.triagePlanBy, triagePlanAt: d.triagePlanAt } : t));
             editedDesc.current = null;
             setDescSync((n) => n + 1);
+            setPlanSync((n) => n + 1);
           }
         });
       }
@@ -200,6 +205,31 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     }
   }, [org.slug, task]);
   useEffect(() => () => void flushDesc(), [flushDesc]);
+
+  /** VEC-404: the Plan card saved; take the server's copy of the plan fields. */
+  const onPlanSaved = useCallback((fields: PlanFields) => setTask((t) => (t ? { ...t, ...fields } : t)), []);
+
+  /** VEC-404: put back the text an activity entry kept (the description or plan before that change). */
+  const restoreText = async (kind: "description" | "plan", html: string) => {
+    if (!task) return;
+    if (kind === "description") {
+      clearTimeout(descTimer.current);
+      pendingDesc.current = null;
+    }
+    const r = await updateTask(org.slug, task.id, kind === "description" ? { description: html } : { triagePlan: html });
+    if (!r.ok) return void toast.error(r.error);
+    if (r.data) onTask(r.data);
+    const d = await getTaskDetail(org.slug, task.key);
+    if (d.ok) {
+      const t2 = d.data!.task;
+      setTask((t) => (t ? { ...t, ...r.data, description: t2.description, triagePlan: t2.triagePlan, triagePlanBy: t2.triagePlanBy, triagePlanAt: t2.triagePlanAt } : t));
+    }
+    if (kind === "description") {
+      editedDesc.current = null;
+      setDescSync((n) => n + 1);
+    } else setPlanSync((n) => n + 1);
+    toast.success(kind === "description" ? "Restored the earlier description" : "Restored the earlier plan");
+  };
 
   const setArchived = async (archived: boolean) => {
     if (!task) return;
@@ -533,6 +563,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
           />
 
           <div className="mt-6 border-t border-border pt-5">
+            {/* VEC-404: with a plan, the description is labelled as the reporter's original; untriaged tasks look as before. */}
+            {task.triagePlan && <h3 className="mb-2 text-[12.5px] font-semibold">Original report</h3>}
             <RichEditor
               orgSlug={org.slug}
               editable={canEdit}
@@ -541,6 +573,13 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               syncKey={descSync}
               onExpandImage={(images, index, opener) => gallery.open({ from: "description", index, images }, opener)}
               onChange={(html) => {
+                // VEC-404: an empty paragraph the editor appends by itself is no edit (it would save and log history).
+                if (sameRichText(html, task.description)) {
+                  clearTimeout(descTimer.current);
+                  pendingDesc.current = null;
+                  editedDesc.current = html;
+                  return;
+                }
                 pendingDesc.current = html;
                 editedDesc.current = html;
                 setSaveState("idle");
@@ -553,7 +592,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </p>
           </div>
 
-          <Feed feed={feed} source={task.source ?? null} onExpandImage={gallery.open} />
+          <PlanSection key={task.id} task={task} canEdit={canEdit} syncKey={planSync} onSaved={onPlanSaved} />
+
+          <Feed feed={feed} source={task.source ?? null} onExpandImage={gallery.open} hasPlan={!!task.triagePlan} canRestore={canEdit} onRestore={restoreText} />
           <MentionComposer
             onSend={async (body) => {
               const r = await addComment(org.slug, task.id, body);
@@ -773,7 +814,21 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
   );
 }
 
-function Feed({ feed, source, onExpandImage }: { feed: FeedItem[]; source: TaskSource | null; onExpandImage: OpenGallery }) {
+function Feed({
+  feed,
+  source,
+  onExpandImage,
+  hasPlan,
+  canRestore,
+  onRestore,
+}: {
+  feed: FeedItem[];
+  source: TaskSource | null;
+  onExpandImage: OpenGallery;
+  hasPlan: boolean;
+  canRestore: boolean;
+  onRestore: (kind: "description" | "plan", html: string) => Promise<void>;
+}) {
   const { memberById, statusById, projectById, me } = useOrg();
   const [, tick] = useState(0);
   useEffect(() => {
@@ -781,6 +836,7 @@ function Feed({ feed, source, onExpandImage }: { feed: FeedItem[]; source: TaskS
     return () => clearInterval(t);
   }, []);
   if (!feed.length) return null;
+  const lastPlanId = feed.findLast((f) => f.kind === "plan")?.id;
   const name = (id: string | null | undefined) => (id ? memberById.get(id)?.name ?? "a former member" : "nobody");
 
   /** A form submission's actor is the form id, which no member resolves: show who submitted it instead. */
@@ -932,6 +988,17 @@ function Feed({ feed, source, onExpandImage }: { feed: FeedItem[]; source: TaskS
       <ol className="space-y-3">
         {feed.map((f) => {
           const actor = memberById.get(f.actorId);
+          if (f.kind === "description" || f.kind === "plan")
+            return (
+              <TextHistoryRow
+                key={f.id}
+                item={f}
+                actorName={actorName(f, actor?.name)}
+                cleared={f.kind === "plan" && f.id === lastPlanId && !hasPlan}
+                canRestore={canRestore}
+                onRestore={onRestore}
+              />
+            );
           return f.kind === "comment" ? (
             <li key={f.id} className="flex gap-2.5">
               <MemberAvatar member={actor} id={f.actorId} size={22} className="mt-px" />
