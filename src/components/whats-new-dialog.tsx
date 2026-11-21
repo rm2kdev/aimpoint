@@ -168,16 +168,26 @@ export function useWhatsNew() {
  * taken out of the address bar with history.replaceState (no navigation or server round trip), so a reload or a
  * shared copy of the URL doesn't open it again. Renders nothing; its own component so search-param changes (every
  * `?task=` open) re-render only this, not the shell.
+ *
+ * VEC-400: the strip passes `null` state, not `window.history.state`. That state carries Next's `__NA` flag, and
+ * Next's patched replaceState skips syncing any call whose data has it, so useSearchParams kept the old value; the
+ * dismiss then gave `onOpen` a new identity and the effect reopened the dialog. With `null`, Next copies its own
+ * internal state and syncs the URL, so the value turns null. `onOpen` also sits in a ref so only a change of the
+ * parameter (a new link) re-runs the effect, never a re-render of the caller.
  */
 export function WhatsNewDeepLink({ onOpen }: { onOpen: (link: WhatsNewLink) => void }) {
   const value = useSearchParams().get(WHATS_NEW_PARAM);
+  const onOpenRef = useRef(onOpen);
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
   useEffect(() => {
     if (value === null) return;
     const link = parseWhatsNewParam(value, MILESTONES.map((m) => m.id));
     const { pathname, search, hash } = window.location;
-    window.history.replaceState(window.history.state, "", `${pathname}${withoutWhatsNewParam(search)}${hash}`);
-    if (link) onOpen(link);
-  }, [value, onOpen]);
+    window.history.replaceState(null, "", `${pathname}${withoutWhatsNewParam(search)}${hash}`);
+    if (link) onOpenRef.current(link);
+  }, [value]);
   return null;
 }
 
