@@ -14,11 +14,11 @@ import { backlogMove, parkRelease, unparkWakes, writeHandOff, type BacklogMove }
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
 import { isParked, planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
-import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type FeedItem, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
+import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type CommentResult, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
 import { requireFormDestination } from "@/lib/project-forms";
 import { plainTextToHtml as plainToHtml } from "@/lib/form-fields-core";
 import { assertNotStopped } from "@/lib/stop-guard";
-import { disabledAssigneeMessage, isBotEnabled } from "@/lib/bot-enabled";
+import { disabledAssigneeMessage, heldMentionsOf, isBotEnabled } from "@/lib/bot-enabled";
 
 /**
  * Task writes shared by the web app (server actions) and the bot API.
@@ -1011,7 +1011,7 @@ export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {
   if (t.dependsOn?.length) await publishWorking(actor.orgId, actor.id, t.dependsOn);
 }
 
-export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string): Promise<FeedItem> {
+export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string): Promise<CommentResult> {
   const text = String(body ?? "").trim();
   if (!text) throw new UserError("Write something first.");
   if (text.length > 10_000) throw new UserError("Comments are limited to 10,000 characters.");
@@ -1025,11 +1025,14 @@ export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string)
   let mentions: ObjectId[] = [];
   let mentionedBots: ObjectId[] = [];
   let mentionedPeople: ObjectId[] = [];
+  let heldMentions: CommentResult["heldMentions"] = [];
   if (ids.length) {
     const [ms, bs] = await Promise.all([
       c.memberships.find({ orgId: actor.orgId, userId: { $in: ids } }, { projection: { userId: 1 } }).toArray(),
-      c.bots.find({ orgId: actor.orgId, _id: { $in: ids } }, { projection: { _id: 1 } }).toArray(),
+      c.bots.find({ orgId: actor.orgId, _id: { $in: ids } }, { projection: { _id: 1, name: 1, disabledAt: 1 } }).toArray(),
     ]);
+    // VEC-352: a disabled bot's mention is stored and its wake-up held (dispatchWake) until it's enabled; say so.
+    heldMentions = heldMentionsOf(bs.filter((b) => !b._id.equals(actor.id)), (b) => b._id.toHexString());
     const ok = new Set([...ms.map((m) => m.userId.toHexString()), ...bs.map((b) => b._id.toHexString())]);
     mentions = ids.filter((id) => ok.has(id.toHexString()));
     mentionedBots = bs.map((b) => b._id).filter((id) => !id.equals(actor.id));
@@ -1053,5 +1056,5 @@ export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string)
     const project = await c.projects.findOne({ _id: target.projectId }, { projection: { key: 1 } });
     wakeBots(actor.orgId, mentionedBots, { kind: "mentioned", taskId, commentId: doc._id, taskKey: `${project?.key ?? "?"}-${target.number}`, title: target.title, by: await actorName(actor) });
   }
-  return item;
+  return { ...item, heldMentions };
 }

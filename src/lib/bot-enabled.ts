@@ -30,12 +30,33 @@ export function enabledBots<T extends BotEnabledLike>(bots: readonly T[]): T[] {
   return bots.filter((b) => isBotEnabled(b));
 }
 
+/** How many enable/disable toggles a bot keeps in `enabledHistory` (VEC-352): the newest, oldest dropped first. */
+export const BOT_ENABLED_HISTORY_MAX = 20;
+
+/** One toggle in a bot's `enabledHistory`: the state it was switched to, when, and by which admin. */
+export interface BotEnabledToggle<Id> {
+  enabled: boolean;
+  at: Date;
+  by: Id;
+}
+
 /**
- * The bot-doc update that sets the state: disabling stamps when and by whom, enabling clears both. Pair it with
- * botEnabledFlipFilter so a repeat disable keeps the first stamp instead of rewriting it.
+ * The bot-doc update that sets the state: disabling stamps when and by whom, enabling clears both, and either way the
+ * toggle is appended to the capped `enabledHistory` (VEC-352; `$push` + `$slice` keeps the last 20). Pair it with
+ * botEnabledFlipFilter so a repeat disable keeps the first stamp (and adds no history) instead of rewriting it.
  */
-export function botEnabledUpdate<Id>(enabled: boolean, actorId: Id, now: Date): { $set: { disabledAt: Date | null; disabledBy: Id | null } } {
-  return enabled ? { $set: { disabledAt: null, disabledBy: null } } : { $set: { disabledAt: now, disabledBy: actorId } };
+export function botEnabledUpdate<Id>(
+  enabled: boolean,
+  actorId: Id,
+  now: Date,
+): {
+  $set: { disabledAt: Date | null; disabledBy: Id | null };
+  $push: { enabledHistory: { $each: BotEnabledToggle<Id>[]; $slice: number } };
+} {
+  return {
+    $set: enabled ? { disabledAt: null, disabledBy: null } : { disabledAt: now, disabledBy: actorId },
+    $push: { enabledHistory: { $each: [{ enabled, at: now, by: actorId }], $slice: -BOT_ENABLED_HISTORY_MAX } },
+  };
 }
 
 /** The `{disabledAt}` match that makes a toggle a real change: only flip a bot that's currently in the other state. */
@@ -81,4 +102,55 @@ export function triageOrder<T extends BotEnabledLike & { _id: { equals(o: unknow
   const enabled = enabledBots(pool);
   const first = opts.prefer ? enabled.filter((b) => b._id.equals(opts.prefer)) : [];
   return { order: [...first, ...enabled.filter((b) => !first.includes(b))], waiting: !enabled.length && pool.length > 0 };
+}
+
+
+/* ---------------- server gaps (VEC-352) ---------------- */
+
+/** A flow step owner, as stored or as submitted (lib/flow-model.ts FlowStepOwner). */
+type StepOwnerLike = { kind: string; id?: string | null } | null | undefined;
+
+/**
+ * The steps of a flow being saved whose owner is a disabled bot that the step didn't already have. A step keeps a
+ * disabled owner it had before (matched by step id, so renames and reorders don't count as new), like an assignee.
+ * `disabled` maps disabled bot ids (hex) to names.
+ */
+export function newlyDisabledStepOwners(
+  prev: readonly { id: string; owner?: StepOwnerLike }[],
+  next: readonly { id: string; name?: string; owner?: StepOwnerLike }[],
+  disabled: ReadonlyMap<string, string>,
+): { index: number; step: string; botId: string; bot: string }[] {
+  const had = new Map(prev.map((s) => [s.id, s.owner?.kind === "bot" ? (s.owner.id ?? null) : null]));
+  const out: { index: number; step: string; botId: string; bot: string }[] = [];
+  next.forEach((s, i) => {
+    const id = s.owner?.kind === "bot" ? s.owner.id : null;
+    if (!id || !disabled.has(id) || had.get(s.id) === id) return;
+    out.push({ index: i, step: s.name?.trim() || `Step ${i + 1}`, botId: id, bot: disabled.get(id)! });
+  });
+  return out;
+}
+
+/** Why a flow save was refused: a step was newly given a disabled bot (same wording style as disabledAssigneeMessage). */
+export function disabledStepOwnerMessage(step: string, botName: string, orgName: string): string {
+  return `${step}: ${botName} is disabled in ${orgName}, so it can't own flow steps. An admin can re-enable it in Settings > Bots.`;
+}
+
+/** What Retry reports for a task whose bot is disabled: nothing was sent or reset. */
+export function disabledRetryWhy(botName: string): string {
+  return `${botName} is disabled, so it can't be handed work. Enable it in Settings > Bots, then retry.`;
+}
+
+/**
+ * The note Resume returns when the bot it hands back to is disabled: the stop is cleared, but the wake-up is held
+ * (assigned) or the next enabled triage bot gets it (triage) until the bot is enabled again.
+ */
+export function disabledResumeNote(botName: string, kind: "assigned" | "triage"): string {
+  return kind === "triage"
+    ? `${botName} is disabled, so it isn't woken. The task goes to the next enabled triage bot, or waits in Triage until one is enabled.`
+    : `${botName} is disabled, so it won't be woken until it's enabled. Its wake-up is held and goes out when an admin re-enables it.`;
+}
+
+/** The mentioned bots of a comment that are disabled: their mention is stored but held, not delivered. */
+export function heldMentionsOf<T extends BotEnabledLike & { name: string }>(bots: readonly T[], idOf: (b: T) => string): { id: string; name: string }[] {
+  return bots.filter((b) => !isBotEnabled(b)).map((b) => ({ id: idOf(b), name: b.name }));
 }

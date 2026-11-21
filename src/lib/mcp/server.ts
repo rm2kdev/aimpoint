@@ -948,7 +948,9 @@ const TOOLS: Record<string, ToolImpl> = {
         if (tokens.length) body = `${tokens.join(" ")} ${body}`;
       }
       const item = await addCommentAs(ctx.actor, task._id, body);
-      return { content: [text(`Commented on ${project.key}-${task.number}.`), json({ commentId: item.id, mentioned: item.mentions })] };
+      // VEC-352: a disabled bot's mention is kept but held (not delivered until it's enabled); say so.
+      const held = item.heldMentions.length ? ` Not delivered yet: ${item.heldMentions.map((m) => m.name).join(", ")} ${item.heldMentions.length === 1 ? "is" : "are"} disabled, so the mention is held until an admin re-enables ${item.heldMentions.length === 1 ? "it" : "them"}.` : "";
+      return { content: [text(`Commented on ${project.key}-${task.number}.${held}`), json({ commentId: item.id, mentioned: item.mentions, heldMentions: item.heldMentions })] };
     },
   },
 

@@ -13,6 +13,12 @@ import {
   disabledWakeMessage,
   listedToAgents,
   triageOrder,
+  BOT_ENABLED_HISTORY_MAX,
+  newlyDisabledStepOwners,
+  disabledStepOwnerMessage,
+  disabledRetryWhy,
+  disabledResumeNote,
+  heldMentionsOf,
 } from "./bot-enabled.ts";
 
 test("a bot doc without disabledAt (created before VEC-343) reads as enabled", () => {
@@ -48,8 +54,8 @@ test("Mongo fragments: null matches missing and null; the complement is $ne null
 
 test("botEnabledUpdate stamps on disable and clears on enable", () => {
   const now = new Date("2026-11-21T01:00:00.000Z");
-  assert.deepEqual(botEnabledUpdate(false, "admin-1", now), { $set: { disabledAt: now, disabledBy: "admin-1" } });
-  assert.deepEqual(botEnabledUpdate(true, "admin-1", now), { $set: { disabledAt: null, disabledBy: null } });
+  assert.deepEqual(botEnabledUpdate(false, "admin-1", now).$set, { disabledAt: now, disabledBy: "admin-1" });
+  assert.deepEqual(botEnabledUpdate(true, "admin-1", now).$set, { disabledAt: null, disabledBy: null });
 });
 
 test("a flip only matches a bot in the other state", () => {
@@ -108,4 +114,65 @@ test("triage: only disabled triagers left means the task waits; none at all is n
   const creator = { _id: id("me") };
   assert.deepEqual(triageOrder([creator, off], { exclude: id("me") }), { order: [], waiting: true });
   assert.deepEqual(triageOrder([creator], { exclude: id("me") }), { order: [], waiting: false });
+});
+
+/* ---------------- server gaps (VEC-352) ---------------- */
+
+test("every toggle appends {enabled, at, by} to enabledHistory, capped at the last 20", () => {
+  const now = new Date("2026-11-21T02:00:00.000Z");
+  assert.equal(BOT_ENABLED_HISTORY_MAX, 20);
+  assert.deepEqual(botEnabledUpdate(false, "admin-1", now).$push, { enabledHistory: { $each: [{ enabled: false, at: now, by: "admin-1" }], $slice: -20 } });
+  assert.deepEqual(botEnabledUpdate(true, "admin-2", now).$push, { enabledHistory: { $each: [{ enabled: true, at: now, by: "admin-2" }], $slice: -20 } });
+});
+
+test("$slice -20 keeps the newest 20 toggles (simulated push)", () => {
+  let history = [];
+  for (let i = 0; i < 25; i++) {
+    const { $push } = botEnabledUpdate(i % 2 === 1, `a${i}`, new Date(Date.UTC(2026, 10, 21, 0, i)));
+    history = [...history, ...$push.enabledHistory.$each].slice($push.enabledHistory.$slice);
+  }
+  assert.equal(history.length, 20);
+  assert.equal(history[0].by, "a5");
+  assert.equal(history[19].by, "a24");
+});
+
+const off = new Map([["bot-off", "Old Bot"]]);
+const step = (id, owner, name = id) => ({ id, name, owner });
+
+test("a step newly given a disabled bot is reported; one that already had it is not", () => {
+  const prev = [step("build", { kind: "bot", id: "bot-off" }, "Build"), step("review", { kind: "keep" }, "Review")];
+  // unchanged: kept
+  assert.deepEqual(newlyDisabledStepOwners(prev, prev, off), []);
+  // renamed + reordered: still the same step id, kept
+  assert.deepEqual(newlyDisabledStepOwners(prev, [step("review", { kind: "keep" }), step("build", { kind: "bot", id: "bot-off" }, "Make it")], off), []);
+  // review newly owned by the disabled bot: refused
+  assert.deepEqual(newlyDisabledStepOwners(prev, [prev[0], step("review", { kind: "bot", id: "bot-off" }, "Review")], off), [
+    { index: 1, step: "Review", botId: "bot-off", bot: "Old Bot" },
+  ]);
+  // a brand-new step (new id) with it: refused, unnamed falls back to its position
+  assert.deepEqual(newlyDisabledStepOwners(prev, [...prev, step("new1", { kind: "bot", id: "bot-off" }, "  ")], off), [
+    { index: 2, step: "Step 3", botId: "bot-off", bot: "Old Bot" },
+  ]);
+  // an enabled bot or another owner kind is never reported
+  assert.deepEqual(newlyDisabledStepOwners([], [step("x", { kind: "bot", id: "bot-on" }), step("y", { kind: "person", id: "bot-off" })], off), []);
+});
+
+test("disabled step owner / retry / resume messages name the bot", () => {
+  assert.equal(
+    disabledStepOwnerMessage("Review", "Old Bot", "Northwind Labs"),
+    "Review: Old Bot is disabled in Northwind Labs, so it can't own flow steps. An admin can re-enable it in Settings > Bots.",
+  );
+  assert.match(disabledRetryWhy("Old Bot"), /^Old Bot is disabled, so it can't be handed work/);
+  assert.match(disabledResumeNote("Old Bot", "assigned"), /^Old Bot is disabled, so it won't be woken until it's enabled/);
+  assert.match(disabledResumeNote("Old Bot", "triage"), /next enabled triage bot/);
+});
+
+test("heldMentionsOf lists only the disabled bots, by id and name", () => {
+  const bots = [
+    { _id: "b1", name: "On", disabledAt: null },
+    { _id: "b2", name: "Off", disabledAt: new Date() },
+    { _id: "b3", name: "Legacy" },
+  ];
+  assert.deepEqual(heldMentionsOf(bots, (b) => b._id), [{ id: "b2", name: "Off" }]);
+  assert.deepEqual(heldMentionsOf([], (b) => b._id), []);
 });

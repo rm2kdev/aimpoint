@@ -655,6 +655,8 @@ export interface BotDoc {
   disabledAt?: Date | null;
   /** The admin who disabled it; cleared with disabledAt on re-enable. */
   disabledBy?: ObjectId | null;
+  /** VEC-352: every enable/disable toggle, oldest first, capped at BOT_ENABLED_HISTORY_MAX (setBotEnabled). */
+  enabledHistory?: { enabled: boolean; at: Date; by: ObjectId }[];
   createdBy: ObjectId;
   createdAt: Date;
 }
@@ -919,6 +921,8 @@ export interface Bot {
   /** When it was disabled and by which user id; both null while enabled. */
   disabledAt: string | null;
   disabledBy: string | null;
+  /** VEC-352: the last 20 toggles, oldest first (`by` = user id). Empty for a bot never toggled. */
+  enabledHistory: { enabled: boolean; at: string; by: string }[];
   createdBy: string;
   createdAt: string;
 }
@@ -1101,7 +1105,24 @@ export interface RetryOutcome {
   retried: { key: string; botId: string }[];
   busy: { key: string; botId: string; lastAt: string }[];
   skipped: { key: string; why: string }[];
+  /**
+   * VEC-352: tasks whose bot is disabled. Nothing was reset or queued for them (no held wake-up either); enable the
+   * bot, then retry. `bot` is its name, `why` a ready sentence.
+   */
+  disabled: { kind: "bot_disabled"; key: string; botId: string; bot: string; why: string }[];
 }
+/**
+ * What Resume (lib/stop-work.ts resumeWorkAs) did (VEC-352). The stop is always cleared; `note` says why the hand-back
+ * didn't go out now (its bot is disabled: the wake-up is held until it's enabled), else null.
+ */
+export interface ResumeOutcome {
+  task: Task;
+  note: string | null;
+  /** The disabled bot the task would have gone to, when that's why `note` is set. */
+  botDisabled: { id: string; name: string } | null;
+}
+/** What adding a comment returns (VEC-352): the feed item plus the mentioned bots that are disabled (held, not delivered). */
+export type CommentResult = FeedItem & { heldMentions: { id: string; name: string }[] };
 export interface Counts {
   my: number;
   all: number;

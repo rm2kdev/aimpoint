@@ -20,7 +20,7 @@ import {
 import { retryHandOff } from "@/lib/retry-handoff";
 import { advanceStepAs, moveStalledOnAs, setFlowPausedAs } from "@/lib/flow-actions";
 import { resumeWorkAs, stopWorkAs } from "@/lib/stop-work";
-import type { Counts, FeedItem, RetryOutcome, Task, TaskDetail, TaskDoc } from "@/lib/types";
+import type { CommentResult, Counts, FeedItem, ResumeOutcome, RetryOutcome, Task, TaskDetail, TaskDoc } from "@/lib/types";
 
 export type { MoveInput, NewTaskInput, TaskPatch };
 
@@ -81,7 +81,7 @@ export async function stopTaskWork(slug: string, taskId: string): Promise<Result
 }
 
 /** Resume a stopped task (VEC-215): clears the stop, resumes its flow and hands it back to its bot with one wake-up. */
-export async function resumeTaskWork(slug: string, taskId: string): Promise<Result<Task>> {
+export async function resumeTaskWork(slug: string, taskId: string): Promise<Result<ResumeOutcome>> {
   return guard(async () => resumeWorkAs(actorOf(await requireOrg(slug)), oid(taskId, "task")));
 }
 
@@ -89,7 +89,8 @@ export async function deleteTask(slug: string, taskId: string): Promise<Result> 
   return guard(async () => deleteTaskAs(actorOf(await requireOrg(slug)), oid(taskId, "task")));
 }
 
-export async function addComment(slug: string, taskId: string, body: string): Promise<Result<FeedItem>> {
+/** Adds a comment. `heldMentions` lists mentioned bots that are disabled: stored, but not delivered until enabled (VEC-352). */
+export async function addComment(slug: string, taskId: string, body: string): Promise<Result<CommentResult>> {
   return guard(async () => addCommentAs(actorOf(await requireOrg(slug)), oid(taskId, "task"), body));
 }
 

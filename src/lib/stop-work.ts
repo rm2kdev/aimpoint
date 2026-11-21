@@ -6,10 +6,21 @@ import { publish } from "@/lib/realtime/server";
 import { toFeed, toTask, withWorkingBots } from "@/lib/data";
 import { isPush } from "@/lib/bot-connect";
 import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
+import { disabledResumeNote, isBotEnabled } from "@/lib/bot-enabled";
 import { loadTaskFlow } from "@/lib/flow-engine";
 import { flowPauseState } from "@/lib/flow-actions";
 import type { Actor } from "@/lib/task-service";
-import { isClosedCategory, type ActivityDoc, type ActivityNote, type BotDoc, type Task, type TaskDoc, type TaskFlowState, type TaskStopDoc } from "@/lib/types";
+import {
+  isClosedCategory,
+  type ActivityDoc,
+  type ActivityNote,
+  type BotDoc,
+  type ResumeOutcome,
+  type Task,
+  type TaskDoc,
+  type TaskFlowState,
+  type TaskStopDoc,
+} from "@/lib/types";
 
 /**
  * Stop / Resume a bot's work on a task (VEC-215, part of VEC-214). A bot that picked a task up by accident (or is
@@ -120,7 +131,12 @@ export async function stopWorkAs(actor: Actor, taskId: ObjectId): Promise<Task> 
   return out;
 }
 
-export async function resumeWorkAs(actor: Actor, taskId: ObjectId): Promise<Task> {
+/**
+ * VEC-352: a disabled bot doesn't stop Resume. The stop is cleared either way; the assignee's wake-up goes through
+ * wakeBots, which queues it held (dispatchWake) so it goes out when the bot is enabled, and the outcome's `note`
+ * says so. A disabled triager is skipped by wakeTriage (next enabled triager, or held in Triage).
+ */
+export async function resumeWorkAs(actor: Actor, taskId: ObjectId): Promise<ResumeOutcome> {
   const { c, task, key } = await load(actor, taskId);
   const stop = task.stopped;
   if (!stop) throw new UserError("This task isn't stopped, so there's nothing to resume.");
@@ -149,11 +165,23 @@ export async function resumeWorkAs(actor: Actor, taskId: ObjectId): Promise<Task
   const open = !!status && !isClosedCategory(status.category);
   const by = await actorName(actor);
   let handedTo: ObjectId | null = null;
+  let disabled: BotDoc | null = null;
+  let note: string | null = null;
   if (open && status.category === "triage") {
     // Back to the triager it was taken from (that bot first), else the next connected triage bot.
     wakeTriage(actor.orgId, { taskId, taskKey: `${key}-${after.number}`, title: after.title, by, prefer: stop.kind === "triage" ? stop.botId : undefined });
     handedTo = stop.kind === "triage" ? stop.botId : null;
+    if (stop.kind === "triage" && stoppedBot && !isBotEnabled(stoppedBot)) {
+      // wakeTriage skips a disabled triager (triageOrder), so it isn't the one the task goes back to.
+      disabled = stoppedBot;
+      note = disabledResumeNote(stoppedBot.name, "triage");
+      handedTo = null;
+    }
   } else if (open && assigneeBot && !after.waitingOn?.length) {
+    if (!isBotEnabled(assigneeBot)) {
+      disabled = assigneeBot;
+      note = disabledResumeNote(assigneeBot.name, "assigned");
+    }
     // Exactly one wake-up: through the wake queue (retried if it fails), or the next check_for_work for a polling bot.
     if (assigneeBot.connection && isPush(assigneeBot.connection.method)) {
       // Reassigned while stopped (VEC-219): this bot never worked on it, so its note says so rather than "stopped your work".
@@ -166,5 +194,5 @@ export async function resumeWorkAs(actor: Actor, taskId: ObjectId): Promise<Task
   const [out] = await withWorkingBots([toTask(after, key)]);
   await publish(hex(actor.orgId), { type: "task.upsert", actorId: hex(actor.id), task: out }, { workingLoaded: true });
   await record(actor, taskId, { kind: "resumed", to: handedTo ? hex(handedTo) : null }, now);
-  return out;
+  return { task: out, note, botDisabled: disabled ? { id: hex(disabled._id), name: disabled.name } : null };
 }

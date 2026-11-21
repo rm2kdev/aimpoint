@@ -61,6 +61,7 @@ export const toBot = (b: BotDoc): Bot => ({
   enabled: isBotEnabled(b),
   disabledAt: b.disabledAt?.toISOString() ?? null,
   disabledBy: b.disabledAt ? (b.disabledBy?.toHexString() ?? null) : null,
+  enabledHistory: (b.enabledHistory ?? []).map((h) => ({ enabled: h.enabled, at: h.at.toISOString(), by: h.by.toHexString() })),
   connection: b.connection
     ? {
         agent: b.connection.agent,

@@ -5,6 +5,7 @@ import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { loadStatuses } from "@/lib/statuses";
 import { defaultFlowDoc } from "@/lib/flows-migration";
+import { DISABLED_BOT_FILTER, disabledStepOwnerMessage, newlyDisabledStepOwners } from "@/lib/bot-enabled";
 import { flowStepsFromDoc, flowStepsToDoc } from "@/lib/flow-convert";
 import {
   defaultFlowSteps,
@@ -255,10 +256,27 @@ function failValidation(errors: string[]): never {
   throw new UserError(errors.length > 5 ? `${shown} (and ${errors.length - 5} more)` : shown);
 }
 
+/**
+ * VEC-352: refuses a step newly given a disabled bot as owner (named, like assertAssignable). A step that already had
+ * that bot (same step id in `prev`, the flow as stored) keeps it, so an unrelated edit still saves.
+ */
+async function assertNoNewDisabledOwners(orgId: ObjectId, prev: FlowStep[], next: FlowStep[]): Promise<void> {
+  const ids = [...new Set(next.flatMap((s) => (s.owner.kind === "bot" && s.owner.id && ObjectId.isValid(s.owner.id) ? [s.owner.id] : [])))];
+  if (!ids.length) return;
+  const c = await cols();
+  const off = await c.bots.find({ orgId, _id: { $in: ids.map((id) => new ObjectId(id)) }, ...DISABLED_BOT_FILTER }, { projection: { name: 1 } }).toArray();
+  if (!off.length) return;
+  const bad = newlyDisabledStepOwners(prev, next, new Map(off.map((b) => [hex(b._id), b.name])));
+  if (!bad.length) return;
+  const org = await c.orgs.findOne({ _id: orgId }, { projection: { name: 1 } });
+  failValidation(bad.map((b) => disabledStepOwnerMessage(b.step, b.bot, org?.name ?? "this organisation")));
+}
+
 /** Validates and stores the org default flow. Returns the new version. */
 export async function writeOrgFlow(orgId: ObjectId, actorId: ObjectId, input: unknown): Promise<number> {
   const res = validateFlow(input, { level: "org", dir: await loadFlowDirectory(orgId), newId: newStepId });
   if (!res.ok) failValidation(res.errors);
+  await assertNoNewDisabledOwners(orgId, flowStepsFromDoc((await loadOrgFlowDoc(orgId)).steps), res.steps);
   return upsertFlow(orgId, null, actorId, res.steps);
 }
 
@@ -273,6 +291,9 @@ export async function writeProjectFlow(orgId: ObjectId, projectId: ObjectId, act
   const [statuses, dir] = await Promise.all([loadStatuses(orgId, projectId), loadFlowDirectory(orgId)]);
   const res = validateFlow(input, { level: "project", statuses: statuses.map(toStatusLike), dir, newId: newStepId });
   if (!res.ok) failValidation(res.errors);
+  // What the project ran before: its own flow, else the org default it inherited (a first custom save copies it).
+  const own = await (await cols()).flows.findOne({ orgId, projectId });
+  await assertNoNewDisabledOwners(orgId, flowStepsFromDoc((own ?? (await loadOrgFlowDoc(orgId))).steps), res.steps);
   const version = await upsertFlow(orgId, projectId, actorId, res.steps);
   await (await cols()).projects.updateOne({ _id: projectId, orgId }, { $set: { flowMode: "custom" } });
   return version;

@@ -44,6 +44,8 @@ async function runRetry(slug: string, bot: (id: string) => string, task: Pick<Ta
     return null;
   }
   const out = res.data;
+  // VEC-352: a disabled bot's tasks aren't handed out; report them like any other task that couldn't be retried.
+  const skipped = [...out.skipped, ...(out.disabled ?? []).map((d) => ({ key: d.key, why: d.why.replace(/\.$/, "") }))];
   if (out.retried.length === 1) {
     const [r] = out.retried;
     toast.success(`Handed ${r.key} to ${bot(r.botId)} again`, { description: r.key === task.key ? undefined : `${task.key} follows once it's done.` });
@@ -64,12 +66,12 @@ async function runRetry(slug: string, bot: (id: string) => string, task: Pick<Ta
   }
   if (!out.retried.length && !out.busy.length) {
     toast.error(
-      out.skipped.length
-        ? `Nothing to retry: ${out.skipped.map((s) => `${s.key} (${s.why})`).join("; ")}.`
+      skipped.length
+        ? `Nothing to retry: ${skipped.map((s) => `${s.key} (${s.why})`).join("; ")}.`
         : "Nothing to retry: nothing it's waiting on can be handed out right now.",
     );
-  } else if (out.skipped.length) {
-    toast(`Not retried: ${out.skipped.map((s) => `${s.key} (${s.why})`).join("; ")}.`);
+  } else if (skipped.length) {
+    toast(`Not retried: ${skipped.map((s) => `${s.key} (${s.why})`).join("; ")}.`);
   }
   return out;
 }

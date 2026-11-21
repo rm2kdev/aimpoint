@@ -7,6 +7,7 @@ import { toFeed } from "@/lib/data";
 import { publishWorking } from "@/lib/claims";
 import { isPush } from "@/lib/bot-connect";
 import { wakeBots } from "@/lib/bot-dispatch";
+import { disabledRetryWhy, isBotEnabled } from "@/lib/bot-enabled";
 import { isClosedCategory, type ActivityDoc, type RetryOutcome, type TaskDoc } from "@/lib/types";
 import type { Actor } from "@/lib/task-service";
 
@@ -22,6 +23,8 @@ import type { Actor } from "@/lib/task-service";
  * - A pending close-out (a triager's umbrella whose sub-tasks are closed): the close-out is sent again.
  * - A task still waiting on others: the chain is retried from its front, i.e. the open, ready tasks it (transitively)
  *   waits on. Everything behind them is then handed out by the normal ready hand-offs, in dependency order.
+ *
+ * A task whose bot is disabled (VEC-352) is reported in `disabled` and left untouched (no wake-up queued, even held).
  *
  * Unless `force`, a task whose bot is working on it and posted within RETRY_QUIET_MS is left alone and reported as
  * busy, so a click doesn't start a second run beside one that is still going.
@@ -43,7 +46,7 @@ export async function retryHandOff(actor: Actor, taskId: ObjectId, opts: { force
   if (status && isClosedCategory(status.category)) throw new UserError(`This task is ${status.name}. Reopen it to hand it out again.`);
 
   const targets = task.waitingOn?.length ? await chainFront(actor.orgId, task) : [task];
-  const out: RetryOutcome = { retried: [], busy: [], skipped: [] };
+  const out: RetryOutcome = { retried: [], busy: [], skipped: [], disabled: [] };
   if (!targets.length) return out;
 
   const [projects, statuses] = await Promise.all([
@@ -72,6 +75,12 @@ export async function retryHandOff(actor: Actor, taskId: ObjectId, opts: { force
     const bot = await c.bots.findOne({ _id: botId, orgId: actor.orgId });
     if (!bot) {
       out.skipped.push({ key, why: "it's assigned to a person, not a bot" });
+      continue;
+    }
+    // VEC-352: a disabled bot isn't handed work. Leave its claim and any held wake-up as they are (no new one queued),
+    // and say so, rather than queueing a wake that would only sit held.
+    if (!isBotEnabled(bot)) {
+      out.disabled.push({ kind: "bot_disabled", key, botId: hex(bot._id), bot: bot.name, why: disabledRetryWhy(bot.name) });
       continue;
     }
     if (!opts.force) {

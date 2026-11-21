@@ -66,8 +66,10 @@ export function useStopWork(task: StopFields | null, onTask?: (t: Task) => void)
     const r = await resumeTaskWork(org.slug, task.id);
     setBusy(false);
     if (!r.ok) return void toast.error(r.error);
-    if (r.data) onTask?.(r.data);
-    const to = r.data?.assigneeId ? memberById.get(r.data.assigneeId) : stoppedBot;
+    if (r.data) onTask?.(r.data.task);
+    const to = r.data?.task.assigneeId ? memberById.get(r.data.task.assigneeId) : stoppedBot;
+    // VEC-352: its bot is disabled, so the stop is cleared but nothing goes out until it's enabled.
+    if (r.data?.note) return void toast(`Resumed ${task.key}`, { description: r.data.note });
     toast.success(`Resumed ${task.key}`, {
       description: to?.kind === "bot" ? `Handed back to ${to.name}, who re-reads the task and comments first.` : "Its flow runs again.",
     });
