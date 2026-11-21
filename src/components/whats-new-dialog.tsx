@@ -3,24 +3,21 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { ChevronLeftIcon, ChevronRightIcon, HistoryIcon, ImageOffIcon, Maximize2Icon, SparklesIcon } from "lucide-react";
+import { ChevronLeftIcon, HistoryIcon, ImageOffIcon, Maximize2Icon, SparklesIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ImageLightbox } from "@/components/image-lightbox";
 import { cn } from "@/lib/utils";
 import { markdownToHtml } from "@/lib/markdown-core";
-import { swipeStep } from "@/lib/image-lightbox-core";
 import { latestMilestone, type ChangelogMilestone } from "@/lib/changelog-core";
 import { MILESTONES } from "@/content/changelog";
 import { useOrg } from "@/components/org-provider";
 import {
-  clampSlide,
+  changeCountLabel,
   historyRows,
   milestoneGallery,
   releaseDateLabel,
   rowForKey,
-  slideAnnouncement,
-  slideForKey,
   parseWhatsNewParam,
   WHATS_NEW_PARAM,
   withoutWhatsNewParam,
@@ -53,7 +50,7 @@ const BUSY_RETRY_MS = 700;
 export function useWhatsNew() {
   const { changelog, dismissChangelog } = useOrg();
   /**
-   * What the dialog shows. `view` is the slide tour of `milestone` or the "All updates" list (VEC-377; `milestone`
+   * What the dialog shows. `view` ("tour") is the change list of `milestone` or the "All updates" list (VEC-377; `milestone`
    * then is the one last opened from it, or null, so Back lands on its row). `fromHistory`: the tour was opened
    * from the list, so it shows a Back to the list. `dismisses`: this opening showed the person's unseen milestone,
    * so closing it (from either view) counts as seeing it. Browsing other milestones never sets it.
@@ -136,7 +133,7 @@ export function useWhatsNew() {
 
   /** "All updates" from the tour's header, and Back from a milestone opened from the list. */
   const showHistory = useCallback(() => setShown((s) => (s ? { ...s, view: "history" } : s)), []);
-  /** A row in the list: that milestone in the same slide viewer. Seeing the unseen one counts; older ones don't. */
+  /** A row in the list: that milestone's change list in the same dialog. Seeing the unseen one counts; older ones don't. */
   const pickMilestone = useCallback(
     (m: ChangelogMilestone) =>
       setShown((s) => ({
@@ -182,11 +179,13 @@ export function WhatsNewDeepLink({ onOpen }: { onOpen: (link: WhatsNewLink) => v
 }
 
 /**
- * "What's new" pop-up (VEC-374): one milestone's entries as slides (screenshot, title, short Markdown body), moved
- * with Prev/Next, the dots, Left/Right/Home/End and a touch swipe. A screenshot's expand button opens the
- * ImageLightbox over all of the milestone's screenshots. Every way of closing (X, Esc, backdrop, "Got it" on the
- * last slide) goes through `onOpenChange(false)`, so the caller dismisses once. Keep `milestone` set while
- * closing so the exit animation still has content. Phones get a full-height sheet. Rules: docs/changelog.md.
+ * "What's new" pop-up (VEC-374, list layout VEC-392): a centred panel about 70% of the viewport with the
+ * milestone's header (title, date, summary, All updates / Back) fixed on top and every entry stacked below it in
+ * one vertically scrolling list (screenshot above title and short Markdown body), then a footer with Got it.
+ * A screenshot (or its expand button) opens the ImageLightbox over all of the milestone's screenshots. Every way
+ * of closing (X, Esc, backdrop, Got it) goes through `onOpenChange(false)`, so the caller dismisses once. Keep
+ * `milestone` set while closing so the exit animation still has content. Phones get a full-height sheet that
+ * scrolls the same way. Rules: docs/changelog.md.
  */
 export function WhatsNewDialog({
   milestone,
@@ -198,7 +197,7 @@ export function WhatsNewDialog({
   onPick,
 }: {
   milestone: ChangelogMilestone | null;
-  /** The slide tour of `milestone`, or the "All updates" list of every milestone (VEC-377). */
+  /** `milestone`'s list of changes, or the "All updates" list of every milestone (VEC-377). */
   view?: "tour" | "history";
   /** The tour was opened from the list: its header shows a Back to the list instead of the "All updates" link. */
   fromHistory?: boolean;
@@ -208,13 +207,13 @@ export function WhatsNewDialog({
   onShowHistory?: () => void;
   onPick?: (milestone: ChangelogMilestone) => void;
 }) {
-  // The focus target on open and on switching views: Next / Got it in the tour, the current row in the list.
-  const primaryRef = useRef<HTMLButtonElement>(null);
+  // The focus target on open and on switching views: the scrolling change list, or the current row in the list.
+  const primaryRef = useRef<HTMLElement>(null);
   const rows = useMemo(() => historyRows(MILESTONES), []);
   // Index and origin stay set after closing: the exit animation needs the image and focus goes back to `from`.
   const [lightbox, setLightbox] = useState<{ open: boolean; index: number; from: HTMLElement | null }>({ open: false, index: 0, from: null });
   const gallery = useMemo(() => (milestone ? milestoneGallery(milestone) : null), [milestone]);
-  // Counts openings, so each one starts a fresh tour while a closing dialog keeps its slide through the exit.
+  // Counts openings, so each one starts scrolled to the top while a closing dialog keeps its place through the exit.
   const [session, setSession] = useState({ open, n: 0 });
   if (session.open !== open) setSession({ open, n: open ? session.n + 1 : session.n });
   const history = view === "history" && !!onPick;
@@ -228,27 +227,31 @@ export function WhatsNewDialog({
           // With a summary Radix wires it up as the description; without one there is nothing to describe.
           {...(history || milestone!.summary ? {} : { "aria-describedby": undefined })}
           onOpenAutoFocus={(e) => {
-            // Start on the primary action (Next / Got it), so Enter walks the tour and Esc still closes.
+            // Start on the change list (Arrow/Page keys scroll it) or the current row; Esc still closes.
             e.preventDefault();
             primaryRef.current?.focus({ preventScroll: true });
           }}
           className={cn(
-            "flex flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]",
+            "flex flex-col gap-0 overflow-hidden p-0",
+            // Desktop: a centred panel about 70% of the viewport (VEC-392), never full screen; the body scrolls.
+            // The All updates list keeps the width but only grows as tall as its rows (up to the same height).
+            "sm:w-[70vw] sm:max-w-[min(1120px,calc(100%-2rem))] sm:min-w-[min(600px,calc(100%-2rem))]",
+            history ? "sm:max-h-[78vh]" : "sm:h-[78vh]",
             // Phones: a full-height sheet (no centring transform), clear of the notch and the home indicator.
             "max-sm:inset-0 max-sm:top-0 max-sm:left-0 max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none max-sm:ring-0",
             "max-sm:pt-[env(safe-area-inset-top)] max-sm:pr-[env(safe-area-inset-right)] max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-[env(safe-area-inset-left)]",
           )}
         >
           {history ? (
-            <History rows={rows} currentId={milestone?.id ?? null} focusRef={primaryRef} onPick={onPick!} />
+            <History rows={rows} currentId={milestone?.id ?? null} focusRef={primaryRef as React.RefObject<HTMLButtonElement | null>} onPick={onPick!} />
           ) : (
             <Tour
-              // A fresh tour (back to the first slide) every time it opens, and for each milestone picked.
+              // Back to the top every time it opens, and for each milestone picked.
               key={`${milestone!.id}:${session.n}`}
               milestone={milestone!}
               date={date}
               indexOf={gallery!.indexOf}
-              primaryRef={primaryRef}
+              focusRef={primaryRef}
               fromHistory={fromHistory}
               onShowHistory={onPick ? onShowHistory : undefined}
               onDone={() => onOpenChange(false)}
@@ -257,7 +260,7 @@ export function WhatsNewDialog({
           )}
         </DialogContent>
       </Dialog>
-      {/* A sibling, not a child of the content: the lightbox's own keys must not bubble into the tour's handler. */}
+      {/* A sibling, not a child of the content: the lightbox's own keys must not bubble into the list's handler. */}
       <ImageLightbox
         images={gallery?.images ?? []}
         index={lightbox.index}
@@ -273,7 +276,7 @@ function Tour({
   milestone,
   date,
   indexOf,
-  primaryRef,
+  focusRef,
   fromHistory,
   onShowHistory,
   onDone,
@@ -282,7 +285,7 @@ function Tour({
   milestone: ChangelogMilestone;
   date: string;
   indexOf: number[];
-  primaryRef: React.RefObject<HTMLButtonElement | null>;
+  focusRef: React.RefObject<HTMLElement | null>;
   fromHistory: boolean;
   onShowHistory?: () => void;
   onDone: () => void;
@@ -290,210 +293,93 @@ function Tour({
 }) {
   const entries = milestone.entries;
   const n = entries.length;
-  const [rawIndex, setIndex] = useState(0);
-  const index = clampSlide(rawIndex, n);
-  const last = index === n - 1;
-  // Announced only after a move: on open the dialog's title is read, and the first slide follows it.
-  const [announce, setAnnounce] = useState("");
-  const [drag, setDrag] = useState(0);
-  const swipe = useRef<{ id: number; x: number; y: number; dx: number; dy: number; lock: "x" | "y" | null } | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const regionRef = useRef<HTMLDivElement>(null);
-  /** Focus was inside the slide being left (expand button, a link): it goes inert, so carry focus over. */
-  const refocus = useRef(false);
-  // Switching in from the list: its row is gone, so start on Next / Got it (on open, onOpenAutoFocus does this).
-  useEffect(() => primaryRef.current?.focus({ preventScroll: true }), [primaryRef]);
-  useEffect(() => {
-    if (!refocus.current) return;
-    refocus.current = false;
-    const region = regionRef.current;
-    const target = region?.querySelector<HTMLElement>("[data-whats-new-slide][data-current] .aimpoint-image-expand") ?? region;
-    target?.focus({ preventScroll: true });
-  }, [index]);
+  // Switching in from the list: its row is gone, so focus the change list (on open, onOpenAutoFocus does this).
+  useEffect(() => focusRef.current?.focus({ preventScroll: true }), [focusRef]);
 
-  const go = (to: number) => {
-    const next = clampSlide(to, n);
-    if (next === index) return;
-    refocus.current = !!regionRef.current?.contains(document.activeElement);
-    setIndex(next);
-    setAnnounce(slideAnnouncement(next, n, entries[next].title));
-    bodyRef.current?.scrollTo({ top: 0 });
-  };
-
+  // Arrows, Page Up/Down, Home/End and Space scroll the list natively; keep them from the task list's j/k/arrow
+  // shortcuts, which listen on window.
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-    const to = slideForKey(e.key, index, n);
-    if (to === null) return;
-    e.preventDefault();
-    // The task list's j/k/arrow shortcuts listen on window.
-    e.stopPropagation();
-    go(to);
-  };
-
-  // Touch swipe: the track follows the finger sideways; a vertical drag stays a scroll (touch-action: pan-y).
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (e.pointerType === "mouse" || n < 2) return;
-    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, dy: 0, lock: null };
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const s = swipe.current;
-    if (!s || s.id !== e.pointerId) return;
-    s.dx = e.clientX - s.x;
-    s.dy = e.clientY - s.y;
-    if (!s.lock && Math.abs(s.dx) + Math.abs(s.dy) > 8) s.lock = Math.abs(s.dx) > Math.abs(s.dy) ? "x" : "y";
-    if (s.lock !== "x") return;
-    // Resist past the ends: there's nothing before the first slide or after the last.
-    const edge = (s.dx > 0 && index === 0) || (s.dx < 0 && last);
-    setDrag(edge ? s.dx / 3 : s.dx);
-  };
-  const onPointerEnd = (e: React.PointerEvent) => {
-    const s = swipe.current;
-    if (!s || s.id !== e.pointerId) return;
-    swipe.current = null;
-    setDrag(0);
-    if (e.type === "pointercancel" || s.lock !== "x") return;
-    const step = swipeStep(s.dx, s.dy);
-    if (step) go(index + step);
+    if (SCROLL_KEYS.has(e.key)) e.stopPropagation();
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
-      <header className="shrink-0 px-5 pt-5 pr-12 pb-3">
-        {fromHistory && onShowHistory && (
-          <button
-            type="button"
-            data-whats-new-back=""
-            onClick={onShowHistory}
-            className="-mt-1 -ml-1.5 mb-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[12.5px] font-medium text-muted-foreground outline-none hover:bg-chip hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronLeftIcon className="size-3.5" aria-hidden /> All updates
-          </button>
-        )}
-        <DialogTitle className="text-[15px] leading-snug font-semibold tracking-[-0.01em] text-balance">{milestone.title}</DialogTitle>
-        <p className="mt-1 text-[12.5px] text-faint">
-          What&apos;s new{date && <> · <time dateTime={milestone.releasedAt}>{date}</time></>}
-          {!fromHistory && onShowHistory && (
-            <>
-              {" · "}
-              <button
-                type="button"
-                data-whats-new-history=""
-                onClick={onShowHistory}
-                className="rounded-sm font-medium text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                All updates
-              </button>
-            </>
-          )}
-        </p>
-        {milestone.summary && <DialogDescription className="mt-2 text-[13px] leading-5">{milestone.summary}</DialogDescription>}
-      </header>
-
-      <div ref={bodyRef} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-        <div
-          ref={regionRef}
-          tabIndex={-1}
-          role="region"
-          aria-roledescription="carousel"
-          aria-label="Changes in this release"
-          className="touch-pan-y overflow-hidden outline-none"
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerEnd}
-          onPointerCancel={onPointerEnd}
-        >
-          <div
-            data-whats-new-track=""
-            className={cn("flex", drag === 0 && "transition-transform duration-300 ease-[cubic-bezier(.2,.8,.2,1)] motion-reduce:transition-none")}
-            style={{ transform: `translateX(calc(${-index * 100}% + ${drag}px))` }}
-          >
-            {entries.map((entry, i) => (
-              <Slide
-                key={i}
-                entry={entry}
-                current={i === index}
-                label={`${i + 1} of ${n}`}
-                galleryIndex={indexOf[i]}
-                onExpand={onExpand}
-              />
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <p className="sr-only" aria-live="polite" aria-atomic="true">
-        {announce}
-      </p>
-
-      <footer className="flex shrink-0 items-center gap-3 border-t px-5 py-3">
-        {n > 1 && (
-          <div className="flex min-w-0 items-center gap-2">
-            {n <= 10 && (
-              <div role="group" aria-label="Go to a change" className="-ml-1.5 flex items-center">
-                {entries.map((e, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    data-whats-new-dot={i}
-                    aria-label={`Change ${i + 1}: ${e.title}`}
-                    aria-current={i === index ? "step" : undefined}
-                    onClick={() => go(i)}
-                    className="group grid h-7 w-5 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <span
-                      className={cn(
-                        "block h-1.5 rounded-full transition-[width,background-color] duration-200 motion-reduce:transition-none",
-                        i === index ? "w-3.5 bg-foreground" : "w-1.5 bg-input group-hover:bg-faint",
-                      )}
-                    />
-                  </button>
-                ))}
-              </div>
-            )}
-            <span className="font-mono text-[12px] text-faint tabular-nums" aria-hidden>
-              {index + 1} / {n}
-            </span>
-          </div>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
-          {n > 1 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              // aria-disabled, not disabled: a disabled button drops focus out of the dialog on the first slide.
-              aria-disabled={index === 0}
-              onClick={() => go(index - 1)}
-              className="aria-disabled:pointer-events-none aria-disabled:opacity-40"
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="shrink-0 border-b px-5 pt-5 pr-12 pb-4 sm:px-14">
+        {/* Same column as the entries below, so the header lines up with them. */}
+        <div className="mx-auto w-full max-w-[760px]">
+          {fromHistory && onShowHistory && (
+            <button
+              type="button"
+              data-whats-new-back=""
+              onClick={onShowHistory}
+              className="-mt-1 -ml-1.5 mb-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[12.5px] font-medium text-muted-foreground outline-none hover:bg-chip hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <ChevronLeftIcon data-icon="inline-start" /> Back
-            </Button>
+              <ChevronLeftIcon className="size-3.5" aria-hidden /> All updates
+            </button>
           )}
-          {/* One button for Next and Got it, so focus stays put when the last slide turns it into Got it. */}
-          <Button ref={primaryRef} size="sm" data-whats-new-primary="" onClick={() => (last ? onDone() : go(index + 1))} className="min-w-20">
-            {last ? (
-              "Got it"
-            ) : (
+          <DialogTitle className="text-[16px] leading-snug font-semibold tracking-[-0.01em] text-balance">{milestone.title}</DialogTitle>
+          <p className="mt-1 text-[12.5px] text-faint">
+            What&apos;s new{date && <> · <time dateTime={milestone.releasedAt}>{date}</time></>}
+            {!fromHistory && onShowHistory && (
               <>
-                Next <ChevronRightIcon data-icon="inline-end" />
+                {" · "}
+                <button
+                  type="button"
+                  data-whats-new-history=""
+                  onClick={onShowHistory}
+                  className="rounded-sm font-medium text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  All updates
+                </button>
               </>
             )}
-          </Button>
+          </p>
+          {milestone.summary && <DialogDescription className="mt-2 text-[13px] leading-5">{milestone.summary}</DialogDescription>}
         </div>
+      </header>
+
+      {/* The one scrolling part: header and footer stay put. Focusable (no ring: it's the whole body) so the
+          keyboard scrolls it. */}
+      <div
+        ref={focusRef as React.RefObject<HTMLDivElement | null>}
+        tabIndex={0}
+        role="region"
+        aria-label="Changes in this release"
+        data-whats-new-scroll=""
+        onKeyDown={onKeyDown}
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain outline-none"
+      >
+        <ol className="mx-auto flex max-w-[calc(760px+7rem)] flex-col px-5 sm:px-14">
+          {entries.map((entry, i) => (
+            <Entry key={i} entry={entry} first={i === 0} eager={i < 2} galleryIndex={indexOf[i]} onExpand={onExpand} />
+          ))}
+        </ol>
+      </div>
+
+      <footer className="flex shrink-0 items-center gap-3 border-t px-5 py-3 sm:px-7">
+        <span className="text-[12px] text-faint">{changeCountLabel(n)}</span>
+        <Button size="sm" data-whats-new-primary="" onClick={onDone} className="ml-auto min-w-20">
+          Got it
+        </Button>
       </footer>
     </div>
   );
 }
 
-function Slide({
+/** Keys that scroll the change list; they stay inside the dialog. */
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+
+/** One change in the list: screenshot (capped height, expandable) above its title and Markdown body. */
+function Entry({
   entry,
-  current,
-  label,
+  first,
+  eager,
   galleryIndex,
   onExpand,
 }: {
   entry: ChangelogMilestone["entries"][number];
-  current: boolean;
-  label: string;
+  first: boolean;
+  eager: boolean;
   galleryIndex: number;
   onExpand: (galleryIndex: number, from: HTMLElement | null) => void;
 }) {
@@ -501,18 +387,10 @@ function Slide({
   const [failed, setFailed] = useState(false);
   const expandRef = useRef<HTMLButtonElement>(null);
   return (
-    <section
-      role="group"
-      aria-roledescription="slide"
-      aria-label={`${label}: ${entry.title}`}
-      aria-hidden={!current}
-      inert={!current}
-      data-whats-new-slide=""
-      data-current={current ? "" : undefined}
-      className="w-full shrink-0 px-5 pt-1 pb-5"
-    >
+    <li data-whats-new-entry="" className={cn("py-6", !first && "border-t")}>
       {entry.image && (
-        <figure className="aimpoint-image relative aspect-[16/10] w-full max-w-none overflow-hidden rounded-[10px] bg-chip ring-1 ring-border">
+        // 16:10 box, as wide as the column but never taller than ~50% of the viewport (short windows).
+        <figure className="aimpoint-image relative aspect-[16/10] w-full max-w-[min(100%,calc(50vh*1.6))] overflow-hidden rounded-[10px] bg-chip ring-1 ring-border">
           {failed ? (
             <p className="flex h-full flex-col items-center justify-center gap-2 text-[13px] text-muted-foreground">
               <ImageOffIcon className="size-5" aria-hidden />
@@ -526,15 +404,16 @@ function Slide({
                 alt={entry.image.alt}
                 draggable={false}
                 decoding="async"
+                loading={eager ? "eager" : "lazy"}
                 onError={() => setFailed(true)}
                 onClick={() => galleryIndex >= 0 && onExpand(galleryIndex, expandRef.current)}
-                className="block size-full cursor-zoom-in object-contain select-none"
+                className="absolute inset-0 block size-full cursor-zoom-in object-contain select-none"
               />
               {galleryIndex >= 0 && (
                 <button
                   ref={expandRef}
                   type="button"
-                  aria-label="Expand screenshot"
+                  aria-label={`Expand screenshot: ${entry.title}`}
                   title="Expand screenshot"
                   className="aimpoint-image-expand"
                   onClick={() => onExpand(galleryIndex, expandRef.current)}
@@ -546,10 +425,10 @@ function Slide({
           )}
         </figure>
       )}
-      <h3 className={cn("text-[14px] leading-snug font-semibold", entry.image && "mt-4")}>{entry.title}</h3>
+      <h3 className={cn("text-[14.5px] leading-snug font-semibold", entry.image && "mt-4")}>{entry.title}</h3>
       {/* Repo-authored Markdown (src/content/changelog), rendered by the same converter as agent descriptions. */}
       <div className="prose-aimpoint mt-1.5" dangerouslySetInnerHTML={{ __html: html }} />
-    </section>
+    </li>
   );
 }
 

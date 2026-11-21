@@ -1,5 +1,5 @@
-// Run with `pnpm test` (node --test). "What's new" pop-up helpers (VEC-374): slide clamp, key stepping, the
-// milestone's lightbox gallery, the release date line and the slide announcement; history rows (VEC-377).
+// Run with `pnpm test` (node --test). "What's new" pop-up helpers (VEC-374): index clamp, the milestone's
+// lightbox gallery and the release date line; history rows (VEC-377).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
@@ -24,15 +24,13 @@ const {
   parseWhatsNewParam,
   releaseDateLabel,
   rowForKey,
-  slideAnnouncement,
-  slideForKey,
   WHATS_NEW_PARAM,
   whatsNewBadge,
   whatsNewBadgeLabel,
   withoutWhatsNewParam,
 } = await import("./whats-new-core.ts");
 
-test("clampSlide keeps the slide inside the tour and never wraps", () => {
+test("clampSlide keeps the index inside the list and never wraps", () => {
   assert.equal(clampSlide(-1, 4), 0);
   assert.equal(clampSlide(0, 4), 0);
   assert.equal(clampSlide(3, 4), 3);
@@ -41,22 +39,6 @@ test("clampSlide keeps the slide inside the tour and never wraps", () => {
   assert.equal(clampSlide(2.7, 4), 2);
   assert.equal(clampSlide(NaN, 4), 0);
   assert.equal(clampSlide(3, 0), 0);
-});
-
-test("slideForKey steps with the arrows, jumps with Home/End and ignores other keys", () => {
-  assert.equal(slideForKey("ArrowRight", 0, 3), 1);
-  assert.equal(slideForKey("ArrowLeft", 2, 3), 1);
-  assert.equal(slideForKey("Home", 2, 3), 0);
-  assert.equal(slideForKey("End", 0, 3), 2);
-  // At the ends nothing moves (so the key isn't swallowed for nothing).
-  assert.equal(slideForKey("ArrowRight", 2, 3), null);
-  assert.equal(slideForKey("ArrowLeft", 0, 3), null);
-  assert.equal(slideForKey("Home", 0, 3), null);
-  assert.equal(slideForKey("End", 2, 3), null);
-  // One slide, or a key that isn't a slide key.
-  assert.equal(slideForKey("ArrowRight", 0, 1), null);
-  assert.equal(slideForKey("Enter", 0, 3), null);
-  assert.equal(slideForKey("j", 0, 3), null);
 });
 
 test("milestoneGallery lists screenshots in entry order and maps each entry to its image", () => {
@@ -80,11 +62,6 @@ test("releaseDateLabel reads the id's date, the same day in every time zone", ()
   assert.equal(releaseDateLabel(m, "en-AU"), "21 November 2026");
   assert.equal(releaseDateLabel({ id: "2026-01-05-hotfix", releasedAt: "2026-01-05T09:00:00+08:00" }, "en-US"), "January 5, 2026");
   assert.equal(releaseDateLabel({ id: "nope", releasedAt: "also nope" }, "en-AU"), "");
-});
-
-test("slideAnnouncement names the position and the entry", () => {
-  assert.equal(slideAnnouncement(1, 5, "Zoom into images"), "Change 2 of 5: Zoom into images");
-  assert.equal(slideAnnouncement(0, 1, "Only one"), "Only one");
 });
 
 const ms = (id, entries, extra = {}) => ({ id, title: `Release ${id}`, releasedAt: `${id.slice(0, 10)}T09:00:00+08:00`, entries, ...extra });

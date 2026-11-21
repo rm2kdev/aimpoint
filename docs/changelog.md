@@ -51,7 +51,7 @@ Rules the tests enforce (`validateMilestone` / `validateMilestones` in `src/lib/
   have alt text describing what the screenshot shows.
 - Every `<id>.ts` in the folder is listed in the index, which is newest first.
 
-Keep bodies to a sentence or two of Markdown; the pop-up is a quick tour, not release notes.
+Keep bodies to a sentence or two of Markdown; the pop-up is a quick scroll through the changes, not release notes.
 
 ## Screenshots
 
@@ -81,21 +81,26 @@ Each person has `UserDoc.changelogSeen`: the id of the newest milestone they dis
 - `useWhatsNew()` opens it about 0.6 s after the first load of an org page when `useOrg().changelog` is set, once
   per tab, and waits while another dialog (search, new task) is open. The install banner is held back while the
   pop-up is open or about to open, so the two never show at once.
-- One slide per entry: screenshot (16:10 box, fitted), title, Markdown body (`markdownToHtml` + `prose-aimpoint`).
-  Back/Next, the dots (with an `n / total` label), Left/Right/Home/End and a touch swipe move between slides; the
-  slide change is announced to screen readers. The expand button (or a click on the screenshot) opens the
-  ImageLightbox over all of the milestone's screenshots. Phones (under 640 px) get a full-height sheet.
-- Close (X), Esc, the backdrop and "Got it" on the last slide all close it the same way, which dismisses the
+- A milestone is one vertically scrolling list (VEC-392, replacing the VEC-374 slide carousel): the header (title,
+  date, summary, "All updates" link or "‹ All updates" back) and the footer (change count, "Got it") stay put, and
+  every entry is stacked between them, top to bottom: screenshot (16:10 box, fitted, at most half the viewport
+  tall), title, Markdown body (`markdownToHtml` + `prose-aimpoint`), in a centred column of up to 760 px. The list
+  takes focus on open, so Arrow/Page Up/Down, Home/End and Space scroll it. The expand button (or a click on the
+  screenshot) opens the ImageLightbox over all of the milestone's screenshots, and focus returns to that button.
+- Size: on desktop a centred panel about 70% of the viewport (70vw wide, at least 600 px and at most 1120 px,
+  78vh tall), never full screen; the All updates list keeps the width and grows only as tall as its rows. Phones
+  (under 640 px) get a full-height sheet that scrolls the same way, screenshot above text.
+- Close (X), Esc, the backdrop and "Got it" all close it the same way, which dismisses the
   milestone once. The provider hides it at once; a failed save shows a toast and doesn't reopen it (it may show
   again on the next load).
 - The user menu's "What's new" entry reopens the newest milestone at any time. Opening it doesn't touch the seen
   marker; closing it dismisses only if it is the person's unseen milestone.
-- Pure helpers (slide clamp, keys, gallery, date line, announcement) live in `src/lib/whats-new-core.ts`.
+- Pure helpers (gallery, date line, history rows, index clamp) live in `src/lib/whats-new-core.ts`.
 
 ## All updates (history)
 
 Every milestone can be reopened from a list inside the same dialog (VEC-377). It is a view of the pop-up, not a
-page: the changelog is product-level and the dialog already carries the slide viewer, so there is no
+page: the changelog is product-level and the dialog already carries the milestone view, so there is no
 `/o/<org>/changelog` route to link to.
 
 - Reach it from the sidebar's "What's new" item (VEC-384; under Settings, in the desktop sidebar and the phone
@@ -113,8 +118,8 @@ page: the changelog is product-level and the dialog already carries the slide vi
   order): first screenshot as a thumbnail (a sparkles tile when there is none), title, release date, change count
   and the summary (or the entry titles). The newest is marked "Latest". With one milestone it is a one-row list, and
   the link still shows.
-- A row opens that milestone in the same slide viewer (`WhatsNewDialog` with `view="tour"`), with "‹ All updates" at
-  the top to go back; focus returns to that row. Up/Down/Home/End move between rows.
+- A row opens that milestone's list of changes in the same dialog (`WhatsNewDialog` with `view="tour"`), with
+  "‹ All updates" at the top to go back; focus returns to that row. Up/Down/Home/End move between rows.
 - Browsing never moves the seen marker: only an opening that showed the person's unseen milestone dismisses on close
   (the auto pop-up, "What's new" while it is unseen, or picking the unseen one from the list). Opening the list or
   the menu also counts as this tab's auto-open, so the pop-up never re-triggers on top of it.
