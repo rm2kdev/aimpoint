@@ -1,6 +1,6 @@
 /**
  * Who may change a task. The same rule applies to people and bots (bots are never admins):
- *  - "full":     the creator or an org admin: everything, including title, description, project, archive and delete
+ *  - "full":     the creator or an org admin: everything, including title, description, triage plan, project, archive and delete
  *  - "assignee": whoever it's assigned to: status, assignee, priority, type and due date
  *  - "comment":  everyone else in the organisation: read and comment
  */
@@ -10,9 +10,29 @@ export const ASSIGNEE_FIELDS = ["statusId", "assigneeId", "priority", "type", "d
 
 /**
  * A bot triaging a task (it took it with check_for_triage and hasn't called complete_task or release_task yet)
- * may reshape it like its creator, short of archiving it.
+ * may reshape it like its creator, short of archiving it and replacing the reporter's description (VEC-402): its
+ * write-up goes in the separate triage plan (`triagePlan`) instead, so the original report is never lost.
  */
-export const TRIAGE_FIELDS = [...ASSIGNEE_FIELDS, "title", "description", "projectId", "dependsOn"] as const;
+export const TRIAGE_FIELDS = [...ASSIGNEE_FIELDS, "title", "triagePlan", "projectId", "dependsOn"] as const;
+
+/** Refusal for a triaging bot (not the creator or an admin) that sent `description` (VEC-402). */
+export const TRIAGE_DESCRIPTION_REFUSAL = "While triaging you can't replace the reporter's description; put your plan in `plan` instead.";
+/** Refusal for a triaging bot that tried anything else outside TRIAGE_FIELDS (archiving). */
+export const TRIAGE_ARCHIVE_REFUSAL = "While triaging you can change everything except archiving. Only the task's creator or an admin can archive it.";
+export const ASSIGNEE_REFUSAL =
+  "Only the task's creator or an admin can change its title, description, plan, project or dependencies, or archive it. As the assignee you can change status, assignee, priority, type and due date.";
+
+/**
+ * The patch fields a non-full actor may not set (undefined values don't count), and why, or null when the patch is
+ * allowed. `triaging` picks TRIAGE_FIELDS, otherwise ASSIGNEE_FIELDS. Creators and admins ("full") never reach this.
+ */
+export function refusePatch(patch: Record<string, unknown>, triaging: boolean): { blocked: string[]; error: string } | null {
+  const allowed = new Set<string>(triaging ? TRIAGE_FIELDS : ASSIGNEE_FIELDS);
+  const blocked = Object.keys(patch).filter((k) => patch[k] !== undefined && !allowed.has(k));
+  if (!blocked.length) return null;
+  if (!triaging) return { blocked, error: ASSIGNEE_REFUSAL };
+  return { blocked, error: blocked.includes("description") ? TRIAGE_DESCRIPTION_REFUSAL : TRIAGE_ARCHIVE_REFUSAL };
+}
 
 /**
  * The bot that triaged a task (TaskDoc.triagedBy) may close it out once it's ready: comment, and move it to

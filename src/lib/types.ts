@@ -440,6 +440,14 @@ export interface TaskDoc {
   number: number;
   title: string;
   description: string; // sanitised HTML from the editor
+  /**
+   * VEC-402: the triager's plan (sanitised HTML like `description`, written as Markdown by bots), kept apart from the
+   * reporter's description so triage never overwrites the original report. Missing or null = no plan (older tasks).
+   */
+  triagePlan?: string | null;
+  /** Who last set the plan, and when. Null/missing with no plan. */
+  triagePlanBy?: ObjectId | null;
+  triagePlanAt?: Date | null;
   type: TaskType;
   statusId: ObjectId;
   assigneeId: ObjectId | null;
@@ -616,7 +624,12 @@ export interface ActivityDoc {
     | "resumed"
     /** VEC-175: the flow moved it to another step. `from`/`to` = step names, `flowStatus` = the step's status name,
      * `flowOwner` = who it was handed to (id hex, null = nobody), `note` = advanced | back | synced | umbrella. */
-    | "flow_step";
+    | "flow_step"
+    /** VEC-402: the description changed. `from` holds the previous text (sanitised HTML, cut at HISTORY_TEXT_MAX in
+     * lib/text-history.ts) so an overwrite can be recovered; one entry per burst of edits by the same actor. */
+    | "description"
+    /** VEC-402: the triage plan was set, changed or cleared. `from` = the previous plan (null = there was none). */
+    | "plan";
   from?: string | null;
   to?: string | null;
   /**
@@ -1100,6 +1113,11 @@ export interface TaskRef {
 }
 export interface TaskDetail extends Task {
   description: string;
+  /** VEC-402: the triager's plan (sanitised HTML), null when none was written (always null on older tasks). */
+  triagePlan: string | null;
+  /** Who last wrote the plan (person or bot id) and when (ISO), null with no plan. */
+  triagePlanBy: string | null;
+  triagePlanAt: string | null;
   /** Tasks this one waits for, in the order they were added. */
   dependencies: TaskRef[];
   /** Tasks that wait for this one. */

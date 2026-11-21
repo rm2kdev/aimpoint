@@ -208,6 +208,9 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       case "resumed": return a.to ? `resumed it and handed it back to ${name(a.to)}` : "resumed it";
       case "unblocked": return a.from ? `closed ${a.from}, so it became ready to work on` : "cleared what it was waiting on, so it became ready to work on";
       case "flow_step": return flowStepText(a.note, a.from, a.to, a.flowStatus, a.flowOwner ? name(a.flowOwner) : null);
+      // VEC-402: the replaced text stays on the activity entry; get_task names the change only.
+      case "description": return "edited the description (the previous text is kept in its history)";
+      case "plan": return a.from ? "changed the triage plan (the previous plan is kept in its history)" : "wrote the triage plan";
     }
   };
 

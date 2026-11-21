@@ -9,7 +9,8 @@ import { loadStatuses, requireProjectStatus, statusFor, statusInProject } from "
 import { publishWorking } from "@/lib/claims";
 import { touchRunMark } from "@/lib/run-marks";
 import { newTaskStatusFor } from "@/lib/project-defaults";
-import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
+import { CLOSE_OUT_FIELDS, closeOutStatuses, refusePatch, taskAccess } from "@/lib/access";
+import { continuesEdit, keptText, normalizePlan } from "@/lib/text-history";
 import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { backlogMove, parkRelease, unparkWakes, writeHandOff, type BacklogMove } from "@/lib/backlog-moves";
 import { notify } from "@/lib/notifications";
@@ -574,6 +575,8 @@ export async function createTaskFromForm(form: Pick<ProjectFormDoc, "_id" | "org
 export interface TaskPatch {
   title?: string;
   description?: string;
+  /** VEC-402: the triager's plan (HTML, sanitised like the description). "" or null clears it. Triagers, creator, admins. */
+  triagePlan?: string | null;
   type?: TaskType;
   statusId?: string;
   assigneeId?: string | null;
@@ -615,15 +618,9 @@ export async function updateTaskAs(
       await assertCloseOut(actor, before, patch);
     } else {
       if (access === "comment" && !triaging) throw new UserError("Only the task's creator, its assignee or an admin can change it. You can still comment.");
-      const allowed = new Set<string>(triaging ? TRIAGE_FIELDS : ASSIGNEE_FIELDS);
-      const blocked = (Object.keys(patch) as (keyof TaskPatch)[]).filter((k) => patch[k] !== undefined && !allowed.has(k));
-      if (blocked.length) {
-        throw new UserError(
-          triaging
-            ? "While triaging you can change everything except archiving. Only the task's creator or an admin can archive it."
-            : "Only the task's creator or an admin can change its title, description, project or dependencies, or archive it. As the assignee you can change status, assignee, priority, type and due date.",
-        );
-      }
+      // VEC-402: a triager may not replace the reporter's description (its plan goes in triagePlan).
+      const refused = refusePatch(patch as Record<string, unknown>, !!triaging);
+      if (refused) throw new UserError(refused.error);
     }
   }
   const set: Partial<TaskDoc> = {};
@@ -639,7 +636,23 @@ export async function updateTaskAs(
       acts.push({ kind: "title", from: before.title, to: t });
     }
   }
-  if (patch.description !== undefined) set.description = sanitizeDescription(String(patch.description));
+  // VEC-402: a description or plan change keeps the text it replaced in an activity entry (lib/text-history.ts).
+  if (patch.description !== undefined) {
+    const d = sanitizeDescription(String(patch.description));
+    if (d !== before.description) {
+      set.description = d;
+      acts.push({ kind: "description", from: keptText(before.description) });
+    }
+  }
+  if (patch.triagePlan !== undefined) {
+    const plan = patch.triagePlan === null ? null : normalizePlan(sanitizeDescription(String(patch.triagePlan)));
+    if (plan !== (before.triagePlan ?? null)) {
+      set.triagePlan = plan;
+      set.triagePlanBy = plan === null ? null : actor.id;
+      set.triagePlanAt = plan === null ? null : new Date();
+      acts.push({ kind: "plan", from: keptText(before.triagePlan) });
+    }
+  }
   if (patch.type && patch.type !== before.type) {
     set.type = isTaskType(patch.type) ? patch.type : "issue";
     acts.push({ kind: "type", from: before.type, to: set.type });
@@ -804,8 +817,15 @@ export async function updateTaskAs(
   const task = toTask(after, projectKey);
   const orgHex = actor.orgId.toHexString();
   const actorId = actor.id.toHexString();
-  await publish(orgHex, { type: "task.upsert", actorId, task, descriptionChanged: patch.description !== undefined });
+  await publish(orgHex, { type: "task.upsert", actorId, task, descriptionChanged: set.description !== undefined || set.triagePlan !== undefined });
 
+  // An autosave burst keeps one history entry: the one holding the text from before the burst (VEC-402).
+  // Only a lone text edit coalesces; one that comes with other changes always gets its own entry.
+  const lone = acts.length === 1 ? acts[0].kind : null;
+  if (lone === "description" || lone === "plan") {
+    const last = await c.activity.findOne({ taskId }, { sort: { createdAt: -1, _id: -1 }, projection: { kind: 1, actorId: 1, createdAt: 1 } });
+    if (continuesEdit(last && { kind: last.kind, actorId: last.actorId.toHexString(), createdAt: last.createdAt }, lone, actorId, now)) acts.length = 0;
+  }
   if (acts.length) {
     const docs: ActivityDoc[] = acts.map((a) => ({ ...a, _id: new ObjectId(), orgId: actor.orgId, taskId, actorId: actor.id, createdAt: now }));
     await c.activity.insertMany(docs);

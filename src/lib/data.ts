@@ -168,6 +168,9 @@ export const toTaskDetail = (
 ): TaskDetail => ({
   ...toTask(t, projectKey, workingBotIds),
   description: t.description,
+  triagePlan: t.triagePlan ?? null,
+  triagePlanBy: t.triagePlan ? (t.triagePlanBy?.toHexString() ?? null) : null,
+  triagePlanAt: t.triagePlan ? (t.triagePlanAt?.toISOString() ?? null) : null,
   ...refs,
 });
 
