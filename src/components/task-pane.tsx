@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
-import { disabledBotNote } from "@/lib/bot-picker";
+import { disabledBotNote, heldMentionsToast, typedDisabledMentions } from "@/lib/bot-picker";
 import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 
@@ -58,7 +58,7 @@ const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
 
 export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClose: () => void; onTask: (t: Task) => void }) {
-  const { org, me, isAdmin, statusById, memberById, projectById } = useOrg();
+  const { org, me, isAdmin, statusById, memberById, members, projectById } = useOrg();
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [error, setError] = useState<string>();
@@ -549,7 +549,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 toast.error(r.error);
                 return false;
               }
-              setFeed((f) => (f.some((x) => x.id === r.data!.id) ? f : [...f, r.data!]));
+              const { heldMentions, ...item } = r.data!;
+              setFeed((f) => (f.some((x) => x.id === item.id) ? f : [...f, item]));
+              // VEC-353: picked mentions of a disabled bot come back as heldMentions; a name typed by hand is plain text, so find those here.
+              const held = heldMentionsToast(heldMentions ?? [], typedDisabledMentions(body, members.filter((m) => m.kind === "bot")));
+              if (held) toast(held.title, { description: held.description });
               return true;
             }}
           />

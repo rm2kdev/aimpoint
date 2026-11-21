@@ -3,9 +3,10 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronRightIcon, Trash2Icon, WorkflowIcon } from "lucide-react";
+import { ChevronRightIcon, PowerIcon, PowerOffIcon, Trash2Icon, WorkflowIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { enabledHistoryNewestFirst, type EnabledToggle } from "@/lib/bot-picker";
 import { useOrg } from "@/components/org-provider";
 import { AnalyticsLink, DetailHeader, DisabledTag, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
 import { BotAvatar } from "@/components/bits";
@@ -30,7 +31,7 @@ import {
 import { deleteBot, setBotEnabled, setBotMaxTasks, updateBot } from "@/app/actions/bots";
 import { setBotRole } from "@/app/actions/bot-roles";
 import { MCP_TOOLS } from "@/lib/mcp/catalog";
-import { timeAgo } from "@/lib/format";
+import { tasksBecomeUnassigned, timeAgo } from "@/lib/format";
 import { BOT_MAX_TASKS_MAX, BOT_MAX_TASKS_MIN } from "@/lib/types";
 import type { Bot, BotAvatar as BotAvatarData, BotRole, Task } from "@/lib/types";
 import { analyticsPath, flowsPath, orgPath, projectFlowPath, rolesPath } from "@/lib/paths";
@@ -164,6 +165,7 @@ export function BotDetail({
                   {!isAdmin && "Only admins can change this."}
                 </p>
               )}
+              <EnabledHistory history={enabledHistoryNewestFirst(initial.enabledHistory, bot.enabledHistory)} />
             </div>
           </Row>
 
@@ -376,7 +378,7 @@ export function BotDetail({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete {bot.name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Its API key stops working and {assigned.length ? `${assigned.length} assigned task${assigned.length === 1 ? "" : "s"} become` : "its tasks become"} unassigned.
+              Its API key stops working and {assigned.length ? tasksBecomeUnassigned(assigned.length, "assigned") : "its tasks become unassigned"}.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -396,5 +398,40 @@ export function BotDetail({
         </AlertDialogContent>
       </AlertDialog>
     </>
+  );
+}
+
+/** VEC-353: who switched the bot on or off and when, most recent first (the server keeps the last 20). */
+function EnabledHistory({ history }: { history: EnabledToggle[] }) {
+  const { memberById } = useOrg();
+  const [all, setAll] = useState(false);
+  if (!history.length) return null;
+  const shown = all ? history : history.slice(0, 5);
+  return (
+    <div className="mt-1.5 grid gap-1" aria-label="Enabled history">
+      <p className="text-[11.5px] font-medium text-faint">History</p>
+      <ol className="grid gap-1 border-l border-border pl-3">
+        {shown.map((h, i) => {
+          const who = memberById.get(h.by)?.name ?? "A former member";
+          const when = new Date(h.at);
+          return (
+            <li key={`${h.at}-${i}`} className="flex items-center gap-1.5 text-[12.5px] text-muted-foreground" data-enabled-history={h.enabled ? "on" : "off"}>
+              {h.enabled ? <PowerIcon className="size-3 shrink-0 text-foreground/70" /> : <PowerOffIcon className="size-3 shrink-0" />}
+              <span className="min-w-0 truncate">
+                <span className={cn("font-medium", h.enabled ? "text-foreground/80" : "text-muted-foreground")}>{h.enabled ? "Enabled" : "Disabled"}</span> by {who}
+              </span>
+              <time dateTime={h.at} title={when.toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })} className="tabular shrink-0 text-faint">
+                {timeAgo(h.at)}
+              </time>
+            </li>
+          );
+        })}
+      </ol>
+      {history.length > 5 && (
+        <button type="button" onClick={() => setAll((v) => !v)} className="w-fit text-[12px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+          {all ? "Show fewer" : `Show all ${history.length}`}
+        </button>
+      )}
+    </div>
   );
 }

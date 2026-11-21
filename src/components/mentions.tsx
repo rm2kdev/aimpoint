@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { BotAvatar, Kbd, UserAvatar } from "@/components/bits";
+import { botPickerEntries, disabledBotNote, DISABLED_BOT_HINT, isBotDisabled, stepPickable } from "@/lib/bot-picker";
 import { Button } from "@/components/ui/button";
 import { uploadImage } from "@/components/rich-editor";
 import { imageToken, insertBlock, splitCommentBody } from "@/lib/comment-images";
@@ -131,10 +132,14 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
     const q = query.toLowerCase();
     const match = (m: Member) => matches(m, q);
     const people = members.filter((m) => m.kind === "user" && match(m)).sort((a, b) => (a.id === me.id ? 1 : b.id === me.id ? -1 : 0));
-    const bots = members.filter((m) => m.kind === "bot" && match(m));
+    // VEC-353: disabled bots are listed last, grayed and can't be picked (botPickerEntries keeps the order otherwise).
+    const bots = botPickerEntries(members.filter((m) => m.kind === "bot" && match(m))).map((e) => e.bot);
     return [...people.slice(0, 6), ...bots.slice(0, 5)];
   }, [query, members, me.id]);
   const open = query !== null && options.length > 0;
+  const unpickable = useMemo(() => options.map((m) => isBotDisabled(m)), [options]);
+  // The highlighted option, moved off a disabled bot onto the first pickable one (-1 when only disabled bots match).
+  const current = unpickable[active] === false ? active : stepPickable(unpickable, -1, 1);
 
   // Float the list in a portal, above the composer when there's room, otherwise below it,
   // so it never covers what you're typing and isn't clipped by the scrolling pane.
@@ -169,8 +174,8 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
   }, [open, options.length]);
 
   useLayoutEffect(() => {
-    if (open) document.getElementById(`mention-${options[active]?.id}`)?.scrollIntoView({ block: "nearest" });
-  }, [open, active, options]);
+    if (open) document.getElementById(`mention-${options[current]?.id}`)?.scrollIntoView({ block: "nearest" });
+  }, [open, current, options]);
 
   const autosize = () => {
     const el = ref.current;
@@ -220,9 +225,9 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
     setActive(0);
   };
 
-  const pick = (m: Member) => {
+  const pick = (m: Member | undefined) => {
     const el = ref.current;
-    if (!el) return;
+    if (!el || !m || isBotDisabled(m)) return;
     const value = el.value;
     const t = token ?? { start: value.lastIndexOf("@", el.selectionStart), end: el.selectionStart, query: "" };
     // Swallow leftover words of the old mention ("@Mxia| Kowalski" -> "@Mia Kowalski", not "... Kowalski Kowalski").
@@ -312,11 +317,11 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           >
             {people.length > 0 && <GroupLabel>People</GroupLabel>}
             {people.map((m) => (
-              <Option key={m.id} m={m} idx={options.indexOf(m)} active={active} setActive={setActive} onPick={pick} isMe={m.id === me.id} />
+              <Option key={m.id} m={m} idx={options.indexOf(m)} active={current} setActive={setActive} onPick={pick} isMe={m.id === me.id} />
             ))}
             {bots.length > 0 && <GroupLabel className={people.length ? "mt-1 border-t border-border pt-1.5" : ""}>Bots</GroupLabel>}
             {bots.map((m) => (
-              <Option key={m.id} m={m} idx={options.indexOf(m)} active={active} setActive={setActive} onPick={pick} isMe={false} />
+              <Option key={m.id} m={m} idx={options.indexOf(m)} active={current} setActive={setActive} onPick={pick} isMe={false} />
             ))}
           </div>,
           document.body,
@@ -378,7 +383,7 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           aria-autocomplete="list"
           aria-controls={open ? "mention-list" : undefined}
           aria-expanded={open}
-          aria-activedescendant={open ? `mention-${options[active]?.id}` : undefined}
+          aria-activedescendant={open && current >= 0 ? `mention-${options[current]?.id}` : undefined}
           onChange={(e) => {
             setText(e.target.value);
             autosize();
@@ -391,9 +396,10 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
           onBlur={() => setTimeout(() => setToken(null), 120)}
           onKeyDown={(e) => {
             if (open) {
-              if (e.key === "ArrowDown") return (e.preventDefault(), setActive((a) => (a + 1) % options.length));
-              if (e.key === "ArrowUp") return (e.preventDefault(), setActive((a) => (a - 1 + options.length) % options.length));
-              if (e.key === "Enter" || e.key === "Tab" || (e.key === " " && query)) return (e.preventDefault(), pick(options[active]));
+              if (e.key === "ArrowDown") return (e.preventDefault(), current >= 0 && setActive(stepPickable(unpickable, current, 1)));
+              if (e.key === "ArrowUp") return (e.preventDefault(), current >= 0 && setActive(stepPickable(unpickable, current, -1)));
+              // Only disabled bots match: nothing to pick, so the key types as usual.
+              if (current >= 0 && (e.key === "Enter" || e.key === "Tab" || (e.key === " " && query))) return (e.preventDefault(), pick(options[current]));
               if (e.key === "Escape") return (e.preventDefault(), e.stopPropagation(), setToken(null));
             }
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
@@ -487,16 +493,19 @@ function Option({
   isMe: boolean;
 }) {
   const bot = m.kind === "bot";
+  const off = bot && isBotDisabled(m);
   return (
     <div
       id={`mention-${m.id}`}
       role="option"
       aria-selected={idx === active}
-      onMouseEnter={() => setActive(idx)}
-      onClick={() => onPick(m)}
-      className={cn("flex cursor-default items-center gap-2.5 rounded-[7px] px-2 py-1.5", idx === active && "bg-accent")}
+      aria-disabled={off || undefined}
+      title={off ? disabledBotNote(m.name) : undefined}
+      onMouseEnter={() => !off && setActive(idx)}
+      onClick={() => !off && onPick(m)}
+      className={cn("flex cursor-default items-center gap-2.5 rounded-[7px] px-2 py-1.5", idx === active && "bg-accent", off && "text-muted-foreground")}
     >
-      {bot ? <BotAvatar avatar={m.avatar} name={m.name} size={24} /> : <UserAvatar id={m.id} name={m.name} image={m.image} size={24} />}
+      {bot ? <BotAvatar avatar={m.avatar} name={m.name} size={24} disabled={off} /> : <UserAvatar id={m.id} name={m.name} image={m.image} size={24} />}
       <div className="min-w-0 flex-1 leading-tight">
         <div className="flex items-center gap-1.5 text-[13px]">
           <span className="truncate font-medium">{m.name}</span>
@@ -504,6 +513,7 @@ function Option({
           {bot && (
             <span className="rounded-[4px] bg-chip px-1.5 text-[11.5px] font-medium text-muted-foreground">Bot</span>
           )}
+          {off && <span className="ml-auto shrink-0 text-[11.5px] text-muted-foreground">{DISABLED_BOT_HINT}</span>}
         </div>
         <div className="truncate text-[11.5px] text-faint">{bot ? m.description || "Automation" : m.email}</div>
       </div>

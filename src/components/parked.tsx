@@ -27,7 +27,8 @@ export function useParkedBot(task: Pick<Task, "projectId" | "statusId" | "flow" 
   const { memberById } = useOrgBase();
   const status = useParkedIn(task?.projectId, task?.statusId, task?.flow);
   const bot = task?.assigneeId ? memberById.get(task.assigneeId) : undefined;
-  if (!task || !status || !bot || bot.kind !== "bot" || task.archivedAt || task.workingBotIds.includes(bot.id)) return null;
+  // VEC-353: a disabled bot won't start when the task leaves Backlog either; the pane's disabled note says so instead.
+  if (!task || !status || !bot || bot.kind !== "bot" || bot.disabled || task.archivedAt || task.workingBotIds.includes(bot.id)) return null;
   return { bot, status };
 }
 

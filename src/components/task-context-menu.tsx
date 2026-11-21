@@ -1,10 +1,11 @@
 "use client";
 
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, RotateCcwIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, PowerOffIcon, RotateCcwIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useOrgBase } from "@/components/org-provider";
-import { useCanRetry, useRetryTask } from "@/components/retry-task";
+import { useCanRetry, useRetryDisabledBot, useRetryTask } from "@/components/retry-task";
+import { disabledBotNote } from "@/lib/bot-picker";
 import { PRIORITY_OPTIONS, TYPE_OPTIONS, useAssigneeOptions, useStatusOptions, type Option } from "@/components/pickers";
 import { DISABLED_BOT_HINT } from "@/lib/bot-picker";
 import {
@@ -167,6 +168,7 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
   const statusOptions = useStatusOptions(task.projectId);
   const assigneeOptions = useAssigneeOptions();
   const canRetry = useCanRetry(task);
+  const retryOff = useRetryDisabledBot(task);
   const retry = useRetryTask();
 
   const copy = (text: string, what: string) => {
@@ -249,6 +251,13 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
             <RotateCcwIcon />
             {task.waitingOn.length ? "Retry the chain" : "Retry hand-off"}
           </ContextMenuItem>
+        )}
+        {retryOff && canWork && (
+          // VEC-353: in place of Retry hand-off, which a disabled bot can't take.
+          <p className="flex items-start gap-1.5 px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">
+            <PowerOffIcon className="mt-px size-3 shrink-0" />
+            {disabledBotNote(retryOff.name)}
+          </p>
         )}
 
         <ContextMenuSeparator />

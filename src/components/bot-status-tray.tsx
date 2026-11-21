@@ -24,7 +24,9 @@ export function BotStatusTray() {
       members
         .filter((m) => m.kind === "bot" && (activeByBot.get(m.id) ?? 0) > 0)
         .map((m) => ({ bot: m, active: activeByBot.get(m.id) ?? 0, max: m.maxTasks ?? BOT_MAX_TASKS_DEFAULT }))
-        .sort((a, b) => a.bot.name.localeCompare(b.bot.name, undefined, { sensitivity: "base" })),
+        // VEC-353: a disabled bot still finishing a run stays listed, grayed and after the enabled ones; `members` comes from
+        // the layout, which org.changed refreshes, so a toggle shows here without a reload.
+        .sort((a, b) => Number(!!a.bot.disabled) - Number(!!b.bot.disabled) || a.bot.name.localeCompare(b.bot.name, undefined, { sensitivity: "base" })),
     [members, activeByBot],
   );
 
@@ -77,7 +79,8 @@ export function BotStatusTray() {
           {working.map(({ bot, active, max }) => {
             const full = active >= max;
             const over = active > max;
-            const label = `${bot.name}: working on ${active} of ${max} task${max === 1 ? "" : "s"}${over ? ", over capacity" : full ? ", at capacity" : ""}`;
+            const off = !!bot.disabled;
+            const label = `${bot.name}${off ? " (disabled)" : ""}: working on ${active} of ${max} task${max === 1 ? "" : "s"}${over ? ", over capacity" : full ? ", at capacity" : ""}`;
             return (
               <li key={bot.id} className="shrink-0">
                 <Link
@@ -86,10 +89,11 @@ export function BotStatusTray() {
                   title={label}
                   data-bot-id={bot.id}
                   data-full={full || undefined}
+                  data-disabled={off || undefined}
                   className="flex h-[22px] items-center gap-1.5 rounded-[7px] px-1.5 transition-colors outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring/50 motion-reduce:transition-none"
                 >
-                  <BotAvatar avatar={bot.avatar} name={bot.name} size={16} className="pointer-events-none" />
-                  <span className="max-w-[200px] truncate">{bot.name}</span>
+                  <BotAvatar avatar={bot.avatar} name={bot.name} size={16} className="pointer-events-none" disabled={off} />
+                  <span className={cn("max-w-[200px] truncate", off && "text-faint")}>{bot.name}</span>
                   <span
                     className={cn(
                       "tabular rounded-[5px] font-mono text-[11.5px]",

@@ -26,6 +26,7 @@ import type { Role, Task } from "@/lib/types";
 import type { InviteRow } from "@/components/settings/org-settings";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
+import { tasksBecomeUnassigned } from "@/lib/format";
 
 export interface MemberStats {
   assigned: number;
@@ -255,7 +256,7 @@ export function MemberDetail({
             <AlertDialogDescription>
               {self
                 ? "You'll need a new invite to come back."
-                : `${member.name} loses access to ${org.name}${stats.assigned ? ` and ${stats.assigned} task${stats.assigned === 1 ? "" : "s"} become unassigned` : ""}.`}
+                : `${member.name} loses access to ${org.name}${stats.assigned ? ` and ${tasksBecomeUnassigned(stats.assigned)}` : ""}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

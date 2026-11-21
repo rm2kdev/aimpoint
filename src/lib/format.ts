@@ -26,3 +26,9 @@ export const PRIORITY_LABELS = ["No priority", "Low", "Medium", "High"] as const
 export const TYPE_LABELS = { issue: "Issue", feature: "Feature", task: "Task" } as const;
 /** Longer names for pickers and the task pane ("Feature request" rather than the tag's "Feature"). */
 export const TYPE_NAMES = { issue: "Issue", feature: "Feature request", task: "Task" } as const;
+
+/** "1 assigned task becomes unassigned", "2 assigned tasks become unassigned" (VEC-353). `kind` is an optional adjective. */
+export function tasksBecomeUnassigned(n: number, kind = ""): string {
+  const adj = kind ? `${kind} ` : "";
+  return `${n} ${adj}task${n === 1 ? "" : "s"} ${n === 1 ? "becomes" : "become"} unassigned`;
+}
