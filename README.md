@@ -1,6 +1,44 @@
-# Aimpoint
+<div align="center">
 
-A small, calm task tracker for software teams: issues and feature requests, organised by organisation and project, live for everyone.
+<img src="public/icon-512.png" alt="Aimpoint logo" width="96" height="96">
+
+<h1>Aimpoint</h1>
+
+<p>A small, calm task tracker for software teams: issues and feature requests, organised by organisation and project, live for everyone.</p>
+
+<p>
+  <a href="https://github.com/rm2kdev/aimpoint/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rm2kdev/aimpoint/ci.yml?branch=main&style=flat&label=build" alt="CI build status"></a>
+  <a href="https://github.com/rm2kdev/aimpoint/stargazers"><img src="https://img.shields.io/github/stars/rm2kdev/aimpoint?style=flat" alt="GitHub stars"></a>
+  <a href="https://github.com/rm2kdev/aimpoint/network/members"><img src="https://img.shields.io/github/forks/rm2kdev/aimpoint?style=flat" alt="GitHub forks"></a>
+  <a href="https://github.com/rm2kdev/aimpoint/issues"><img src="https://img.shields.io/github/issues/rm2kdev/aimpoint?style=flat" alt="Open issues"></a>
+  <a href="https://github.com/rm2kdev/aimpoint/commits/main"><img src="https://img.shields.io/github/last-commit/rm2kdev/aimpoint?style=flat" alt="Last commit"></a>
+  <a href="LICENSE.md"><img src="https://img.shields.io/badge/licence-PolyForm%20Shield%201.0.0-blue?style=flat" alt="Licence: PolyForm Shield 1.0.0"></a>
+  <br>
+  <img src="https://img.shields.io/badge/Next.js-16-000000?style=flat&logo=nextdotjs&logoColor=white" alt="Next.js 16">
+  <img src="https://img.shields.io/badge/MongoDB-47A248?style=flat&logo=mongodb&logoColor=white" alt="MongoDB">
+</p>
+
+<p>
+  <a href="https://app.aimpoint.dev/p/rm2kdev/AIM"><strong>Report a bug</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#run-locally"><strong>Run locally</strong></a>
+  &nbsp;·&nbsp;
+  <a href="#deploy-to-vercel"><strong>Deploy</strong></a>
+  &nbsp;·&nbsp;
+  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
+</p>
+
+<img src="docs/images/screenshot-list.png" alt="Aimpoint All Tasks view: tasks grouped by status across projects, with flow steps, priorities, people and bot assignees" width="100%">
+
+<table>
+  <tr>
+    <td width="33%" align="center"><img src="docs/images/screenshot-task-detail.png" alt="Task detail pane with description, comments and activity"><br><sub>Task detail, comments and activity</sub></td>
+    <td width="33%" align="center"><img src="docs/images/screenshot-bot-at-work.png" alt="A bot working a task through its flow, with dependencies"><br><sub>A bot at work: flows and dependencies</sub></td>
+    <td width="33%" align="center"><img src="docs/images/screenshot-list-dark.png" alt="All Tasks view in the dark theme"><br><sub>Dark theme</sub></td>
+  </tr>
+</table>
+
+</div>
 
 > **Found a bug or have an idea? [Report it on the Aimpoint board](https://app.aimpoint.dev/p/rm2kdev/AIM).**
 > We track Aimpoint's own issues and feature requests in Aimpoint, and use it every day to build it. That board is the place to file bugs, ask for features and follow what's being worked on.
