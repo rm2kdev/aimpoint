@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import {
   checkComposer,
   charactersLeft,
+  charactersLeftText,
   clearError as without,
   fieldKey,
   firstInvalid,
@@ -329,7 +330,7 @@ export function TaskComposer(p: TaskComposerProps) {
 
   const descriptionMode = p.descriptionMode ?? "rich";
   const left = charactersLeft(p.descriptionMax, descriptionMode === "plain" ? plain.length : textLength, p.descriptionWarnAt);
-  const leftLine = left !== null && <p className={cn("text-xs", left < 0 ? "text-destructive" : "text-faint")}>{left.toLocaleString()} characters left</p>;
+  const leftLine = left !== null && <p className={cn("text-xs", left < 0 ? "text-destructive" : "text-faint")}>{charactersLeftText(left)}</p>;
   const uploadingLine = uploading > 0 && (
     <p className="text-xs text-faint" aria-live="polite">
       Uploading {uploading === 1 ? "an image" : `${uploading} images`}…

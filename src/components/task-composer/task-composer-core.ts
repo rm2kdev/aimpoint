@@ -157,6 +157,12 @@ export function charactersLeft(max: number | undefined, length: number, warnAt =
   return left < warnAt ? left : null;
 }
 
+/** Counter copy for a `charactersLeft()` result: "12 characters left", "1 character left", "3 characters over". */
+export function charactersLeftText(left: number): string {
+  const n = Math.abs(left);
+  return `${n.toLocaleString()} ${n === 1 ? "character" : "characters"} ${left < 0 ? "over" : "left"}`;
+}
+
 /** Summary heading for the page layout's error box. */
 export function summaryHeading(count: number): string {
   return count === 0 ? "That didn't go through." : count === 1 ? "One thing needs fixing before you send:" : `${count} things need fixing before you send:`;

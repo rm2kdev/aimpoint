@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { LogoMark } from "@/components/logo";
-import { ComposerFieldError, TaskComposer, WAIT_FOR_UPLOADS, fieldKey, requiredText, usePendingUploads, type ComposerErrors } from "@/components/task-composer";
+import { ComposerFieldError, TaskComposer, WAIT_FOR_UPLOADS, charactersLeftText, fieldKey, requiredText, usePendingUploads, type ComposerErrors } from "@/components/task-composer";
 import type { FormField } from "@/lib/form-fields-core";
 import { cn } from "@/lib/utils";
 
@@ -348,7 +348,7 @@ export function PublicForm(p: PublicFormProps) {
                         )}
                         <ComposerFieldError id={ctx.errorId(f.id)} message={message} />
                         {f.kind === "long" && left < 300 && (
-                          <p className={cn("text-xs", left <= 0 ? "text-destructive" : "text-faint")}>{left.toLocaleString()} characters left</p>
+                          <p className={cn("text-xs", left <= 0 ? "text-destructive" : "text-faint")}>{charactersLeftText(left)}</p>
                         )}
                       </div>
                     );

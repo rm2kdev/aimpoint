@@ -8,6 +8,7 @@ import {
   typeCopy,
   checkComposer,
   charactersLeft,
+  charactersLeftText,
   clearError,
   errorOrder,
   fieldKey,
@@ -123,6 +124,12 @@ test("description helpers", () => {
   assert.equal(charactersLeft(10_000, 100), null);
   assert.equal(charactersLeft(10_000, 9_600), 400);
   assert.equal(charactersLeft(10_000, 10_010), -10);
+  assert.equal(charactersLeftText(400), "400 characters left");
+  assert.equal(charactersLeftText(1), "1 character left");
+  assert.equal(charactersLeftText(0), "0 characters left");
+  assert.equal(charactersLeftText(-1), "1 character over");
+  assert.equal(charactersLeftText(-12), "12 characters over");
+  assert.equal(charactersLeftText(-1_234), "1,234 characters over");
   assert.equal(summaryHeading(0), "That didn't go through.");
   assert.equal(summaryHeading(1), "One thing needs fixing before you send:");
   assert.equal(summaryHeading(3), "3 things need fixing before you send:");
