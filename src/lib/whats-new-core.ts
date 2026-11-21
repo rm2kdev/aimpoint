@@ -1,15 +1,28 @@
-// Pure helpers for the "What's new" pop-up (VEC-374): the milestone's lightbox gallery, the release date line,
-// the "All updates" history rows (VEC-377) and the `?whats-new=`
+// Pure helpers for the "What's new" pop-up (VEC-374): slide stepping, the milestone's lightbox gallery, the
+// release date line, the screen-reader announcement, the "All updates" history rows (VEC-377) and the `?whats-new=`
 // deep link (VEC-384) and the sidebar's unseen-update badge (VEC-388). No DOM or React, so `pnpm test` (node --test) covers it.
 // The milestone model and who-sees-what rules live in lib/changelog-core.ts (VEC-373); docs/changelog.md.
 
 import { sortMilestones, type ChangelogMilestone } from "./changelog-core";
 import type { LightboxImage } from "./image-lightbox-core";
 
-/** Index `i` clamped into `0..n-1` (never wraps); the All updates list's keyboard moves use it. */
+/** Slide `i` clamped into `0..n-1`. A tour doesn't wrap: Prev stops at the first slide, the last says "Got it". */
 export function clampSlide(i: number, n: number): number {
   if (n <= 0 || !Number.isFinite(i)) return 0;
   return Math.min(n - 1, Math.max(0, Math.trunc(i)));
+}
+
+/**
+ * The slide a key moves to from `i` of `n`, or null when the key isn't a slide key (or wouldn't move).
+ * ArrowLeft/ArrowRight step, Home/End jump to the ends.
+ */
+export function slideForKey(key: string, i: number, n: number): number | null {
+  if (n < 2) return null;
+  const to =
+    key === "ArrowRight" ? i + 1 : key === "ArrowLeft" ? i - 1 : key === "Home" ? 0 : key === "End" ? n - 1 : null;
+  if (to === null) return null;
+  const next = clampSlide(to, n);
+  return next === i ? null : next;
 }
 
 /**
@@ -36,6 +49,11 @@ export function releaseDateLabel(m: Pick<ChangelogMilestone, "id" | "releasedAt"
   const at = new Date(Date.UTC(Number(d[1]), Number(d[2]) - 1, Number(d[3])));
   if (!Number.isFinite(at.getTime())) return "";
   return new Intl.DateTimeFormat(locale, { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(at);
+}
+
+/** What a screen reader hears when the slide changes: "Change 2 of 5: <entry title>". */
+export function slideAnnouncement(i: number, n: number, title: string): string {
+  return n > 1 ? `Change ${i + 1} of ${n}: ${title}` : title;
 }
 
 /** One row of the "All updates" list (VEC-377). */
