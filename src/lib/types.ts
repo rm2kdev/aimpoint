@@ -87,6 +87,12 @@ export interface UserDoc {
   twoFactorPending?: { secret: string; createdAt: Date } | null;
   /** Wrong second-factor counter (login step and account actions). */
   twoFactorAttempts?: { failures: number; lockedUntil: Date | null };
+  /**
+   * "What's new" (VEC-373, lib/changelog-core.ts): id of the newest changelog milestone this person dismissed.
+   * Only moves forward. Missing = nothing dismissed: an account that predates a milestone sees it once, while
+   * milestones released before `createdAt` never show. New signups are stamped with the newest milestone.
+   */
+  changelogSeen?: string | null;
   createdAt: Date;
 }
 /** Second sign-in step: the password was right, the code is still owed. Stored by token hash; expires. */

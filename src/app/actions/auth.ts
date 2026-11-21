@@ -9,6 +9,7 @@ import { createLoginChallenge } from "@/lib/two-factor";
 import { cols } from "@/lib/db";
 import { PASSWORD_HASH_COST, passwordSchema } from "@/lib/password";
 import { safeNext } from "@/lib/safe-next";
+import { changelogSeenAtSignup } from "@/lib/changelog";
 
 export type FormState =
   | {
@@ -41,6 +42,8 @@ export async function signupAction(_: FormState, form: FormData): Promise<FormSt
     email,
     name,
     passwordHash: await bcrypt.hash(password, PASSWORD_HASH_COST),
+    // Nothing older than the account shows in "What's new" (VEC-373).
+    ...changelogSeenAtSignup(),
     createdAt: new Date(),
   });
   await signIn("credentials", { email, password, redirect: false });

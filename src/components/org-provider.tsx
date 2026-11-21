@@ -9,6 +9,8 @@ import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
 import { reorderProjectsAction } from "@/app/actions/project-order";
+import { dismissChangelog as dismissChangelogAction } from "@/app/actions/changelog";
+import type { ChangelogMilestone } from "@/lib/changelog-core";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
 import type { Result } from "@/lib/result";
 import { isDragActive } from "@/components/ui/drag-provider";
@@ -71,6 +73,13 @@ interface Ctx {
   workload: BotWorkload[];
   /** Active task count by bot id; 0 for bots not in the map. */
   activeByBot: Map<string, number>;
+  /**
+   * "What's new" (VEC-373): the newest changelog milestone the signed-in person hasn't dismissed (and that was
+   * released after they joined), or null for no pop-up. Arrives with the org layout, so navigating costs nothing.
+   */
+  changelog: ChangelogMilestone | null;
+  /** Dismiss `changelog`: hidden here at once, saved with the dismissChangelog action (forward only, idempotent). */
+  dismissChangelog: () => Promise<Result<{ seen: string | null }>>;
 }
 
 /**
@@ -80,7 +89,18 @@ interface Ctx {
  */
 export type OrgBase = Omit<
   Ctx,
-  "counts" | "unread" | "setUnread" | "connected" | "online" | "workload" | "activeByBot" | "projects" | "reorderProjects" | "billing"
+  | "counts"
+  | "unread"
+  | "setUnread"
+  | "connected"
+  | "online"
+  | "workload"
+  | "activeByBot"
+  | "projects"
+  | "reorderProjects"
+  | "billing"
+  | "changelog"
+  | "dismissChangelog"
 >;
 
 const OrgCtx = createContext<Ctx | null>(null);
@@ -124,6 +144,7 @@ export function OrgProvider({
   defaults: serverDefaults,
   flows: serverFlows,
   billing: serverBilling,
+  changelog: serverChangelog = null,
   counts: initialCounts,
   unread: initialUnread,
   workload: initialWorkload,
@@ -142,6 +163,7 @@ export function OrgProvider({
   defaults: OrgDefaults;
   flows?: Record<string, ResolvedFlow>;
   billing?: BillingSummary;
+  changelog?: ChangelogMilestone | null;
   counts: Counts;
   unread: number;
   workload: WorkloadSnapshot;
@@ -317,6 +339,21 @@ export function OrgProvider({
   const [stableBilling, setStableBilling] = useState({ sig: billingSig, billing: serverBilling ?? UNLIMITED_SUMMARY });
   if (stableBilling.sig !== billingSig) setStableBilling({ sig: billingSig, billing: serverBilling ?? UNLIMITED_SUMMARY });
   const billing = stableBilling.billing;
+  // Ids dismissed in this tab: hidden at once, and a layout refresh rendered before the save landed can't bring
+  // the pop-up back. Milestone ids sort in release order (lib/changelog-core.ts).
+  const [dismissedChangelog, setDismissedChangelog] = useState<string | null>(null);
+  // Keyed on the id (content ships with the deploy), so an org.changed layout refresh keeps the context value.
+  const [stableChangelog, setStableChangelog] = useState(serverChangelog);
+  if ((stableChangelog?.id ?? null) !== (serverChangelog?.id ?? null)) setStableChangelog(serverChangelog);
+  const changelog = stableChangelog && !(dismissedChangelog && stableChangelog.id <= dismissedChangelog) ? stableChangelog : null;
+  const changelogId = changelog?.id ?? null;
+  const dismissChangelog = useCallback(async (): Promise<Result<{ seen: string | null }>> => {
+    if (!changelogId) return { ok: true, data: { seen: dismissedChangelog } };
+    setDismissedChangelog((cur) => (cur && cur >= changelogId ? cur : changelogId));
+    return dismissChangelogAction(changelogId).catch(
+      (): Result<{ seen: string | null }> => ({ ok: false, error: "Couldn't save that. It may show again next time." }),
+    );
+  }, [changelogId, dismissedChangelog]);
   const base = useMemo<OrgBase>(
     () => ({
       org,
@@ -348,8 +385,10 @@ export function OrgProvider({
       online,
       workload: workloadSnap.bots,
       activeByBot: new Map(workloadSnap.bots.map((b) => [b.botId, b.active])),
+      changelog,
+      dismissChangelog,
     }),
-    [base, projects, reorderProjects, billing, counts, unread, setUnread, connected, online, workloadSnap],
+    [base, projects, reorderProjects, billing, counts, unread, setUnread, connected, online, workloadSnap, changelog, dismissChangelog],
   );
   return (
     <OrgBaseCtx.Provider value={base}>

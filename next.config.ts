@@ -58,7 +58,7 @@ const nextConfig: NextConfig = {
         // links working (query strings like ?task=VEC-8 are passed through by Next).
         // Skips the real top-level routes, Next internals (_next, __nextjs_*), dotfiles
         // like .well-known, and static files (anything with a dot, e.g. favicon.ico).
-        source: "/:org((?!(?:o|p|f|api|login|signup|onboarding|invite|actions|account)(?:/|$))[^./_][^./]*)/:path*",
+        source: "/:org((?!(?:o|p|f|api|login|signup|onboarding|invite|actions|account|changelog)(?:/|$))[^./_][^./]*)/:path*",
         destination: "/o/:org/:path*",
         permanent: true,
       },
