@@ -16,6 +16,7 @@ import { DragProvider } from "@/components/ui/drag-provider";
 import { InstallPrompt } from "@/components/install-prompt";
 import { OpenWhatsNewContext, WhatsNewDeepLink, WhatsNewDialog, useWhatsNew } from "@/components/whats-new-dialog";
 import { orgPath, taskPath } from "@/lib/paths";
+import { whatsNewBadgeLabel } from "@/lib/whats-new-core";
 
 interface ShellCtx {
   newTask: (defaults?: NewTaskDefaults) => void;
@@ -160,15 +161,29 @@ function NotificationToasts() {
   return null;
 }
 
+/**
+ * The phone/tablet menu button. The drawer is closed by default, so while the person has an unseen What's new
+ * milestone (VEC-389) the button carries a small brand dot and says so in its name, and the sidebar badge isn't
+ * hidden behind a closed drawer. It clears with the badge (useOrg().changelogUnseen).
+ */
 export function MobileNavButton() {
   const { openNav } = useShell();
+  const { changelogUnseen } = useOrg();
+  const unseen = whatsNewBadgeLabel(changelogUnseen);
   return (
     <button
       onClick={openNav}
-      aria-label="Open navigation"
-      className="-ml-1.5 grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent lg:hidden"
+      aria-label={unseen ? `Open navigation, ${unseen} in What's new` : "Open navigation"}
+      className="relative -ml-1.5 grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent lg:hidden"
     >
       <MenuIcon className="size-[18px]" />
+      {unseen && (
+        <span
+          aria-hidden
+          data-whats-new-unseen-dot=""
+          className="absolute top-1 right-1 size-2 rounded-full bg-brand ring-2 ring-background"
+        />
+      )}
     </button>
   );
 }

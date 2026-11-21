@@ -140,6 +140,16 @@ doesn't hide behind a small dot.
 - Render it with `whatsNewBadge(count)` (`src/lib/whats-new-core.ts`): nothing for 0, "New" for 1, the number for
   2 to 9, "9+" above. `whatsNewBadgeLabel(count)` is the screen-reader text ("1 new update" / "N new updates",
   always the real number).
+- What people see (VEC-389): `WhatsNewNavItem` in `src/components/sidebar.tsx` shows that text as a brand pill
+  right-aligned on the What's new row, in the Inbox unread pill's style (18 px high, white on brand, numbers in
+  mono). The label truncates before the pill does. The row's accessible name is "What's new, 1 new update" (the
+  pill is `aria-hidden`, so it isn't read twice). Desktop sidebar and phone drawer read the same
+  `useOrg().changelogUnseen`, so both clear together the moment the milestone is dismissed.
+- Phones and tablets: the drawer is closed by default, so `MobileNavButton` in `src/components/app-shell.tsx`
+  adds a small brand dot to the "Open navigation" button while the count is above 0 and names it "Open
+  navigation, N new update(s) in What's new". It clears with the pill.
+- No pulse or other motion: DESIGN.md keeps "nothing moves on its own" (its two exceptions are the working ring and
+  the spring-loaded row), and the pill is visible enough without one.
 
 ## Where the data flows
 

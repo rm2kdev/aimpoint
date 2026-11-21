@@ -46,6 +46,7 @@ import { logoutAction } from "@/app/actions/auth";
 import { moveTaskAction } from "@/app/actions/tasks";
 import { startInstall, useInstallState } from "@/components/install-prompt";
 import { useOpenWhatsNew } from "@/components/whats-new-dialog";
+import { whatsNewBadge, whatsNewBadgeLabel } from "@/lib/whats-new-core";
 import { accountPath, analyticsPath, orgPath, projectPath, withTask } from "@/lib/paths";
 import { SPRING_BLINK_MS, SPRING_DELAY_MS, TASK_DRAG_GROUP } from "@/lib/task-drag";
 import { matchStatus, type Project, type Task } from "@/lib/types";
@@ -337,17 +338,22 @@ const NAV_ITEM =
 
 /**
  * "What's new" in the nav (VEC-384): opens the "All updates" list of every changelog milestone, so the history is
- * findable without the user menu. Absent until a milestone has shipped. The dot marks an unseen milestone; opening
- * the list never dismisses it (only an opening that shows that milestone does, per useWhatsNew).
+ * findable without the user menu. Absent until a milestone has shipped. While the person has unseen milestones a
+ * brand badge (VEC-389, Inbox pill style) says "New" for one and the count ("9+" cap) for more; opening the list
+ * never dismisses it (only an opening that shows that milestone does, per useWhatsNew). The button's aria-label
+ * carries the count, so the badge itself is aria-hidden and isn't read twice.
  */
 function WhatsNewNavItem({ onNavigate }: { onNavigate?: () => void }) {
   const openWhatsNew = useOpenWhatsNew();
-  const { changelog } = useOrg();
+  const { changelogUnseen } = useOrg();
   if (!openWhatsNew) return null;
+  const badge = whatsNewBadge(changelogUnseen);
+  const label = whatsNewBadgeLabel(changelogUnseen);
   return (
     <button
       type="button"
       data-whats-new-nav=""
+      aria-label={label ? `What's new, ${label}` : undefined}
       onClick={() => {
         onNavigate?.();
         openWhatsNew.history();
@@ -358,9 +364,16 @@ function WhatsNewNavItem({ onNavigate }: { onNavigate?: () => void }) {
         <SparklesIcon />
       </span>
       <span className="truncate">What&apos;s new</span>
-      {changelog && (
-        <span className="ml-auto mr-1 size-[7px] shrink-0 rounded-full bg-brand" data-whats-new-unseen="">
-          <span className="sr-only">, new update</span>
+      {badge && (
+        <span
+          aria-hidden
+          data-whats-new-unseen={badge}
+          className={cn(
+            "tabular ml-auto grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-brand px-1.5 text-[11px] font-medium text-white",
+            badge !== "New" && "font-mono",
+          )}
+        >
+          {badge}
         </span>
       )}
     </button>
