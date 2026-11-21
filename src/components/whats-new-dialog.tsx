@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { ChevronLeftIcon, ChevronRightIcon, ImageOffIcon, Maximize2Icon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, HistoryIcon, ImageOffIcon, Maximize2Icon, SparklesIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { ImageLightbox } from "@/components/image-lightbox";
@@ -12,13 +12,24 @@ import { swipeStep } from "@/lib/image-lightbox-core";
 import { latestMilestone, type ChangelogMilestone } from "@/lib/changelog-core";
 import { MILESTONES } from "@/content/changelog";
 import { useOrg } from "@/components/org-provider";
-import { clampSlide, milestoneGallery, releaseDateLabel, slideAnnouncement, slideForKey } from "@/lib/whats-new-core";
+import {
+  clampSlide,
+  historyRows,
+  milestoneGallery,
+  releaseDateLabel,
+  rowForKey,
+  slideAnnouncement,
+  slideForKey,
+  type HistoryRow,
+} from "@/lib/whats-new-core";
 
 /**
- * The user menu's "What's new" entry reads this (null = no milestone shipped, hide the entry). AppShell provides it;
- * a context of its own keeps the sidebar from importing app-shell (which imports the sidebar).
+ * The user menu's "What's new" / "All updates" entries and the command menu read this (null = no milestone shipped,
+ * hide the entries). `latest` opens the newest milestone, `history` the "All updates" list (VEC-377). AppShell
+ * provides it; a context of its own keeps the sidebar from importing app-shell (which imports the sidebar).
  */
-export const OpenWhatsNewContext = createContext<(() => void) | null>(null);
+export type OpenWhatsNew = { latest: () => void; history: () => void };
+export const OpenWhatsNewContext = createContext<OpenWhatsNew | null>(null);
 export const useOpenWhatsNew = () => useContext(OpenWhatsNewContext);
 
 /** Wait after first load before the pop-up opens, so the page has settled under it. */
@@ -36,7 +47,18 @@ const BUSY_RETRY_MS = 700;
  */
 export function useWhatsNew() {
   const { changelog, dismissChangelog } = useOrg();
-  const [shown, setShown] = useState<{ milestone: ChangelogMilestone; dismisses: boolean } | null>(null);
+  /**
+   * What the dialog shows. `view` is the slide tour of `milestone` or the "All updates" list (VEC-377; `milestone`
+   * then is the one last opened from it, or null, so Back lands on its row). `fromHistory`: the tour was opened
+   * from the list, so it shows a Back to the list. `dismisses`: this opening showed the person's unseen milestone,
+   * so closing it (from either view) counts as seeing it. Browsing other milestones never sets it.
+   */
+  const [shown, setShown] = useState<{
+    milestone: ChangelogMilestone | null;
+    view: "tour" | "history";
+    fromHistory: boolean;
+    dismisses: boolean;
+  } | null>(null);
   const [open, setOpen] = useState(false);
   /** The unseen milestone id this tab already opened (or chose not to), so it opens at most once. */
   const [handled, setHandled] = useState<string | null>(null);
@@ -51,7 +73,7 @@ export function useWhatsNew() {
         return;
       }
       setHandled(changelog.id);
-      setShown({ milestone: changelog, dismisses: true });
+      setShown({ milestone: changelog, view: "tour", fromHistory: false, dismisses: true });
       setOpen(true);
     };
     timer = window.setTimeout(tryOpen, AUTO_OPEN_DELAY_MS);
@@ -61,7 +83,8 @@ export function useWhatsNew() {
   const onOpenChange = useCallback(
     (next: boolean) => {
       setOpen(next);
-      if (next || !shown?.dismisses || changelog?.id !== shown.milestone.id) return;
+      // `dismisses` is only set when this opening showed the unseen milestone (never for browsing older ones).
+      if (next || !shown?.dismisses || !changelog) return;
       // The provider hides it in this tab at once; changelog turns null, so this runs once per milestone.
       void dismissChangelog().then((r) => {
         if (!r.ok) toast.error(r.error);
@@ -71,19 +94,51 @@ export function useWhatsNew() {
   );
 
   const latest = latestMilestone(MILESTONES);
-  const openLatest = useMemo(
+  // Opening it by hand also counts as this tab's auto-open, so the pop-up never re-triggers on top of browsing.
+  const openFromMenu = useMemo(
     () =>
       latest
-        ? () => {
-            if (changelog) setHandled(changelog.id);
-            setShown({ milestone: latest, dismisses: changelog?.id === latest.id });
-            setOpen(true);
+        ? {
+            latest: () => {
+              if (changelog) setHandled(changelog.id);
+              setShown({ milestone: latest, view: "tour", fromHistory: false, dismisses: changelog?.id === latest.id });
+              setOpen(true);
+            },
+            history: () => {
+              if (changelog) setHandled(changelog.id);
+              setShown({ milestone: null, view: "history", fromHistory: false, dismisses: false });
+              setOpen(true);
+            },
           }
         : null,
     [latest, changelog],
   );
 
-  return { milestone: shown?.milestone ?? null, open, onOpenChange, openLatest, holdOthers: open || pending };
+  /** "All updates" from the tour's header, and Back from a milestone opened from the list. */
+  const showHistory = useCallback(() => setShown((s) => (s ? { ...s, view: "history" } : s)), []);
+  /** A row in the list: that milestone in the same slide viewer. Seeing the unseen one counts; older ones don't. */
+  const pickMilestone = useCallback(
+    (m: ChangelogMilestone) =>
+      setShown((s) => ({
+        milestone: m,
+        view: "tour",
+        fromHistory: true,
+        dismisses: (s?.dismisses ?? false) || changelog?.id === m.id,
+      })),
+    [changelog],
+  );
+
+  return {
+    milestone: shown?.milestone ?? null,
+    view: shown?.view ?? "tour",
+    fromHistory: shown?.fromHistory ?? false,
+    open,
+    onOpenChange,
+    openFromMenu,
+    showHistory,
+    pickMilestone,
+    holdOthers: open || pending,
+  };
 }
 
 /**
@@ -95,29 +150,43 @@ export function useWhatsNew() {
  */
 export function WhatsNewDialog({
   milestone,
+  view = "tour",
+  fromHistory = false,
   open,
   onOpenChange,
+  onShowHistory,
+  onPick,
 }: {
   milestone: ChangelogMilestone | null;
+  /** The slide tour of `milestone`, or the "All updates" list of every milestone (VEC-377). */
+  view?: "tour" | "history";
+  /** The tour was opened from the list: its header shows a Back to the list instead of the "All updates" link. */
+  fromHistory?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Opens the list (the tour's "All updates" link and Back). Without it the tour shows no link. */
+  onShowHistory?: () => void;
+  onPick?: (milestone: ChangelogMilestone) => void;
 }) {
+  // The focus target on open and on switching views: Next / Got it in the tour, the current row in the list.
   const primaryRef = useRef<HTMLButtonElement>(null);
+  const rows = useMemo(() => historyRows(MILESTONES), []);
   // Index and origin stay set after closing: the exit animation needs the image and focus goes back to `from`.
   const [lightbox, setLightbox] = useState<{ open: boolean; index: number; from: HTMLElement | null }>({ open: false, index: 0, from: null });
   const gallery = useMemo(() => (milestone ? milestoneGallery(milestone) : null), [milestone]);
   // Counts openings, so each one starts a fresh tour while a closing dialog keeps its slide through the exit.
   const [session, setSession] = useState({ open, n: 0 });
   if (session.open !== open) setSession({ open, n: open ? session.n + 1 : session.n });
-  if (!milestone || !gallery) return null;
-  const date = releaseDateLabel(milestone);
+  const history = view === "history" && !!onPick;
+  if (!history && (!milestone || !gallery)) return null;
+  const date = milestone ? releaseDateLabel(milestone) : "";
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
-          data-whats-new={milestone.id}
+          data-whats-new={history ? "history" : milestone!.id}
           // With a summary Radix wires it up as the description; without one there is nothing to describe.
-          {...(milestone.summary ? {} : { "aria-describedby": undefined })}
+          {...(history || milestone!.summary ? {} : { "aria-describedby": undefined })}
           onOpenAutoFocus={(e) => {
             // Start on the primary action (Next / Got it), so Enter walks the tour and Esc still closes.
             e.preventDefault();
@@ -130,23 +199,29 @@ export function WhatsNewDialog({
             "max-sm:pt-[env(safe-area-inset-top)] max-sm:pr-[env(safe-area-inset-right)] max-sm:pb-[env(safe-area-inset-bottom)] max-sm:pl-[env(safe-area-inset-left)]",
           )}
         >
-          <Tour
-            // A fresh tour (back to the first slide) every time it opens.
-            key={`${milestone.id}:${session.n}`}
-            milestone={milestone}
-            date={date}
-            indexOf={gallery.indexOf}
-            primaryRef={primaryRef}
-            onDone={() => onOpenChange(false)}
-            onExpand={(index, from) => setLightbox({ open: true, index, from })}
-          />
+          {history ? (
+            <History rows={rows} currentId={milestone?.id ?? null} focusRef={primaryRef} onPick={onPick!} />
+          ) : (
+            <Tour
+              // A fresh tour (back to the first slide) every time it opens, and for each milestone picked.
+              key={`${milestone!.id}:${session.n}`}
+              milestone={milestone!}
+              date={date}
+              indexOf={gallery!.indexOf}
+              primaryRef={primaryRef}
+              fromHistory={fromHistory}
+              onShowHistory={onPick ? onShowHistory : undefined}
+              onDone={() => onOpenChange(false)}
+              onExpand={(index, from) => setLightbox({ open: true, index, from })}
+            />
+          )}
         </DialogContent>
       </Dialog>
       {/* A sibling, not a child of the content: the lightbox's own keys must not bubble into the tour's handler. */}
       <ImageLightbox
-        images={gallery.images}
+        images={gallery?.images ?? []}
         index={lightbox.index}
-        open={lightbox.open && open}
+        open={lightbox.open && open && !history}
         onOpenChange={(o) => !o && setLightbox((l) => ({ ...l, open: false }))}
         returnFocus={lightbox.from}
       />
@@ -159,6 +234,8 @@ function Tour({
   date,
   indexOf,
   primaryRef,
+  fromHistory,
+  onShowHistory,
   onDone,
   onExpand,
 }: {
@@ -166,6 +243,8 @@ function Tour({
   date: string;
   indexOf: number[];
   primaryRef: React.RefObject<HTMLButtonElement | null>;
+  fromHistory: boolean;
+  onShowHistory?: () => void;
   onDone: () => void;
   onExpand: (galleryIndex: number, from: HTMLElement | null) => void;
 }) {
@@ -182,6 +261,8 @@ function Tour({
   const regionRef = useRef<HTMLDivElement>(null);
   /** Focus was inside the slide being left (expand button, a link): it goes inert, so carry focus over. */
   const refocus = useRef(false);
+  // Switching in from the list: its row is gone, so start on Next / Got it (on open, onOpenAutoFocus does this).
+  useEffect(() => primaryRef.current?.focus({ preventScroll: true }), [primaryRef]);
   useEffect(() => {
     if (!refocus.current) return;
     refocus.current = false;
@@ -238,9 +319,32 @@ function Tour({
   return (
     <div className="flex min-h-0 flex-1 flex-col" onKeyDown={onKeyDown}>
       <header className="shrink-0 px-5 pt-5 pr-12 pb-3">
+        {fromHistory && onShowHistory && (
+          <button
+            type="button"
+            data-whats-new-back=""
+            onClick={onShowHistory}
+            className="-mt-1 -ml-1.5 mb-1.5 inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[12.5px] font-medium text-muted-foreground outline-none hover:bg-chip hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <ChevronLeftIcon className="size-3.5" aria-hidden /> All updates
+          </button>
+        )}
         <DialogTitle className="text-[15px] leading-snug font-semibold tracking-[-0.01em] text-balance">{milestone.title}</DialogTitle>
         <p className="mt-1 text-[12.5px] text-faint">
           What&apos;s new{date && <> · <time dateTime={milestone.releasedAt}>{date}</time></>}
+          {!fromHistory && onShowHistory && (
+            <>
+              {" · "}
+              <button
+                type="button"
+                data-whats-new-history=""
+                onClick={onShowHistory}
+                className="rounded-sm font-medium text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                All updates
+              </button>
+            </>
+          )}
         </p>
         {milestone.summary && <DialogDescription className="mt-2 text-[13px] leading-5">{milestone.summary}</DialogDescription>}
       </header>
@@ -406,5 +510,100 @@ function Slide({
       {/* Repo-authored Markdown (src/content/changelog), rendered by the same converter as agent descriptions. */}
       <div className="prose-aimpoint mt-1.5" dangerouslySetInnerHTML={{ __html: html }} />
     </section>
+  );
+}
+
+/**
+ * "All updates" (VEC-377): every milestone, newest first, as one button per row (thumbnail, title, date, change
+ * count, summary). A row opens that milestone in the tour. Up/Down/Home/End move between rows. Focus starts on the
+ * row last opened (coming Back) or the newest. Nothing here touches the seen marker.
+ */
+function History({
+  rows,
+  currentId,
+  focusRef,
+  onPick,
+}: {
+  rows: HistoryRow[];
+  currentId: string | null;
+  focusRef: React.RefObject<HTMLButtonElement | null>;
+  onPick: (milestone: ChangelogMilestone) => void;
+}) {
+  const listRef = useRef<HTMLUListElement>(null);
+  const start = Math.max(0, rows.findIndex((r) => r.id === currentId));
+  // Switching in from a tour (its button is gone): land on the row it came from. On open, onOpenAutoFocus does it.
+  useEffect(() => {
+    const el = focusRef.current;
+    el?.focus({ preventScroll: true });
+    el?.scrollIntoView({ block: "nearest" });
+  }, [focusRef]);
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    const buttons = [...(listRef.current?.querySelectorAll<HTMLButtonElement>("[data-whats-new-row]") ?? [])];
+    const to = rowForKey(e.key, buttons.indexOf(document.activeElement as HTMLButtonElement), buttons.length);
+    if (to === null) return;
+    e.preventDefault();
+    // The task list's j/k/arrow shortcuts listen on window.
+    e.stopPropagation();
+    buttons[to]?.focus();
+  };
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="shrink-0 px-5 pt-5 pr-12 pb-3">
+        <DialogTitle className="text-[15px] leading-snug font-semibold tracking-[-0.01em]">All updates</DialogTitle>
+        <DialogDescription className="mt-1 text-[12.5px] text-faint">Every What&apos;s new release, newest first.</DialogDescription>
+      </header>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t">
+        <ul ref={listRef} aria-label="Releases" className="flex flex-col p-2" onKeyDown={onKeyDown}>
+          {rows.map((row, i) => {
+            const milestone = MILESTONES.find((m) => m.id === row.id)!;
+            return (
+              <li key={row.id}>
+                <button
+                  ref={i === start ? focusRef : undefined}
+                  type="button"
+                  data-whats-new-row={row.id}
+                  onClick={() => onPick(milestone)}
+                  className="flex w-full items-start gap-3 rounded-[10px] p-2.5 text-left outline-none hover:bg-chip focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="grid aspect-[16/10] w-[88px] shrink-0 place-items-center overflow-hidden rounded-md bg-chip ring-1 ring-border max-sm:w-[72px]">
+                    {row.thumbnail ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- static screenshot from public/changelog
+                      <img src={row.thumbnail.src} alt="" loading="lazy" decoding="async" draggable={false} className="size-full object-cover" />
+                    ) : (
+                      <SparklesIcon className="size-4 text-faint" aria-hidden />
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline gap-2">
+                      <span className="min-w-0 truncate text-[13.5px] leading-snug font-semibold">{row.title}</span>
+                      {i === 0 && (
+                        <span className="shrink-0 rounded-full bg-chip px-1.5 py-px text-[11px] font-medium text-muted-foreground">Latest</span>
+                      )}
+                    </span>
+                    <span className="mt-0.5 block text-[12px] text-faint">
+                      {row.date && (
+                        <>
+                          <time dateTime={row.releasedAt}>{row.date}</time>
+                          {" · "}
+                        </>
+                      )}
+                      {row.countLabel}
+                    </span>
+                    <span className="mt-1 line-clamp-2 block text-[12.5px] leading-[1.45] text-muted-foreground">{row.blurb}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <p className="flex shrink-0 items-center gap-1.5 border-t px-5 py-3 text-[12px] text-faint">
+        <HistoryIcon className="size-3.5" aria-hidden />
+        {rows.length === 1 ? "1 update so far" : `${rows.length} updates`}
+      </p>
+    </div>
   );
 }

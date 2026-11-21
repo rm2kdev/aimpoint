@@ -25,6 +25,7 @@ import {
   UsersIcon,
   GlobeIcon,
   SparklesIcon,
+  HistoryIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
@@ -493,17 +494,29 @@ function UserMenu({ onNavigate }: { onNavigate?: () => void }) {
             <DownloadIcon className="size-4" /> Install app
           </DropdownMenuItem>
         )}
-        {/* The newest changelog milestone, any time (VEC-374); reopening it doesn't change the seen marker. */}
+        {/* The newest changelog milestone, any time (VEC-374), and every earlier one (VEC-377); reopening or
+            browsing them doesn't change the seen marker. */}
         {openWhatsNew && (
-          <DropdownMenuItem
-            onSelect={() => {
-              onNavigate?.();
-              openWhatsNew();
-            }}
-            className="gap-2.5"
-          >
-            <SparklesIcon className="size-4" /> What&apos;s new
-          </DropdownMenuItem>
+          <>
+            <DropdownMenuItem
+              onSelect={() => {
+                onNavigate?.();
+                openWhatsNew.latest();
+              }}
+              className="gap-2.5"
+            >
+              <SparklesIcon className="size-4" /> What&apos;s new
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                onNavigate?.();
+                openWhatsNew.history();
+              }}
+              className="gap-2.5"
+            >
+              <HistoryIcon className="size-4" /> All updates
+            </DropdownMenuItem>
+          </>
         )}
         <DropdownMenuItem onSelect={() => logoutAction()} className="gap-2.5">
           <LogOutIcon className="size-4" /> Sign out

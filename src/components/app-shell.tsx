@@ -75,7 +75,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <Ctx.Provider value={{ newTask, setViewDefaults, openSearch: () => setSearch(true), openNav: () => setNavOpen(true) }}>
-      <OpenWhatsNewContext.Provider value={whatsNew.openLatest}>
+      <OpenWhatsNewContext.Provider value={whatsNew.openFromMenu}>
       {/* Drag sessions live above the page so a drag survives client-side navigation. */}
       <DragProvider>
       {/* Column: the app row fills what's left above the bot status tray, so every scroll area and the task pane end above it. */}
@@ -117,7 +117,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <NotificationToasts />
       <CommandMenu open={search} onOpenChange={setSearch} />
       <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} />
-      <WhatsNewDialog milestone={whatsNew.milestone} open={whatsNew.open} onOpenChange={whatsNew.onOpenChange} />
+      <WhatsNewDialog
+        milestone={whatsNew.milestone}
+        view={whatsNew.view}
+        fromHistory={whatsNew.fromHistory}
+        open={whatsNew.open}
+        onOpenChange={whatsNew.onOpenChange}
+        onShowHistory={whatsNew.showHistory}
+        onPick={whatsNew.pickMilestone}
+      />
       </DragProvider>
       </OpenWhatsNewContext.Provider>
     </Ctx.Provider>

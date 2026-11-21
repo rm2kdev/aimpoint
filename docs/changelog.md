@@ -92,6 +92,27 @@ Each person has `UserDoc.changelogSeen`: the id of the newest milestone they dis
   marker; closing it dismisses only if it is the person's unseen milestone.
 - Pure helpers (slide clamp, keys, gallery, date line, announcement) live in `src/lib/whats-new-core.ts`.
 
+## All updates (history)
+
+Every milestone can be reopened from a list inside the same dialog (VEC-377). It is a view of the pop-up, not a
+page: the changelog is product-level and the dialog already carries the slide viewer, so there is no
+`/o/<org>/changelog` route to link to.
+
+- Reach it from the "All updates" link next to the release date in the pop-up's header, the user menu's "All updates"
+  entry (under "What's new") and the command menu (Actions: "What's new", "All updates").
+- The list shows every milestone in `MILESTONES`, newest first (sorted with `sortMilestones`, whatever the index
+  order): first screenshot as a thumbnail (a sparkles tile when there is none), title, release date, change count
+  and the summary (or the entry titles). The newest is marked "Latest". With one milestone it is a one-row list, and
+  the link still shows.
+- A row opens that milestone in the same slide viewer (`WhatsNewDialog` with `view="tour"`), with "‹ All updates" at
+  the top to go back; focus returns to that row. Up/Down/Home/End move between rows.
+- Browsing never moves the seen marker: only an opening that showed the person's unseen milestone dismisses on close
+  (the auto pop-up, "What's new" while it is unseen, or picking the unseen one from the list). Opening the list or
+  the menu also counts as this tab's auto-open, so the pop-up never re-triggers on top of it.
+- State lives in `useWhatsNew()` (`view`, `fromHistory`, `showHistory`, `pickMilestone`; `openFromMenu` = the
+  `OpenWhatsNewContext` value `{latest, history}`). Row data comes from `historyRows` in `src/lib/whats-new-core.ts`
+  (tested in `whats-new-core.test.mjs`).
+
 ## Where the data flows
 
 - `src/app/o/[org]/layout.tsx` computes `changelogFor(user)` from the user document it already loaded, and passes

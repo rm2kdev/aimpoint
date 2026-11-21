@@ -1,8 +1,23 @@
 // Run with `pnpm test` (node --test). "What's new" pop-up helpers (VEC-374): slide clamp, key stepping, the
-// milestone's lightbox gallery, the release date line and the slide announcement.
+// milestone's lightbox gallery, the release date line and the slide announcement; history rows (VEC-377).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clampSlide, milestoneGallery, releaseDateLabel, slideAnnouncement, slideForKey } from "./whats-new-core.ts";
+import { registerHooks } from "node:module";
+
+// whats-new-core imports changelog-core with the app's extensionless specifier; let node resolve it to the .ts file.
+// Registered before the dynamic import below (a static import would be hoisted above the hook).
+registerHooks({
+  resolve(specifier, context, next) {
+    try {
+      return next(specifier, context);
+    } catch (err) {
+      if (specifier.startsWith(".") && !/\.[cm]?[jt]s$/.test(specifier)) return next(`${specifier}.ts`, context);
+      throw err;
+    }
+  },
+});
+const { changeCountLabel, clampSlide, historyRows, milestoneGallery, releaseDateLabel, rowForKey, slideAnnouncement, slideForKey } =
+  await import("./whats-new-core.ts");
 
 test("clampSlide keeps the slide inside the tour and never wraps", () => {
   assert.equal(clampSlide(-1, 4), 0);
@@ -57,4 +72,44 @@ test("releaseDateLabel reads the id's date, the same day in every time zone", ()
 test("slideAnnouncement names the position and the entry", () => {
   assert.equal(slideAnnouncement(1, 5, "Zoom into images"), "Change 2 of 5: Zoom into images");
   assert.equal(slideAnnouncement(0, 1, "Only one"), "Only one");
+});
+
+const ms = (id, entries, extra = {}) => ({ id, title: `Release ${id}`, releasedAt: `${id.slice(0, 10)}T09:00:00+08:00`, entries, ...extra });
+
+test("historyRows lists every milestone newest first, whatever the input order", () => {
+  const a = ms("2026-10-01", [{ title: "A", body: "a" }]);
+  const b = ms("2026-11-21", [{ title: "B1", body: "b" }, { title: "B2", body: "b", image: { src: "/changelog/2026-11-21/x.webp", alt: "X" } }]);
+  const c = ms("2026-11-21-hotfix", [{ title: "C", body: "c" }], { releasedAt: "2026-11-21T15:00:00+08:00", summary: "  Fixes.  " });
+  const rows = historyRows([a, c, b], "en-AU");
+  assert.deepEqual(rows.map((r) => r.id), ["2026-11-21-hotfix", "2026-11-21", "2026-10-01"]);
+  assert.equal(rows[1].entryCount, 2);
+  assert.equal(rows[1].countLabel, "2 changes");
+  assert.equal(rows[1].date, "21 November 2026");
+  // The first screenshot in entry order is the thumbnail; none = null.
+  assert.deepEqual(rows[1].thumbnail, { src: "/changelog/2026-11-21/x.webp", alt: "X" });
+  assert.equal(rows[0].thumbnail, null);
+  // The summary when there is one (trimmed), otherwise the entry titles.
+  assert.equal(rows[0].blurb, "Fixes.");
+  assert.equal(rows[1].blurb, "B1 · B2");
+});
+
+test("historyRows with one milestone gives one row, and none gives none", () => {
+  const rows = historyRows([ms("2026-11-21", [{ title: "Only", body: "x" }])]);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].countLabel, "1 change");
+  assert.deepEqual(historyRows([]), []);
+});
+
+test("changeCountLabel and rowForKey", () => {
+  assert.equal(changeCountLabel(0), "0 changes");
+  assert.equal(changeCountLabel(1), "1 change");
+  assert.equal(changeCountLabel(7), "7 changes");
+  assert.equal(rowForKey("ArrowDown", 0, 3), 1);
+  assert.equal(rowForKey("ArrowUp", 2, 3), 1);
+  assert.equal(rowForKey("Home", 2, 3), 0);
+  assert.equal(rowForKey("End", 0, 3), 2);
+  assert.equal(rowForKey("ArrowDown", 2, 3), null);
+  assert.equal(rowForKey("ArrowUp", 0, 3), null);
+  assert.equal(rowForKey("ArrowDown", 0, 1), null);
+  assert.equal(rowForKey("Enter", 0, 3), null);
 });

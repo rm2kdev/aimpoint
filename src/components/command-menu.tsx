@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { ArchiveIcon, BotIcon, ChartNoAxesColumnIcon, CircleUserIcon, CreditCardIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, UserIcon, WorkflowIcon } from "lucide-react";
+import { ArchiveIcon, BotIcon, ChartNoAxesColumnIcon, CircleUserIcon, CreditCardIcon, HistoryIcon, UsersIcon, LayersIcon, PlusIcon, SettingsIcon, ShieldCheckIcon, SlidersHorizontalIcon, SparklesIcon, UserIcon, WorkflowIcon } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -19,9 +19,11 @@ import { TaskStatusRing } from "@/components/task-status-ring";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
 import { accountPath, analyticsPath, billingPath, newTasksPath, orgPath, projectPath, projectSettingsPath, rolesPath, taskPath, withTask } from "@/lib/paths";
+import { useOpenWhatsNew } from "@/components/whats-new-dialog";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { org, projects, isAdmin, billing } = useOrg();
+  const openWhatsNew = useOpenWhatsNew();
   const { newTask } = useShell();
   const router = useRouter();
   const pathname = usePathname();
@@ -86,6 +88,31 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
                 >
                   <PlusIcon /> New task <span className="ml-auto font-mono text-[11px] text-faint">N</span>
                 </CommandItem>
+                {/* The changelog pop-up (VEC-374) and its "All updates" list (VEC-377); neither moves the seen marker. */}
+                {openWhatsNew && (
+                  <>
+                    <CommandItem
+                      data-nav="whats-new"
+                      onSelect={() => {
+                        onOpenChange(false);
+                        openWhatsNew.latest();
+                      }}
+                      className="gap-2.5"
+                    >
+                      <SparklesIcon /> What&apos;s new
+                    </CommandItem>
+                    <CommandItem
+                      data-nav="all-updates"
+                      onSelect={() => {
+                        onOpenChange(false);
+                        openWhatsNew.history();
+                      }}
+                      className="gap-2.5"
+                    >
+                      <HistoryIcon /> All updates <span className="ml-auto text-[11px] text-faint">What&apos;s new</span>
+                    </CommandItem>
+                  </>
+                )}
               </CommandGroup>
               {pageProject && (
                 <CommandGroup heading="This project">
