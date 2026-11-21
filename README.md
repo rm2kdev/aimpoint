@@ -10,7 +10,9 @@
   <a href="https://github.com/rm2kdev/aimpoint/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/rm2kdev/aimpoint/ci.yml?branch=main&style=flat&label=build" alt="CI build status"></a>
   <a href="https://github.com/rm2kdev/aimpoint"><img src="https://img.shields.io/github/stars/rm2kdev/aimpoint?style=flat" alt="GitHub stars"></a>
   <a href="https://github.com/rm2kdev/aimpoint/network/members"><img src="https://img.shields.io/github/forks/rm2kdev/aimpoint?style=flat" alt="GitHub forks"></a>
-  <a href="https://github.com/rm2kdev/aimpoint/issues"><img src="https://img.shields.io/github/issues/rm2kdev/aimpoint?style=flat" alt="Open issues"></a>
+  <a href="https://app.aimpoint.dev/p/rm2kdev/AIM"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.aimpoint.dev%2Fapi%2Fpublic%2Frm2kdev%2FAIM%2Fbadge%2Fopen&style=flat&label=open%20tasks" alt="Open tasks on the Aimpoint board"></a>
+  <a href="https://app.aimpoint.dev/p/rm2kdev/AIM"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.aimpoint.dev%2Fapi%2Fpublic%2Frm2kdev%2FAIM%2Fbadge%2Fbugs&style=flat" alt="Open bugs on the Aimpoint board"></a>
+  <a href="https://app.aimpoint.dev/p/rm2kdev/AIM"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.aimpoint.dev%2Fapi%2Fpublic%2Frm2kdev%2FAIM%2Fbadge%2Ffeatures&style=flat" alt="Open feature requests on the Aimpoint board"></a>
   <a href="https://github.com/rm2kdev/aimpoint/commits/main"><img src="https://img.shields.io/github/last-commit/rm2kdev/aimpoint?style=flat" alt="Last commit"></a>
   <a href="LICENSE.md"><img src="https://img.shields.io/badge/licence-PolyForm%20Shield%201.0.0-blue?style=flat" alt="Licence: PolyForm Shield 1.0.0"></a>
   <br>
@@ -49,6 +51,7 @@
 - Assignment, priority, type (issue / feature request), comments and an activity feed
 - **WYSIWYG** descriptions (Tiptap) with image upload by button, paste or drag and drop
 - **Real-time**: lists, task details, comments and descriptions update live; rows a teammate changed stay highlighted until you've seen them
+- **Public boards**: open a project to the public for bug reports and feature requests, and opt in to issue stats as JSON and shields.io badges, like the ones above (`docs/public-stats.md`)
 - Light, dark and system themes; keyboard first (`N` new task, `⌘K` search, `J`/`K` or arrows to move, `Esc` to close)
 
 Stack: Next.js 16 (App Router, server actions), MongoDB, Auth.js (email + password), shadcn/ui + Tailwind 4, Tiptap.
