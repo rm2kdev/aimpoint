@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent, Extension, getMarkRange, posToDOMRect, type Editor } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import { NodeSelection, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type Transaction } from "@tiptap/pm/state";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { GapCursor } from "@tiptap/pm/gapcursor";
 import type { Node as PMNode, ResolvedPos } from "@tiptap/pm/model";
 import {
@@ -18,12 +20,16 @@ import {
   QuoteIcon,
   StrikethroughIcon,
   LinkIcon,
+  ExternalLinkIcon,
+  PencilIcon,
+  UnlinkIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import { EXPAND_IMAGE_EVENT, expandableImage, type ExpandImageDetail } from "@/components/image-node-view";
+import { isApplePlatform, linkClickAction, openLinkHint, openableHref } from "@/lib/link-open";
 
 export async function uploadImage(orgSlug: string, file: File): Promise<string> {
   const body = new FormData();
@@ -104,6 +110,70 @@ function insertImages(editor: Editor, upload: ImageUploader, files: File[], pos?
   return true;
 }
 
+/**
+ * AIM-6: links open from the editor. Browsers never follow a link inside contenteditable, and the Link
+ * extension's openOnClick stays off so a plain click still places the caret. Editable: Cmd/Ctrl-click or
+ * middle-click opens in a new tab. Read-only: the browser opens it (the anchor has target=_blank + rel).
+ * Editability is read from the view at event time, since RichEditor toggles it with setEditable.
+ * Hrefs other than http(s)/mailto never navigate. In editable mode links also get a tooltip naming the
+ * shortcut (a decoration, so it's never saved into the HTML).
+ */
+const linkOpener = Extension.create({
+  name: "linkOpener",
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+    let hint: string | null = null;
+    let cache: { doc: PMNode; set: DecorationSet } | null = null;
+    const linkAt = (view: EditorView, target: EventTarget | null) => {
+      const el = target instanceof Element ? target : target instanceof Node ? target.parentElement : null;
+      const a = el?.closest("a");
+      return a && view.dom.contains(a) ? a : null;
+    };
+    const handle = (view: EditorView, event: MouseEvent, open: boolean) => {
+      const a = linkAt(view, event.target);
+      if (!a) return false;
+      const action = linkClickAction(view.editable, event);
+      if (action === "ignore" || action === "edit") return false;
+      const href = openableHref(a.getAttribute("href"), window.location.href);
+      if (!href) {
+        event.preventDefault();
+        return true;
+      }
+      if (action === "native") return false;
+      // Also on mousedown, so the caret doesn't jump into the link (and no middle-click paste/autoscroll).
+      event.preventDefault();
+      if (open) window.open(href, "_blank", "noopener,noreferrer");
+      return true;
+    };
+    return [
+      new Plugin({
+        key: new PluginKey("linkOpener"),
+        props: {
+          handleDOMEvents: {
+            mousedown: (view, e) => handle(view, e, false),
+            click: (view, e) => e.button === 0 && handle(view, e, true),
+            auxclick: (view, e) => e.button === 1 && handle(view, e, true),
+          },
+          decorations: (state) => {
+            if (!editor.options.editable) return null;
+            if (cache?.doc !== state.doc) {
+              const link = state.schema.marks.link;
+              hint ??= openLinkHint(isApplePlatform(navigator.platform, navigator.userAgent));
+              const decos: Decoration[] = [];
+              if (link)
+                state.doc.descendants((node, pos) => {
+                  if (node.isText && link.isInSet(node.marks)) decos.push(Decoration.inline(pos, pos + node.nodeSize, { title: hint! }));
+                });
+              cache = { doc: state.doc, set: DecorationSet.create(state.doc, decos) };
+            }
+            return cache.set;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 /** Drops <img> from pasted HTML, for editors that don't take images. */
 const stripImages = (html: string) => html.replace(/<img\b[^>]*>/gi, "");
 
@@ -182,10 +252,11 @@ export function RichEditor({
       // The node view adds the expand button (editor DOM only, never saved).
       ...(images ? [expandableImage().configure({ inline: false, allowBase64: false })] : []),
       Placeholder.configure({ placeholder }),
+      linkOpener,
     ],
     content: value,
     editorProps: {
-      attributes: { class: "prose-aimpoint", "aria-label": ariaLabel, role: "textbox", "aria-multiline": "true" },
+      attributes: { class: "prose-aimpoint [&_a]:cursor-pointer", "aria-label": ariaLabel, role: "textbox", "aria-multiline": "true" },
       transformPastedHTML: (html) => (uploadRef.current?.images === false ? stripImages(html) : html),
       // Handle paste and drop ourselves and return true so the browser/ProseMirror
       // default never inserts a second copy.
@@ -317,6 +388,7 @@ export function RichEditor({
         </div>
       )}
       <EditorContent editor={editor} />
+      {editor && editable && <LinkBubble editor={editor} />}
       {images && (
         <ImageLightbox
           images={lightbox.images}
@@ -327,6 +399,87 @@ export function RichEditor({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Caret inside a link (editable only): the link with Open / Edit / Remove. The one way to open a link on
+ * touch, where there's no Cmd/Ctrl-click (AIM-6).
+ */
+function LinkBubble({ editor }: { editor: Editor }) {
+  const href = useEditorState({
+    editor,
+    selector: ({ editor }) => (editor.isActive("link") ? String(editor.getAttributes("link").href ?? "") : null),
+  });
+  const safe = typeof window === "undefined" ? null : openableHref(href, window.location.href);
+  const keepFocus = (e: React.MouseEvent) => e.preventDefault();
+  return (
+    <BubbleMenu
+      editor={editor}
+      pluginKey="linkBubble"
+      shouldShow={({ editor, view, state }) => editor.isEditable && state.selection.empty && view.hasFocus() && editor.isActive("link")}
+      // Under the whole link, not the caret.
+      getReferencedVirtualElement={() => {
+        const { state, view } = editor;
+        const range = getMarkRange(state.selection.$from, state.schema.marks.link);
+        if (!range) return null;
+        return { getBoundingClientRect: () => posToDOMRect(view, range.from, range.to) };
+      }}
+      options={{ placement: "bottom-start", offset: 6, flip: true, shift: { padding: 8 } }}
+      className="z-50"
+    >
+      <div
+        role="toolbar"
+        aria-label="Link"
+        className="flex max-w-[min(420px,calc(100vw-16px))] items-center gap-0.5 rounded-lg border border-border bg-background p-0.5 text-[12.5px] shadow-md"
+      >
+        {safe ? (
+          <a
+            href={safe}
+            target="_blank"
+            rel="noopener noreferrer"
+            onMouseDown={keepFocus}
+            title={safe}
+            className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-foreground hover:bg-accent"
+          >
+            <ExternalLinkIcon className="size-[14px] shrink-0 text-muted-foreground" />
+            <span className="truncate">{href}</span>
+          </a>
+        ) : (
+          <span className="truncate px-2 py-1 text-muted-foreground" title="This link can't be opened">
+            {href || "No URL"}
+          </span>
+        )}
+        <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
+        <BubbleButton
+          label="Edit link"
+          onMouseDown={keepFocus}
+          onClick={() => {
+            const url = window.prompt("Link URL", href ?? "");
+            if (url === null) return;
+            if (!url.trim()) return void editor.chain().focus().extendMarkRange("link").unsetLink().run();
+            if (/^(https?:\/\/|mailto:)/i.test(url.trim())) editor.chain().focus().extendMarkRange("link").setLink({ href: url.trim() }).run();
+          }}
+        >
+          <PencilIcon />
+        </BubbleButton>
+        <BubbleButton label="Remove link" onMouseDown={keepFocus} onClick={() => editor.chain().focus().extendMarkRange("link").unsetLink().run()}>
+          <UnlinkIcon />
+        </BubbleButton>
+      </div>
+    </BubbleMenu>
+  );
+}
+
+function BubbleButton({ label, ...props }: { label: string } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground [&_svg]:size-[14px]"
+      {...props}
+    />
   );
 }
 
