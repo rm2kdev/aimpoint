@@ -23,19 +23,20 @@ import {
 } from "@/components/ui/alert-dialog";
 import { setProjectPublicAccess } from "@/app/actions/project-public";
 import { STAGE_LABELS } from "@/lib/stages";
-import { publicProjectPath } from "@/lib/paths";
-import { intakeSkips } from "@/lib/project-public-core";
+import { publicBadgePath, publicProjectPath } from "@/lib/paths";
+import { BADGE_METRICS, badgeLabel, badgeMarkdown, intakeSkips, shieldsImageUrl } from "@/lib/project-public-core";
 import { isFormDestinationStage, newTaskStatusIn, type ProjectPublicAccess, type Status } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
  * Public access (VEC-256) on a project's settings page, under External forms. Admins switch the project public,
  * pick the statuses signed-in accounts may submit into (this project's backlog / triage / not-started statuses; the
- * first is the default) and whether comments show publicly. Members see the same state read-only. `access` comes
+ * first is the default), whether comments show publicly and whether task counts are served for README badges
+ * (VEC-364, with copyable shields.io Markdown). Members see the same state read-only. `access` comes
  * from the server render; every save refreshes it, and other admins' saves arrive through org.changed.
  */
 
-type Patch = { enabled?: boolean; submitStatusIds?: string[]; showComments?: boolean };
+type Patch = { enabled?: boolean; submitStatusIds?: string[]; showComments?: boolean; showStats?: boolean };
 
 /** Allowed statuses in saved order: the default first, the rest in the project's status order. */
 function ordered(ids: string[], destinations: Status[]): string[] {
@@ -77,6 +78,7 @@ export function ProjectPublic({
 
   const enabled = draft?.enabled ?? access.enabled;
   const showComments = draft?.showComments ?? access.showComments;
+  const showStats = draft?.showStats ?? access.showStats;
   const allowed = ordered(draft?.submitStatusIds ?? access.submitStatusIds, destinations);
   const path = publicProjectPath(org.slug, projectKey);
   const url = `${origin}${path}`;
@@ -165,7 +167,12 @@ export function ProjectPublic({
                 </dd>
                 <dt className="text-faint">Comments</dt>
                 <dd className="text-muted-foreground">{showComments ? "Shown publicly" : "Hidden"}</dd>
+                <dt className="text-faint">Statistics</dt>
+                <dd className="text-muted-foreground" data-public-stats-state>
+                  {showStats ? "Shown (README badges)" : "Off"}
+                </dd>
               </dl>
+              {showStats && <ReadmeBadges slug={org.slug} projectKey={projectKey} origin={origin} copied={copied} copy={copy} />}
             </>
           )}
           <p className="text-[12.5px] text-faint">Only an admin can change this.</p>
@@ -265,6 +272,28 @@ export function ProjectPublic({
             aria-label="Show comments publicly"
           />
         </div>
+
+        <div className={cn("flex items-start gap-3", !enabled && "opacity-60")} data-public-stats-setting>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13.5px] font-medium">Show statistics</div>
+            <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+              Publish task counts (open, in progress, done, bugs, feature requests) for README badges and on the public page. Counts only, no
+              titles or people.
+            </p>
+            {!enabled && (
+              <p className="mt-0.5 text-[12.5px] text-faint" data-stats-needs-public>
+                Make the project public to publish statistics.
+              </p>
+            )}
+          </div>
+          <Switch
+            checked={showStats}
+            disabled={pending || !enabled}
+            onCheckedChange={(v) => save({ showStats: v }, v ? "Statistics are public" : "Statistics are hidden")}
+            aria-label="Show statistics"
+          />
+        </div>
+        {enabled && showStats && <ReadmeBadges slug={org.slug} projectKey={projectKey} origin={origin} copied={copied} copy={copy} />}
       </div>
 
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
@@ -306,6 +335,91 @@ function SkipNote({ skipped, into, children }: { skipped: Status; into?: string;
         {skipped.category === "triage" ? ", so your triage bot won't pick them up" : ""}.
       </span>
       {children}
+    </div>
+  );
+}
+
+/** Hosts shields.io can't fetch from (dev/LAN), where the previews show an error instead of a count. */
+function unreachable(origin: string): boolean {
+  try {
+    const { protocol, hostname: h } = new URL(origin);
+    return (
+      protocol !== "https:" ||
+      h === "localhost" ||
+      h.endsWith(".local") ||
+      /^(127|10)\./.test(h) ||
+      /^192\.168\./.test(h) ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(h)
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * README badges (VEC-364): one row per badge metric with a live shields.io preview and a button copying its Markdown,
+ * `[![Label](shields url)](public board url)`, built from this deployment's origin. Shown while statistics are on.
+ */
+function ReadmeBadges({
+  slug,
+  projectKey,
+  origin,
+  copied,
+  copy,
+}: {
+  slug: string;
+  projectKey: string;
+  origin: string;
+  copied: string | null;
+  copy: ReturnType<typeof useCopy>["copy"];
+}) {
+  if (!origin) return null;
+  const board = `${origin}${publicProjectPath(slug, projectKey)}`;
+  const rows = BADGE_METRICS.map((m) => {
+    const endpoint = `${origin}${publicBadgePath(slug, projectKey, m)}`;
+    const label = badgeLabel(m);
+    return { m, label: label.charAt(0).toUpperCase() + label.slice(1), endpoint, md: badgeMarkdown(m, endpoint, board) };
+  });
+  const all = rows.map((r) => r.md).join(" ");
+  return (
+    <div className="grid gap-2" data-readme-badges>
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13.5px] font-medium">README badges</div>
+          <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+            Markdown for a GitHub README. Each badge links to the public page; shields.io refreshes the counts every few minutes.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => copy("badge-all", all, "All badges")} data-copy-all-badges>
+          {copied === "badge-all" ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />} Copy all
+        </Button>
+      </div>
+      <ul className="divide-y divide-border rounded-[10px] border border-border" aria-label="README badges">
+        {rows.map((r) => (
+          <li key={r.m} className="flex h-10 items-center gap-3 px-3.5" data-badge-metric={r.m} data-badge-markdown={r.md}>
+            <span className="w-[120px] shrink-0 truncate text-[13px]">{r.label}</span>
+            <span className="flex min-w-0 flex-1 items-center">
+              {/* eslint-disable-next-line @next/next/no-img-element -- shields.io SVG, rendered by its own service */}
+              <img src={shieldsImageUrl(r.endpoint)} alt={`${r.label} badge preview`} height={20} className="h-5 w-auto max-w-full" loading="lazy" />
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 gap-1.5 text-[12.5px]"
+              onClick={() => copy(`badge-${r.m}`, r.md, `${r.label} badge`)}
+              aria-label={`Copy the Markdown for the ${r.label} badge`}
+            >
+              {copied === `badge-${r.m}` ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />} Copy Markdown
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {unreachable(origin) && (
+        <p className="text-[12.5px] text-faint" data-badges-unreachable>
+          shields.io only fetches public https addresses, so it can&rsquo;t reach {new URL(origin).host} and the previews show an error here.
+          Copy the snippets from your public Aimpoint address.
+        </p>
+      )}
     </div>
   );
 }

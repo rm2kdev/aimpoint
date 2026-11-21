@@ -229,12 +229,16 @@ export async function loadPublicProject(slug: unknown, key: unknown): Promise<Pu
   if (!f) return null;
   if (!f.available) return { available: false };
   const c = await cols();
-  const { statuses, byId, allowed, shape } = await viewParts(f);
-  const docs = await c.tasks
-    .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null }, { projection: TASK_FIELDS })
-    .sort({ updatedAt: -1 })
-    .limit(PUBLIC_TASKS_MAX + 1)
-    .toArray();
+  const [{ statuses, byId, allowed, shape }, docs, stats] = await Promise.all([
+    viewParts(f),
+    c.tasks
+      .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null }, { projection: TASK_FIELDS })
+      .sort({ updatedAt: -1 })
+      .limit(PUBLIC_TASKS_MAX + 1)
+      .toArray(),
+    // Header counts (VEC-364) only when the admin opted into public statistics.
+    f.project.publicAccess?.showStats ? projectStats(f.project) : null,
+  ]);
   const view: PublicProjectView = {
     org: { name: f.org.name, slug: f.org.slug },
     project: { name: f.project.name, key: f.project.key, color: f.project.color },
@@ -243,6 +247,7 @@ export async function loadPublicProject(slug: unknown, key: unknown): Promise<Pu
     showComments: !!f.project.publicAccess?.showComments,
     tasks: docs.slice(0, PUBLIC_TASKS_MAX).map(shape),
     truncated: docs.length > PUBLIC_TASKS_MAX,
+    stats: stats && { open: stats.open, inProgress: stats.inProgress, done: stats.done, total: stats.total },
   };
   return { available: true, view };
 }
@@ -329,19 +334,24 @@ export async function loadPublicStats(slug: unknown, key: unknown, ip: string): 
   if (!f || !f.available || !f.project.publicAccess?.showStats) return { ok: false, status: 404 };
   const wait = await hit(`public-stats:${ipKey(ip)}:${f.project._id.toHexString()}`, PUBLIC_STATS_RATE_LIMIT);
   if (wait !== null) return { ok: false, status: 429, retryAfter: wait };
+  return { ok: true, project: { key: f.project.key, name: f.project.name }, stats: await projectStats(f.project) };
+}
+
+/** One $group aggregation (status + type) over a project's non-archived tasks, counted by stage. No rate limit. */
+async function projectStats(project: Pick<ProjectDoc, "_id" | "orgId">): Promise<PublicProjectStats> {
   const c = await cols();
   const [groups, statuses] = await Promise.all([
     c.tasks
       .aggregate<{ _id: { statusId: ObjectId; type: string }; count: number }>([
-        { $match: { orgId: f.project.orgId, projectId: f.project._id, archivedAt: null } },
+        { $match: { orgId: project.orgId, projectId: project._id, archivedAt: null } },
         { $group: { _id: { statusId: "$statusId", type: "$type" }, count: { $sum: 1 } } },
       ])
       .toArray(),
-    loadStatuses(f.project.orgId, f.project._id),
+    loadStatuses(project.orgId, project._id),
   ]);
   const stageOf = new Map(statuses.map((s) => [s._id.toHexString(), s.category]));
   const rows: StatsRow[] = groups.map((g) => ({ stage: stageOf.get(String(g._id.statusId)) ?? null, type: g._id.type, count: g.count }));
-  return { ok: true, project: { key: f.project.key, name: f.project.name }, stats: computeStats(rows) };
+  return computeStats(rows);
 }
 
 /* ---------------- submitting ---------------- */

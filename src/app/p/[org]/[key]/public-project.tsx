@@ -89,6 +89,7 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
             <p className="mt-1 text-[13px] text-muted-foreground">
               Public tickets{canSubmit ? ". Anyone with an Aimpoint account can submit one." : ". This project isn't taking new tickets."}
             </p>
+            {view.stats && <StatsLine stats={view.stats} />}
           </div>
           {canSubmit && p.mode !== "submit" && (
             <Button asChild className="h-9" data-submit-ticket>
@@ -425,6 +426,25 @@ function SubmitForm({ slug, projectKey, submitStatuses, statuses }: { slug: stri
 }
 
 /* ---------------- unavailable ---------------- */
+
+/** Task counts under the project title (VEC-364), when the project shows statistics. */
+function StatsLine({ stats }: { stats: NonNullable<PublicProjectView["stats"]> }) {
+  const items: [string, number][] = [
+    ["open", stats.open],
+    ["in progress", stats.inProgress],
+    ["done", stats.done],
+    ["total", stats.total],
+  ];
+  return (
+    <p data-public-stats className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[12.5px] text-faint">
+      {items.map(([label, n]) => (
+        <span key={label}>
+          <span className="font-medium text-muted-foreground tabular-nums">{n}</span> {label}
+        </span>
+      ))}
+    </p>
+  );
+}
 
 export function PublicUnavailable({ message }: { message: string }) {
   return (

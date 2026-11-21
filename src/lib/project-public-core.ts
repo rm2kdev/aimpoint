@@ -277,6 +277,22 @@ export function shapeBadge(metric: unknown, stats: PublicProjectStats): ShieldsB
   return { schemaVersion: 1, label: b.label, message: String(n), color: b.color(n) };
 }
 
+/** A badge metric's label, as shown on the badge (and in the README badges list in settings). */
+export const badgeLabel = (metric: BadgeMetric): string => BADGES[metric].label;
+
+/** The shields.io image URL rendering one of our endpoint badges (`endpointUrl` absolute, encoded as `url=`). */
+export const shieldsImageUrl = (endpointUrl: string): string => `https://img.shields.io/endpoint?url=${encodeURIComponent(endpointUrl)}`;
+
+/**
+ * README Markdown for one badge (VEC-364): `[![Label](shields image)](public board)`, so the badge links to the
+ * public project page. The alt text is the label with a capital first letter; brackets and backslashes are escaped.
+ */
+export function badgeMarkdown(metric: BadgeMetric, endpointUrl: string, boardUrl: string): string {
+  const label = badgeLabel(metric);
+  const alt = (label.charAt(0).toUpperCase() + label.slice(1)).replace(/[\\[\]]/g, (c) => `\\${c}`);
+  return `[![${alt}](${shieldsImageUrl(endpointUrl)})](${boardUrl})`;
+}
+
 /** Requests per client IP per public project to the stats + badge routes in each window. */
 export const PUBLIC_STATS_RATE_LIMIT = { max: 120, windowMs: 60_000 } as const;
 

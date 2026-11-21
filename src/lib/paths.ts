@@ -53,6 +53,11 @@ export const PUBLIC_PROJECT_PREFIX = "/p";
 /** A public project's page for anyone: /p/<org>/<KEY>. */
 export const publicProjectPath = (slug: string, projectKey: string) =>
   `${PUBLIC_PROJECT_PREFIX}/${encodeURIComponent(slug)}/${encodeURIComponent(projectKey)}`;
+/** A public project's stats JSON (VEC-363): /api/public/<org>/<KEY>/stats. */
+export const publicStatsPath = (slug: string, projectKey: string) => `/api/public/${encodeURIComponent(slug)}/${encodeURIComponent(projectKey)}/stats`;
+/** A public project's shields.io endpoint badge (VEC-363): /api/public/<org>/<KEY>/badge/<metric>. */
+export const publicBadgePath = (slug: string, projectKey: string, metric: string) =>
+  `/api/public/${encodeURIComponent(slug)}/${encodeURIComponent(projectKey)}/badge/${encodeURIComponent(metric)}`;
 
 /** Task views that can host the `?task=` side pane. */
 export type TaskView = "all" | "my" | "inbox" | "archived";

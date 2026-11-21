@@ -278,6 +278,8 @@ export interface PublicProjectView {
   tasks: PublicTask[];
   /** More non-archived tasks exist than were returned. */
   truncated: boolean;
+  /** Task counts by stage (VEC-364) when the project shows statistics (`publicAccess.showStats`), else null. */
+  stats: { open: number; inProgress: number; done: number; total: number } | null;
 }
 /**
  * What the public loader returns for a project that is public: the view, or `unavailable` while the org's plan

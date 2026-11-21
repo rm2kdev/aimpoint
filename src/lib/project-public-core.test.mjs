@@ -18,6 +18,9 @@ import {
   parsePublicRef,
   computeStats,
   shapeBadge,
+  badgeLabel,
+  badgeMarkdown,
+  shieldsImageUrl,
   isBadgeMetric,
   BADGE_METRICS,
   STATS_TYPES,
@@ -259,4 +262,16 @@ test("shapeBadge: no open bugs is green, unknown metrics are null", () => {
 
 test("stats are cached by shared caches for 5 minutes", () => {
   assert.equal(PUBLIC_STATS_CACHE, "public, s-maxage=300, stale-while-revalidate=600");
+});
+
+test("badgeMarkdown links the shields image to the public board (VEC-364)", () => {
+  const endpoint = "https://app.aimpoint.dev/api/public/rm2kdev/AIM/badge/bugs";
+  const board = "https://app.aimpoint.dev/p/rm2kdev/AIM";
+  assert.equal(shieldsImageUrl(endpoint), "https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.aimpoint.dev%2Fapi%2Fpublic%2Frm2kdev%2FAIM%2Fbadge%2Fbugs");
+  assert.equal(badgeMarkdown("bugs", endpoint, board), `[![Open bugs](${shieldsImageUrl(endpoint)})](${board})`);
+  assert.equal(badgeMarkdown("in-progress", endpoint, board).slice(0, 16), "[![In progress](");
+  for (const m of BADGE_METRICS) assert.ok(badgeLabel(m).length > 0);
+  // Labels match the badge JSON.
+  const stats = computeStats([]);
+  for (const m of BADGE_METRICS) assert.equal(shapeBadge(m, stats).label, badgeLabel(m));
 });

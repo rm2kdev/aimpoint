@@ -49,7 +49,9 @@ The response is exactly the [shields.io endpoint schema](https://shields.io/badg
 ![Open bugs](https://img.shields.io/endpoint?url=https%3A%2F%2Fapp.aimpoint.dev%2Fapi%2Fpublic%2Frm2kdev%2FAIM%2Fbadge%2Fbugs)
 ```
 
-(URL-encode the endpoint URL). shields.io query options such as `&label=issues` or `&style=flat-square` override
+(URL-encode the endpoint URL). Project settings > Public access > README badges (VEC-364) lists every metric with a
+live preview and copies this Markdown, wrapped in a link to the public board: `[![Open bugs](<shields url>)](<origin>/p/<org>/<KEY>)`.
+With statistics on, the public page header also shows the open / in progress / done / total counts. shields.io query options such as `&label=issues` or `&style=flat-square` override
 the label and style on its side.
 
 ## Caching and limits
