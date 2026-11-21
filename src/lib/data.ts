@@ -237,6 +237,9 @@ export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> 
  * Per-bot active task count for the org: non-triage `in_progress` claims on open (not done/cancelled),
  * unarchived tasks, the same rules withWorkingBots uses for the ring, so a claim left on a closed task never
  * counts. Every bot in the org gets an entry (0 when idle). Kept live by refreshWorkload() in publish().
+ * VEC-381: `replying` lists the tasks (keys, oldest run first) where the bot is running with no claim (a live run
+ * mark: a reply to a mention, a close-out), so the tray shows it busy whenever the ring spins for it. Those don't
+ * count towards `active`, which is its capacity.
  */
 export async function loadBotWorkload(orgId: ObjectId): Promise<BotWorkload[]> {
   const c = await cols();
@@ -259,7 +262,32 @@ export async function loadBotWorkload(orgId: ObjectId): Promise<BotWorkload[]> {
       if (openIds.has(task)) active.get(cl.botId.toHexString())?.add(task);
     }
   }
-  return [...active].map(([botId, tasks]) => ({ botId, active: tasks.size }));
+  const replying = await loadReplyingKeys(orgId, active);
+  return [...active].map(([botId, tasks]) => ({ botId, active: tasks.size, replying: replying.get(botId) ?? [] }));
+}
+
+/** Per bot, the keys of the tasks it holds a live run mark on, skipping tasks already counted as its claimed work. */
+async function loadReplyingKeys(orgId: ObjectId, claimed: Map<string, Set<string>>): Promise<Map<string, string[]>> {
+  const c = await cols();
+  const out = new Map<string, string[]>();
+  const marks = await c.runMarks.find({ orgId, expiresAt: { $gt: new Date() } }, { projection: { taskId: 1, botId: 1 } }).sort({ startedAt: 1 }).toArray();
+  const live = marks.filter((m) => claimed.has(m.botId.toHexString()) && !claimed.get(m.botId.toHexString())!.has(m.taskId.toHexString()));
+  if (!live.length) return out;
+  const tasks = await c.tasks
+    .find({ _id: { $in: [...new Set(live.map((m) => m.taskId.toHexString()))].map((id) => new ObjectId(id)) }, orgId }, { projection: { _id: 1, projectId: 1, number: 1 } })
+    .toArray();
+  const projects = await c.projects.find({ _id: { $in: [...new Set(tasks.map((t) => t.projectId.toHexString()))].map((id) => new ObjectId(id)) } }, { projection: { key: 1 } }).toArray();
+  const pk = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
+  const keyOf = new Map(tasks.map((t) => [t._id.toHexString(), `${pk.get(t.projectId.toHexString()) ?? "?"}-${t.number}`]));
+  for (const m of live) {
+    const key = keyOf.get(m.taskId.toHexString());
+    if (!key) continue;
+    const bot = m.botId.toHexString();
+    const keys = out.get(bot) ?? [];
+    if (!keys.includes(key)) keys.push(key);
+    out.set(bot, keys);
+  }
+  return out;
 }
 
 /** loadBotWorkload stamped with the time taken before the query (see WorkloadSnapshot). */

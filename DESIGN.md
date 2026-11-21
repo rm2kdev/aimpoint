@@ -354,7 +354,7 @@ An 18px SVG ring (14–20px depending on context) in the status's own colour.
 - **Unstarted and started:** a 1.6px track with a heavier 3.4px arc. The arc fills to (index + 1) / (active statuses + 1) of the way around, so progress reads across the org's own ordered workflow. The arc animates over 300ms.
 - **Done:** a filled disc with a white check.
 - **Cancelled:** a filled disc with a white cross.
-- **Working (any category, `working` prop):** a short 1.3px arc in the status colour orbits just outside the ring (r 9.3 of the 20-unit box) once every 1.1s, so the ring, its colour and its progress arc stay untouched underneath and the icon keeps its size. Labelled "A bot is working on this". Under `prefers-reduced-motion` the orbit stops and becomes a static faint full halo.
+- **Working (any category, `working` prop):** a short 1.3px arc in the status colour orbits just outside the ring (r 9.3 of the 20-unit box) once every 1.1s, so the ring, its colour and its progress arc stay untouched underneath and the icon keeps its size. Labelled with the bots running on it ("Hermes is working on this"); it spins for every run a bot has on the task, replies and close-outs included (docs/bots-working.md). Under `prefers-reduced-motion` the orbit stops and becomes a static faint full halo.
 
 The same ring heads every status group, every status picker and the detail pane title. The empty state reuses it at 44px, with a faint track and a blue quarter arc.
 

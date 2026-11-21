@@ -16,6 +16,7 @@ import { useOrg } from "@/components/org-provider";
 import { useShell } from "@/components/app-shell";
 import { ProjectDot } from "@/components/bits";
 import { TaskStatusRing } from "@/components/task-status-ring";
+import { useLiveTasks } from "@/components/live-tasks";
 import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
 import { accountPath, analyticsPath, billingPath, newTasksPath, orgPath, projectPath, projectSettingsPath, rolesPath, taskPath, withTask } from "@/lib/paths";
@@ -28,7 +29,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
   const router = useRouter();
   const pathname = usePathname();
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<Task[]>([]);
+  const [fetched, setResults] = useState<Task[]>([]);
+  // Rings in the results follow live task.upsert events (VEC-381).
+  const results = useLiveTasks(fetched);
   const seq = useRef(0);
 
   useEffect(() => {

@@ -927,6 +927,8 @@ export interface Member {
 export interface BotWorkload {
   botId: string;
   active: number;
+  /** Keys of tasks it's running on without a claim (answering a mention, closing out), VEC-381; not counted in `active`. */
+  replying: string[];
 }
 /** A workload snapshot; `at` (ms, taken before the query) orders snapshots so an older one never replaces a newer one. */
 export interface WorkloadSnapshot {

@@ -7,28 +7,34 @@ import { BotAvatar } from "@/components/bits";
 import { BOT_MAX_TASKS_DEFAULT } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
+import { trayLabel } from "@/lib/bot-tray-core";
 
 /**
  * A slim bar pinned to the bottom of the app listing the bots that are working right now, each as
- * avatar + name + `active/max` (VEC-30). Counts come live from useOrg().activeByBot (VEC-29) and the
+ * avatar + name + `active/max` (VEC-30). Counts come live from useOrg().workload (VEC-29) and the
  * max from the bot's maxTasks setting (VEC-28). Idle bots are hidden. Clicking a bot opens its detail
  * page in settings, whose Work section lists the tasks it holds.
+ *
+ * VEC-381: a bot running on a task with no claim (answering a mention, closing out; the same runs that spin the
+ * task's ring) is listed too, with that task's key. Those runs don't count towards `active/max` (its capacity),
+ * so a bot that is only replying shows the key and no count.
  *
  * Overflow scrolls horizontally (never wraps), with a fade on whichever edge has more to show.
  */
 export function BotStatusTray() {
-  const { org, members, activeByBot } = useOrg();
+  const { org, members, workload } = useOrg();
 
-  const working = useMemo(
-    () =>
+  const working = useMemo(() => {
+    const byBot = new Map(workload.map((w) => [w.botId, w]));
+    return (
       members
-        .filter((m) => m.kind === "bot" && (activeByBot.get(m.id) ?? 0) > 0)
-        .map((m) => ({ bot: m, active: activeByBot.get(m.id) ?? 0, max: m.maxTasks ?? BOT_MAX_TASKS_DEFAULT }))
+        .filter((m) => m.kind === "bot" && ((byBot.get(m.id)?.active ?? 0) > 0 || (byBot.get(m.id)?.replying?.length ?? 0) > 0))
+        .map((m) => ({ bot: m, active: byBot.get(m.id)?.active ?? 0, replying: byBot.get(m.id)?.replying ?? [], max: m.maxTasks ?? BOT_MAX_TASKS_DEFAULT }))
         // VEC-353: a disabled bot still finishing a run stays listed, grayed and after the enabled ones; `members` comes from
         // the layout, which org.changed refreshes, so a toggle shows here without a reload.
-        .sort((a, b) => Number(!!a.bot.disabled) - Number(!!b.bot.disabled) || a.bot.name.localeCompare(b.bot.name, undefined, { sensitivity: "base" })),
-    [members, activeByBot],
-  );
+        .sort((a, b) => Number(!!a.bot.disabled) - Number(!!b.bot.disabled) || a.bot.name.localeCompare(b.bot.name, undefined, { sensitivity: "base" }))
+    );
+  }, [members, workload]);
 
   const scroller = useRef<HTMLUListElement>(null);
   const [fade, setFade] = useState({ left: false, right: false });
@@ -76,11 +82,11 @@ export function BotStatusTray() {
           className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto whitespace-nowrap [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           style={mask ? { maskImage: mask, WebkitMaskImage: mask } : undefined}
         >
-          {working.map(({ bot, active, max }) => {
+          {working.map(({ bot, active, replying, max }) => {
             const full = active >= max;
             const over = active > max;
             const off = !!bot.disabled;
-            const label = `${bot.name}${off ? " (disabled)" : ""}: working on ${active} of ${max} task${max === 1 ? "" : "s"}${over ? ", over capacity" : full ? ", at capacity" : ""}`;
+            const label = `${bot.name}${off ? " (disabled)" : ""}: ${trayLabel(active, max, replying)}`;
             return (
               <li key={bot.id} className="shrink-0">
                 <Link
@@ -94,18 +100,26 @@ export function BotStatusTray() {
                 >
                   <BotAvatar avatar={bot.avatar} name={bot.name} size={16} className="pointer-events-none" disabled={off} />
                   <span className={cn("max-w-[200px] truncate", off && "text-faint")}>{bot.name}</span>
-                  <span
-                    className={cn(
-                      "tabular rounded-[5px] font-mono text-[11.5px]",
-                      over
-                        ? "bg-destructive/10 px-1 font-medium text-destructive"
-                        : full
-                          ? "bg-muted px-1 font-medium text-foreground ring-1 ring-input ring-inset"
-                          : "text-faint",
-                    )}
-                  >
-                    {active}/{max}
-                  </span>
+                  {active > 0 && (
+                    <span
+                      className={cn(
+                        "tabular rounded-[5px] font-mono text-[11.5px]",
+                        over
+                          ? "bg-destructive/10 px-1 font-medium text-destructive"
+                          : full
+                            ? "bg-muted px-1 font-medium text-foreground ring-1 ring-input ring-inset"
+                            : "text-faint",
+                      )}
+                    >
+                      {active}/{max}
+                    </span>
+                  )}
+                  {replying.length > 0 && (
+                    <span data-replying className="tabular font-mono text-[11.5px] text-faint">
+                      {replying[0]}
+                      {replying.length > 1 && ` +${replying.length - 1}`}
+                    </span>
+                  )}
                 </Link>
               </li>
             );
@@ -115,3 +129,4 @@ export function BotStatusTray() {
     </footer>
   );
 }
+

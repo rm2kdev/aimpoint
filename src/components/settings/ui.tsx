@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { TaskStatusRing } from "@/components/task-status-ring";
+import { useLiveTasks } from "@/components/live-tasks";
 import type { Task } from "@/lib/types";
 import { MobileNavButton } from "@/components/app-shell";
 import { orgPath, taskPath } from "@/lib/paths";
@@ -244,8 +245,9 @@ export function DetailHeader({
 }
 
 /** Open tasks assigned to a person or bot. */
-export function WorkList({ tasks, emptyText, note }: { tasks: Task[]; emptyText: string; note?: (t: Task) => string | undefined }) {
+export function WorkList({ tasks: initial, emptyText, note }: { tasks: Task[]; emptyText: string; note?: (t: Task) => string | undefined }) {
   const { org } = useOrg();
+  const tasks = useLiveTasks(initial); // rings follow live updates (VEC-381)
   if (!tasks.length) return <p className="text-[13px] text-muted-foreground">{emptyText}</p>;
   return (
     <ul className="grid gap-1">
