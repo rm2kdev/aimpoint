@@ -10,6 +10,7 @@ import { LogoMark } from "@/components/logo";
 import { TYPE_NAMES } from "@/lib/format";
 import type { FormField } from "@/lib/form-fields-core";
 import { cn } from "@/lib/utils";
+import { INTAKE_ERRORS } from "@/lib/task-intake-core";
 
 export interface PublicFormProps {
   publicId: string;
@@ -146,7 +147,7 @@ const requiredText = (f: FormField) => (f.kind === "screenshot" ? "Add at least 
  */
 function serverFieldErrors(message: string, fields: FormField[]): Partial<Record<ErrorKey, string>> {
   const out: Partial<Record<ErrorKey, string>> = {};
-  if (message === "Give it a title." || /^Keep the title\b/.test(message)) out.title = message;
+  if (message === INTAKE_ERRORS.titleMissing || /^Keep the title\b/.test(message)) out.title = message;
   if (/^Keep your email\b/.test(message)) out.email = message;
   const missing = /^Fill in\b/.test(message);
   for (const f of fields) {
@@ -364,7 +365,7 @@ export function PublicForm(p: PublicFormProps) {
   /** The browser-side check before anything is sent (the server checks the same again, TPA-399). */
   function check(form: HTMLFormElement): { errors: Partial<Record<ErrorKey, string>>; text: string | null } {
     const errors: Partial<Record<ErrorKey, string>> = {};
-    if (!title.trim()) errors.title = "Give it a title.";
+    if (!title.trim()) errors.title = INTAKE_ERRORS.titleMissing;
     const email = form.querySelector<HTMLInputElement>("#form-email");
     if (email?.value.trim() && email.validity.typeMismatch) errors.email = "Enter a full email address, like name@example.com, or leave it empty.";
     let text = 0;

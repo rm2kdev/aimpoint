@@ -364,7 +364,12 @@ export interface FormUploadDoc {
   name: string;
   /** What the uploader got back and the description will reference. */
   url: string;
-  formId: ObjectId;
+  /** Owner (VEC-356): the form it was uploaded to, or the public project (`publicProjectId`). Exactly one is set. */
+  formId?: ObjectId;
+  /** A public project's upload (VEC-356): only the same account's submission to that project may claim it. */
+  publicProjectId?: ObjectId;
+  /** The signed-in account that uploaded it (public project uploads only). */
+  userId?: ObjectId;
   orgId: ObjectId;
   /** Keyed hash of the uploader's IP (never the raw IP). */
   ipHash: string;

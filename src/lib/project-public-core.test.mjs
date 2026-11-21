@@ -17,7 +17,7 @@ import {
   shapePublicComment,
   parsePublicRef,
 } from "./project-public-core.ts";
-import { publicSanitize } from "./form-rich-core.ts";
+import { publicSanitize } from "./task-intake-core.ts";
 
 const ORG = "6af98310a81f713925ea19bc";
 const OTHER = "6af98310a81f713925ea19bd";

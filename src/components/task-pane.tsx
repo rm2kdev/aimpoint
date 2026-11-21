@@ -53,6 +53,7 @@ import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
 import { disabledBotNote, heldMentionsToast, typedDisabledMentions } from "@/lib/bot-picker";
 import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
+import { TASK_TITLE_MAX } from "@/lib/task-intake-core";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -741,7 +742,7 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
       rows={1}
       value={draft}
       readOnly={readOnly}
-      maxLength={300}
+      maxLength={TASK_TITLE_MAX}
       aria-label="Title"
       onChange={(e) => setDraft(e.target.value.replace(/\n/g, " "))}
       onBlur={commit}

@@ -14,9 +14,19 @@ import { backlogMove, parkRelease, unparkWakes, writeHandOff, type BacklogMove }
 import { notify } from "@/lib/notifications";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
 import { isParked, planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
-import { isClosedCategory, isTaskType, type ActivityDoc, type ActivityNote, type CommentResult, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
+import { isClosedCategory, isTaskType, TASK_TYPES, type ActivityDoc, type ActivityNote, type CommentResult, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
 import { requireFormDestination } from "@/lib/project-forms";
 import { plainTextToHtml as plainToHtml } from "@/lib/form-fields-core";
+import {
+  INTAKE_ERRORS,
+  SUBMITTER_EMAIL_MAX,
+  SUBMITTER_NAME_MAX,
+  TASK_DESCRIPTION_MAX,
+  normalizeSubmitter,
+  normalizeTitle,
+  prepareDescription,
+  resolveType,
+} from "@/lib/task-intake-core";
 import { assertNotStopped } from "@/lib/stop-guard";
 import { disabledAssigneeMessage, heldMentionsOf, isBotEnabled } from "@/lib/bot-enabled";
 
@@ -421,11 +431,16 @@ interface CreateInternal {
 }
 
 export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: CreateInternal = {}): Promise<Task> {
-  const title = (input.title ?? "").trim();
-  if (!title) throw new UserError("Give the task a title.");
+  // Shared intake rules (VEC-356, lib/task-intake-core.ts). Members' and bots' descriptions keep the full
+  // sanitizeDescription allow-list and no text cap (docs/task-creation.md, differences kept on purpose).
+  const named = normalizeTitle(input.title);
+  if (!named.ok) throw new UserError(named.error);
+  const title = named.title;
+  const typed = resolveType(input.type, TASK_TYPES, "issue");
+  if (!typed.ok) throw new UserError(typed.error);
+  if (input.description !== undefined && input.description !== null && typeof input.description !== "string") throw new UserError(INTAKE_ERRORS.descriptionNotText);
   // A bot whose work a person stopped can't link new tasks to that task (VEC-216).
   await assertNotStopped(actor, input.dependsOn ?? []);
-  if (title.length > 300) throw new UserError("Keep titles under 300 characters.");
   const c = await cols();
   const projectId = oid(input.projectId, "project");
   const project = await c.projects.findOneAndUpdate(
@@ -464,7 +479,7 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
     number: project.nextNumber,
     title,
     description: sanitizeDescription(input.description ?? ""),
-    type: isTaskType(input.type) ? input.type : "issue",
+    type: typed.type,
     statusId: status._id,
     assigneeId,
     priority: ([0, 1, 2, 3] as const).includes(priority) ? priority : 0,
@@ -511,9 +526,10 @@ export interface FormSubmission {
   submitterEmail?: string | null;
 }
 
-export const FORM_DESCRIPTION_MAX = 10_000;
-export const FORM_SUBMITTER_NAME_MAX = 100;
-export const FORM_SUBMITTER_EMAIL_MAX = 200;
+/** Old names of the shared intake limits (VEC-356, lib/task-intake-core.ts), kept for imports until VEC-358. */
+export const FORM_DESCRIPTION_MAX = TASK_DESCRIPTION_MAX;
+export const FORM_SUBMITTER_NAME_MAX = SUBMITTER_NAME_MAX;
+export const FORM_SUBMITTER_EMAIL_MAX = SUBMITTER_EMAIL_MAX;
 
 /**
  * A submission through an external form becomes a task in the form's project, in the form's destination status and
@@ -527,22 +543,27 @@ export async function createTaskFromForm(form: Pick<ProjectFormDoc, "_id" | "org
   const c = await cols();
   const live = await c.projectForms.findOne({ _id: form._id, orgId: form.orgId });
   if (!live || !live.enabled) throw new UserError("This form isn't taking submissions.");
-  const title = String(input.title ?? "").trim();
-  if (!title) throw new UserError("Give it a title.");
-  const description = String(input.description ?? "").replace(/\r\n?/g, "\n");
+  // Shared intake rules (VEC-356, lib/task-intake-core.ts); submitForm already ran them, this re-checks for any caller.
+  const named = normalizeTitle(input.title);
+  if (!named.ok) throw new UserError(named.error);
+  const title = named.title;
   const html = typeof input.descriptionHtml === "string" ? input.descriptionHtml : null;
-  if (html === null && description.length > FORM_DESCRIPTION_MAX) throw new UserError(`Keep the description under ${FORM_DESCRIPTION_MAX.toLocaleString()} characters.`);
+  let description = "";
+  if (html === null) {
+    const prep = prepareDescription(input.description ?? "", { rich: false });
+    if (!prep.ok) throw new UserError(prep.error);
+    description = prep.rich ? "" : prep.text;
+  }
   let type: TaskType = live.type;
-  if (live.typeMode === "choose" && input.type !== undefined && input.type !== null && input.type !== "") {
-    if (!isTaskType(input.type) || !live.allowedTypes.includes(input.type)) throw new UserError(`Pick one of: ${live.allowedTypes.join(", ")}.`);
-    type = input.type;
+  if (live.typeMode === "choose") {
+    const typed = resolveType(input.type, live.allowedTypes, live.type);
+    if (!typed.ok) throw new UserError(typed.error);
+    type = typed.type;
   }
-  const submitterName = String(input.submitterName ?? "").trim() || null;
-  if (submitterName && submitterName.length > FORM_SUBMITTER_NAME_MAX) throw new UserError(`Keep your name under ${FORM_SUBMITTER_NAME_MAX} characters.`);
-  const submitterEmail = String(input.submitterEmail ?? "").trim().toLowerCase() || null;
-  if (submitterEmail && (submitterEmail.length > FORM_SUBMITTER_EMAIL_MAX || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(submitterEmail))) {
-    throw new UserError("That email address doesn't look right.");
-  }
+  const submitter = normalizeSubmitter(input.submitterName, input.submitterEmail);
+  if (!submitter.ok) throw new UserError(submitter.error);
+  const submitterName = submitter.name;
+  const submitterEmail = submitter.email;
   // The destination is re-checked: one of the project's own statuses, still in an allowed stage.
   const status = await requireFormDestination(live.orgId, live.projectId, live.destinationStatusId.toHexString());
   const actor: Actor = { orgId: live.orgId, id: live._id, isAdmin: false, isBot: false, name: live.name };
@@ -617,7 +638,8 @@ export async function updateTaskAs(
   if (patch.title !== undefined) {
     const t = String(patch.title).trim();
     if (!t) throw new UserError("Titles can't be empty.");
-    if (t.length > 300) throw new UserError("Keep titles under 300 characters.");
+    const named = normalizeTitle(t);
+    if (!named.ok) throw new UserError(named.error);
     if (t !== before.title) {
       set.title = t;
       acts.push({ kind: "title", from: before.title, to: t });

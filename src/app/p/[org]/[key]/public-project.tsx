@@ -16,6 +16,7 @@ import { statusTrack } from "@/lib/status-track";
 import { TASK_TYPES, type PublicComment, type PublicProjectView, type PublicStatus, type PublicTask, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { loginHref, publicPageHref, signupHref } from "./href";
+import { INTAKE_ERRORS } from "@/lib/task-intake-core";
 
 type Mode = "all" | "mine" | "task" | "submit";
 
@@ -398,12 +399,12 @@ function SubmitForm({
     e.preventDefault();
     if (pending) return;
     if (!title.trim()) {
-      setError("Give it a title.");
+      setError(INTAKE_ERRORS.titleMissing);
       e.currentTarget.querySelector<HTMLInputElement>("#public-title")?.focus();
       return;
     }
     if (descLeft < 0) {
-      setError(`Keep the description under ${limits.description.toLocaleString()} characters.`);
+      setError(INTAKE_ERRORS.descriptionTooLong(textLength));
       return;
     }
     setPending(true);

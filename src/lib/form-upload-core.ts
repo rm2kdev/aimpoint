@@ -15,6 +15,12 @@ export const UPLOAD_RATE_LIMITS = {
   form: { max: 200, windowMs: 60 * 60_000 },
 } as const;
 
+/** Uploads allowed per signed-in account per public project, and per public project from everyone (VEC-356). */
+export const PUBLIC_UPLOAD_RATE_LIMITS = {
+  userProject: { max: 20, windowMs: 10 * 60_000 },
+  project: { max: 200, windowMs: 60 * 60_000 },
+} as const;
+
 /** An upload no submission claimed within this long is deleted, file and all. */
 export const FORM_UPLOAD_PENDING_MS = 24 * 60 * 60_000;
 /** Backstop TTL on unclaimed records, in case the cleanup sweep never ran (claiming unsets it). */

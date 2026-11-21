@@ -5,9 +5,11 @@ import { UserError } from "@/lib/result";
 import { loadStatuses } from "@/lib/statuses";
 import { newTaskStatusFor } from "@/lib/project-defaults";
 import { hasFeature, requireFeatureById } from "@/lib/billing-limits";
-import { createTaskAs, FORM_DESCRIPTION_MAX, type Actor } from "@/lib/task-service";
-import { hit, waitText } from "@/lib/form-submit";
-import { prepareRichDescription, publicSanitize } from "@/lib/form-rich-core";
+import { createTaskAs, type Actor } from "@/lib/task-service";
+import { hit, ipKey, waitText } from "@/lib/form-submit";
+import { claimUploads, pendingUploads, receivePendingImage, type UploadOwner, type UploadResult } from "@/lib/form-uploads";
+import { PUBLIC_UPLOAD_RATE_LIMITS } from "@/lib/form-upload-core";
+import { INTAKE_ERRORS, SUBMITTER_NAME_MAX, TASK_TITLE_MAX, imageSources, normalizeTitle, prepareDescription, publicSanitize, resolveStatus, resolveType } from "@/lib/task-intake-core";
 import { loadDirectory, personName } from "@/lib/mcp/context";
 import {
   PUBLIC_COMMENTS_MAX,
@@ -18,7 +20,6 @@ import {
   initialSubmitStatuses,
   isPublicSubmitStage,
   parsePublicRef,
-  pickSubmitStatus,
   pruneSubmitStatuses,
   resolveSubmitStatuses,
   rewritePublicImages,
@@ -26,7 +27,7 @@ import {
   shapePublicTask,
 } from "@/lib/project-public-core";
 import {
-  isTaskType,
+  TASK_TYPES,
   type OrgDoc,
   type ProjectDoc,
   type ProjectPublicAccess,
@@ -40,7 +41,6 @@ import {
   type StatusDoc,
   type Task,
   type TaskDoc,
-  type TaskType,
   type UserDoc,
 } from "@/lib/types";
 
@@ -304,8 +304,9 @@ export async function publicImageName(slug: unknown, key: unknown, file: unknown
 
 /* ---------------- submitting ---------------- */
 
-export const PUBLIC_TITLE_MAX = 300;
-export const PUBLIC_NAME_MAX = 100;
+/** Old names of the shared intake limits (VEC-356, lib/task-intake-core.ts), kept for imports until VEC-358. */
+export const PUBLIC_TITLE_MAX = TASK_TITLE_MAX;
+export const PUBLIC_NAME_MAX = SUBMITTER_NAME_MAX;
 
 /** A refusal because the account submitted too much; `retryAfter` in seconds. */
 export class PublicRateLimitError extends UserError {
@@ -317,7 +318,10 @@ export class PublicRateLimitError extends UserError {
 
 export interface PublicSubmission {
   title: unknown;
-  /** The rich editor's HTML. Sanitised with the public allow-list; no images. */
+  /**
+   * The rich editor's HTML. Sanitised with the public allow-list; images survive only when they're this account's
+   * pending uploads to this project (`uploadPublicProjectImage`, VEC-356).
+   */
   description?: unknown;
   type?: unknown;
   /** One of the project's submit statuses; empty = the first one. */
@@ -338,34 +342,66 @@ export async function createTaskFromPublicProject(user: Pick<UserDoc, "_id" | "n
   const project = await c.projects.findOne({ _id: projectRef._id, orgId: projectRef.orgId }, { projection: { _id: 1, orgId: 1, archivedAt: 1, publicAccess: 1 } });
   if (!project || project.archivedAt || !project.publicAccess?.enabled) throw new UserError("This project isn't public.");
   if (!(await hasFeature(project.orgId, "publicForms"))) throw new UserError(PUBLIC_UNAVAILABLE);
-  // Shape and size first: bad input never spends rate limit.
-  const title = typeof input.title === "string" ? input.title.trim() : "";
-  if (!title) throw new UserError("Give it a title.");
-  if (title.length > PUBLIC_TITLE_MAX) throw new UserError(`Keep the title under ${PUBLIC_TITLE_MAX} characters.`);
-  let type: TaskType = "issue";
-  if (input.type !== undefined && input.type !== null && input.type !== "") {
-    if (!isTaskType(input.type)) throw new UserError("Pick one of the listed types.");
-    type = input.type;
-  }
-  const raw = input.description ?? "";
-  if (typeof raw !== "string") throw new UserError("The description wasn't text. Reload the page and try again.");
-  const prep = prepareRichDescription(raw.replace(/\r\n?/g, "\n"), false, FORM_DESCRIPTION_MAX);
-  if (!prep.ok) throw new UserError(prep.error);
-  const description = publicSanitize(prep.html, { allowImages: false });
+  // Shape and size first (shared intake core, VEC-356): bad input never spends rate limit.
+  const named = normalizeTitle(input.title);
+  if (!named.ok) throw new UserError(named.error);
+  const typed = resolveType(input.type, TASK_TYPES, "issue");
+  if (!typed.ok) throw new UserError(typed.error);
+  const prep = prepareDescription(input.description, { rich: true, allowImages: true });
+  if (!prep.ok || !prep.rich) throw new UserError(prep.ok ? INTAKE_ERRORS.descriptionNotText : prep.error);
   const statuses = await loadStatuses(project.orgId, project._id);
   const allowed = pruneSubmitStatuses((project.publicAccess.submitStatusIds ?? []).map((id) => id.toHexString()), statuses.map(statusLike));
-  const pick = pickSubmitStatus(input.statusId, allowed);
+  const pick = resolveStatus(input.statusId, allowed);
   if (!pick.ok) throw new UserError(pick.error);
   const pid = project._id.toHexString();
   const wait = (await hit(`public-user:${user._id.toHexString()}:${pid}`, PUBLIC_RATE_LIMITS.userProject)) ?? (await hit(`public-project:${pid}`, PUBLIC_RATE_LIMITS.project));
   if (wait !== null) throw new PublicRateLimitError(wait);
+  // Images survive only when they're this account's own pending uploads to this project; every other source is dropped.
+  const owner: UploadOwner = { kind: "public", id: project._id, userId: user._id };
+  const pending = prep.sources.length ? await pendingUploads(owner, prep.sources) : [];
+  const byUrl = new Map(pending.map((u) => [u.url, u._id]));
+  const description = publicSanitize(prep.html, { allowImages: byUrl.size > 0, imageAllowed: (src) => byUrl.has(src) });
+  const claim = [...new Set(imageSources(description))].map((u) => byUrl.get(u)).filter((id): id is ObjectId => !!id);
   const userName = String(user.name ?? "").trim().slice(0, PUBLIC_NAME_MAX) || "Aimpoint user";
   const actor: Actor = { orgId: project.orgId, id: project._id, isAdmin: false, isBot: false, name: userName };
-  return createTaskAs(
+  const task = await createTaskAs(
     actor,
-    { title, projectId: pid, type, statusId: pick.id, description },
+    { title: named.title, projectId: pid, type: typed.type, statusId: pick.id, description },
     { source: { kind: "public", userId: user._id, userName }, createdNote: { note: "public", to: userName } },
   );
+  // The task exists: its images are kept from now on. Unreferenced uploads stay pending and expire.
+  if (claim.length) await claimUploads(owner, claim, new ObjectId(task.id)).catch((err) => console.error("[public submit] claiming uploads", err));
+  return task;
+}
+
+/**
+ * Image upload for a public project's submit form (VEC-356): what `POST /api/public/<org>/<KEY>/uploads` does. The
+ * same pending-upload mechanism as forms (lib/form-uploads.ts), owned by the project and the signed-in account: only
+ * that account's next submission to this project can use it. Needs a signed-in account (401), a public, available
+ * project (404 / 403), and is rate limited per account per project and per project (PUBLIC_UPLOAD_RATE_LIMITS).
+ */
+export async function uploadPublicProjectImage(
+  user: Pick<UserDoc, "_id"> | null,
+  slug: unknown,
+  key: unknown,
+  req: Request,
+  ip: string,
+): Promise<UploadResult | { ok: false; status: 401; error: string }> {
+  if (!user) return { ok: false, status: 401, error: "Sign in to add images." };
+  const f = await findPublicProject(slug, key);
+  if (!f) return { ok: false, status: 404, error: "This project doesn't exist or isn't public." };
+  if (!f.available) return { ok: false, status: 403, error: PUBLIC_UNAVAILABLE };
+  const pid = f.project._id.toHexString();
+  const uid = user._id.toHexString();
+  return receivePendingImage(req, {
+    owner: { kind: "public", id: f.project._id, userId: user._id },
+    orgId: f.project.orgId,
+    ipHash: ipKey(ip),
+    limits: [
+      [`up-public-user:${uid}:${pid}`, PUBLIC_UPLOAD_RATE_LIMITS.userProject],
+      [`up-public-project:${pid}`, PUBLIC_UPLOAD_RATE_LIMITS.project],
+    ],
+  });
 }
 
 export type PublicSubmitResult = { ok: true; key: string } | { ok: false; status: 400 | 401 | 403 | 404 | 429; error: string; retryAfter?: number };

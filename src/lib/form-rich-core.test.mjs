@@ -1,7 +1,7 @@
 // Run with `pnpm test` (node --test; Node strips the TypeScript types of form-rich-core.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { publicSanitize, stripMarkdownImages, htmlText, imageSources, prepareRichDescription, FORM_HTML_MAX, FORM_IMAGES_MAX, PUBLIC_LINK_REL } from "./form-rich-core.ts";
+import { publicSanitize, stripMarkdownImages, htmlText, imageSources, prepareRichDescription, DESCRIPTION_HTML_MAX as FORM_HTML_MAX, DESCRIPTION_IMAGES_MAX as FORM_IMAGES_MAX, PUBLIC_LINK_REL } from "./task-intake-core.ts";
 
 const OWN = "/api/uploads/6af98310a81f713925ea19bc-AbCdEfGhIjKlMnOp.png";
 const own = (src) => src === OWN;

@@ -23,6 +23,7 @@ import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
 import { matchStatus, newTaskStatusIn, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
 import { parkedPickerNote, useParkedIn } from "@/components/parked";
+import { INTAKE_ERRORS, TASK_TITLE_MAX } from "@/lib/task-intake-core";
 
 export interface NewTaskDefaults {
   projectId?: string;
@@ -107,7 +108,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const parkedIn = useParkedIn(projectId, status?.id);
 
   const submit = () => {
-    if (!title.trim()) return setError("Give the task a title.");
+    if (!title.trim()) return setError(INTAKE_ERRORS.titleMissing);
     start(async () => {
       const r = await createTask(org.slug, { title, description, projectId, statusId: status?.id, assigneeId, priority, type, dueDate, dependsOn: deps.map((d) => d.id) });
       if (!r.ok) return setError(r.error);
@@ -154,7 +155,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
             }}
             placeholder="Task title"
             aria-label="Task title"
-            maxLength={300}
+            maxLength={TASK_TITLE_MAX}
             data-zoom-safe
             className="w-full bg-transparent text-[18px] font-semibold tracking-[-0.015em] outline-none placeholder:text-faint"
           />

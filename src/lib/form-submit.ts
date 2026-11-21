@@ -3,16 +3,11 @@ import { createHash } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { getDb } from "./db";
 import { findOpenForm, type OpenForm } from "./project-forms";
-import {
-  createTaskFromForm,
-  FORM_DESCRIPTION_MAX,
-  FORM_SUBMITTER_EMAIL_MAX,
-  FORM_SUBMITTER_NAME_MAX,
-} from "./task-service";
+import { createTaskFromForm } from "./task-service";
 import { UserError } from "./result";
 import { hasFeature } from "./billing-limits";
 import { rateWindow, retryAfter } from "./form-upload-core";
-import { imageSources, prepareRichDescription, publicSanitize } from "./form-rich-core";
+import { INTAKE_ERRORS, SUBMITTER_EMAIL_MAX, SUBMITTER_NAME_MAX, TASK_TITLE_MAX, imageSources, keepImages, normalizeTitle, prepareDescription, resolveType } from "./task-intake-core";
 import { claimFormUploads, pendingFormUploads } from "./form-uploads";
 import { composeFormDescription, plainTextToHtml, readFieldValues, screenshotUrls, type FormFieldValues } from "./form-fields-core";
 
@@ -29,7 +24,8 @@ import { composeFormDescription, plainTextToHtml, readFieldValues, screenshotUrl
  * (TPA-399, FORM_FIELDS_TEXT_MAX); anything bigger is refused unread.
  */
 export const FORM_BODY_MAX = 160 * 1024;
-export const FORM_TITLE_MAX = 300;
+/** The shared title limit (VEC-356, lib/task-intake-core.ts); old name kept for imports until VEC-358. */
+export const FORM_TITLE_MAX = TASK_TITLE_MAX;
 /** Name of the hidden field people never see or fill in. Anything in it marks the submission as a bot's. */
 export const HONEYPOT_FIELD = "website";
 
@@ -74,31 +70,37 @@ interface ValidSubmission {
   values: FormFieldValues;
 }
 
-/** Shape and size checks that need no database, so bad input never uses up the submitter's rate limit. */
-function validate(raw: RawSubmission, form: Pick<OpenForm, "richText" | "allowImages" | "fields" | "hideDescription">): ValidSubmission | string {
-  const title = str(raw.title);
+/**
+ * Shape and size checks that need no database, so bad input never uses up the submitter's rate limit. Title,
+ * description, submitter and type rules are the shared intake core (VEC-356, lib/task-intake-core.ts).
+ */
+function validate(raw: RawSubmission, form: Pick<OpenForm, "richText" | "allowImages" | "fields" | "hideDescription" | "typeMode" | "allowedTypes" | "type">): ValidSubmission | string {
   // A form without the description box (TPA-399) takes none, whatever is posted.
   const description = form.hideDescription ? "" : str(raw.description);
   const type = str(raw.type);
   const name = str(raw.name);
   const email = str(raw.email);
-  if (title === null || description === null || type === null || name === null || email === null) return "Something in the form wasn't text. Reload the page and try again.";
-  const t = title.trim();
-  if (!t) return "Give it a title.";
-  if (t.length > FORM_TITLE_MAX) return `Keep the title under ${FORM_TITLE_MAX} characters (it's ${t.length.toLocaleString()}).`;
-  const d = description.replace(/\r\n?/g, "\n");
+  if (str(raw.title) === null || description === null || type === null || name === null || email === null) return "Something in the form wasn't text. Reload the page and try again.";
+  const title = normalizeTitle(raw.title);
+  if (!title.ok) return title.error;
   // Rich text only when the form has it on AND the client says it sent HTML: a no-JS post on a rich form stays plain text.
-  let rich: ValidSubmission["rich"] = null;
-  if (form.richText && raw.descriptionFormat === "html") {
-    const prep = prepareRichDescription(d, form.allowImages, FORM_DESCRIPTION_MAX);
-    if (!prep.ok) return prep.error;
-    rich = { html: prep.html, sources: prep.sources };
-  } else if (d.length > FORM_DESCRIPTION_MAX) return `Keep the description under ${FORM_DESCRIPTION_MAX.toLocaleString()} characters (it's ${d.length.toLocaleString()}).`;
-  if (name.trim().length > FORM_SUBMITTER_NAME_MAX) return `Keep your name under ${FORM_SUBMITTER_NAME_MAX} characters.`;
-  if (email.trim().length > FORM_SUBMITTER_EMAIL_MAX) return `Keep your email under ${FORM_SUBMITTER_EMAIL_MAX} characters.`;
+  const prep = prepareDescription(description, { rich: form.richText && raw.descriptionFormat === "html", allowImages: form.allowImages });
+  if (!prep.ok) return prep.error;
+  const rich: ValidSubmission["rich"] = prep.rich ? { html: prep.html, sources: prep.sources } : null;
+  const d = prep.rich ? description.replace(/\r\n?/g, "\n") : prep.text;
+  // Length only here (format is checked once the submission is filed, as before).
+  if (name.trim().length > SUBMITTER_NAME_MAX) return INTAKE_ERRORS.nameTooLong;
+  if (email.trim().length > SUBMITTER_EMAIL_MAX) return INTAKE_ERRORS.emailTooLong;
+  // A choose form's type is checked up front too, so a bad pick never spends rate limit. A fixed form ignores it.
+  let picked: string | null = null;
+  if (form.typeMode === "choose") {
+    const t = resolveType(type, form.allowedTypes, form.type);
+    if (!t.ok) return t.error;
+    picked = type ? t.type : null;
+  }
   const fields = readFieldValues(form.fields, raw as Record<string, unknown>);
   if ("error" in fields) return fields.error;
-  return { title: t, description: d, rich, type: type || null, name: name.trim(), email: email.trim(), values: fields.values };
+  return { title: title.title, description: d, rich, type: picked, name: name.trim(), email: email.trim(), values: fields.values };
 }
 
 /* ---------------- rate limiting ---------------- */
@@ -149,10 +151,6 @@ export async function submitPublicForm(publicId: string, raw: RawSubmission, ip:
   if (!(await hasFeature(form.orgId, "publicForms"))) return { ok: false, status: 403, error: FORM_UNAVAILABLE };
   const input = validate(raw, form);
   if (typeof input === "string") return { ok: false, status: 400, error: input };
-  // A choose form's type is checked up front too, so a bad pick never spends rate limit. A fixed form ignores it.
-  if (form.typeMode === "choose" && input.type && !form.allowedTypes.includes(input.type as never)) {
-    return { ok: false, status: 400, error: "Pick one of the listed types." };
-  }
   const formKey = form._id.toHexString();
   const wait = (await hit(`ip:${ipKey(ip)}:${formKey}`, RATE_LIMITS.ipForm)) ?? (await hit(`form:${formKey}`, RATE_LIMITS.form));
   if (wait !== null) {
@@ -170,7 +168,7 @@ export async function submitPublicForm(publicId: string, raw: RawSubmission, ip:
   const byUrl = new Map(pending.map((u) => [u.url, u._id]));
   const used: string[] = [];
   if (input.rich) {
-    descriptionHtml = publicSanitize(input.rich.html, { allowImages: form.allowImages, imageAllowed: (src) => byUrl.has(src) });
+    descriptionHtml = form.allowImages ? keepImages(input.rich.html, (src) => byUrl.has(src)) : input.rich.html;
     used.push(...imageSources(descriptionHtml));
   }
   const missingShot = form.fields.find((f) => f.kind === "screenshot" && f.required && !screenshotUrls([f], input.values).some((u) => byUrl.has(u)));
@@ -186,7 +184,7 @@ export async function submitPublicForm(publicId: string, raw: RawSubmission, ip:
       title: input.title,
       description: input.description,
       descriptionHtml,
-      type: form.typeMode === "choose" ? input.type : null,
+      type: input.type,
       submitterName: input.name || null,
       submitterEmail: input.email || null,
     });
