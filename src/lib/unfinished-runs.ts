@@ -39,7 +39,7 @@ export async function sweepUnfinishedRunsSoon() {
 }
 
 /** Asks the bot's Hermes how the run is doing. */
-async function hermesRunState(bot: BotDoc, runId: string): Promise<HermesRunState> {
+export async function hermesRunState(bot: BotDoc, runId: string): Promise<HermesRunState> {
   const conn = bot.connection;
   if (!conn?.url || !conn.secretSealed) return null;
   try {

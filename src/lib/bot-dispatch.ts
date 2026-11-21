@@ -11,6 +11,8 @@ import { publishWorking } from "@/lib/claims";
 import { markStartedByBot, mentionResumesWork, resumeOnMention } from "@/lib/task-service";
 import { dispatchWake, isQueuedWake } from "@/lib/wake-queue";
 import { armRunWatch } from "@/lib/run-watch";
+import { directMethod, endRunMarks, setRunMarkRun, startRunMark } from "@/lib/run-marks";
+import type { RunMarkMethod } from "@/lib/run-marks-core";
 import { followUpText } from "@/lib/run-watch-core";
 import { billingOn, isOrgActive } from "@/lib/billing";
 import { atWaitStep, flowBriefing, isParked, type FlowBriefing } from "@/lib/flow-engine";
@@ -251,12 +253,17 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
   if (reason.kind !== "stopped" && !(await isBotEnabledNow(bot))) {
     return { at: new Date(), ok: false, reason: reasonLabel(reason), error: disabledWakeMessage(bot.name), ...meta };
   }
+  // VEC-380: a Claude / OpenAI turn runs inside send(), so a mention or close-out run is marked working around it.
+  const markedTurn = (reason.kind === "mentioned" || reason.kind === "closeout") && directMethod(conn.method) ? reason : null;
   try {
     const msg = await wakeMessage(bot, org, conn, reason);
+    if (markedTurn) await startRunMark(org._id, bot._id, markedTurn.taskId, markedTurn.kind, conn.method as RunMarkMethod);
     const res = await send(bot, org, conn, reason, msg, wake);
     if (res.ok) await markHandedOver(bot, org, reason);
     // The run working on it, on the bot's claim: Stop (VEC-216) cancels it with POST /v1/runs/{id}/stop.
     if (res.ok && res.runId && reason.kind !== "test") await (await cols()).agentClaims.updateMany({ botId: bot._id, taskId: reason.taskId }, { $set: { runId: res.runId } });
+    // ...and on its run mark (VEC-380), so the sweep can tell when that run is over.
+    if (res.ok && res.runId && (reason.kind === "mentioned" || reason.kind === "closeout")) await setRunMarkRun(bot._id, reason.taskId, res.runId);
     // VEC-316: watch the run this work delivery started, so one that ends without complete_task is followed up.
     if (res.ok && (reason.kind === "assigned" || reason.kind === "ready" || reason.kind === "mentioned")) await armRunWatch(bot._id, reason.taskId, conn.method, { followUp: reason.kind === "assigned" && !!reason.followUp });
     out = res.ok
@@ -266,6 +273,8 @@ export async function deliver(bot: BotDoc, org: OrgDoc, reason: WakeReason, wake
     const e = err as Error;
     out = { at: new Date(), ok: false, reason: reasonLabel(reason), error: e.name === "TimeoutError" ? "Timed out after 15 seconds." : friendlyNetworkError(e), ...meta };
   }
+  // The turn is over (or never started): its ring clears.
+  if (markedTurn) await endRunMarks(org._id, bot._id, { botId: bot._id, taskId: markedTurn.taskId });
   if (!out.ok) {
     const cause = (wake ? `attempt ${wake.attempt}: ` : "") + (out.error ?? `status ${out.status}`);
     console.error(`[bot wake] delivery failed: ${bot.name} (${conn.method}) ${out.reason}, ${cause}`);
@@ -336,11 +345,22 @@ export async function markHandedOver(bot: BotDoc, org: OrgDoc, reason: WakeReaso
   } else if (reason.kind === "closeout") {
     // Delivered: check_for_work won't hand the close-out out again. Only the request this wake-up was for.
     await c.tasks.updateOne({ _id: reason.taskId, "closeout.botId": bot._id, "closeout.deliveredAt": null }, { $set: { "closeout.deliveredAt": new Date() } });
+    // VEC-380: closing it out is a run with no claim: show the bot as working on it until that run ends.
+    if (pushMarked(bot)) await startRunMark(org._id, bot._id, reason.taskId, "closeout", bot.connection!.method as RunMarkMethod);
   } else if (reason.kind === "mentioned") {
     await c.botMentions.updateMany({ botId: bot._id, taskId: reason.taskId, deliveredAt: null }, { $set: { deliveredAt: new Date() } });
     // The assignee is back at work: claim in progress again, In Review -> In Progress, Stalled clears.
-    await resumeOnMention(org._id, bot._id, reason.taskId);
+    const resumed = await resumeOnMention(org._id, bot._id, reason.taskId);
+    // Anyone else (or the assignee on a closed / stopped / parked / waiting task) is answering a question: shown as
+    // working while that run goes (VEC-380), with no claim, so the status and Stalled stay as they are.
+    if (!resumed && pushMarked(bot)) await startRunMark(org._id, bot._id, reason.taskId, "mentioned", bot.connection!.method as RunMarkMethod);
   }
+}
+
+/** A push bot whose mention / close-out runs markHandedOver marks: not Claude / OpenAI, which deliver() marks around the turn. */
+function pushMarked(bot: BotDoc): boolean {
+  const m = bot.connection?.method;
+  return m === "hermes-api" || m === "webhook";
 }
 
 async function send(bot: BotDoc, org: OrgDoc, conn: BotConnectionDoc, reason: WakeReason, msg: WakeMessage, wake?: WakeAttempt): Promise<SendResult> {

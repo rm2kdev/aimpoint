@@ -10,6 +10,7 @@ import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveT
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, flowLastNote, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
+import { endRunMarks, startRunMark, touchRunMark } from "@/lib/run-marks";
 import { taskAccess } from "@/lib/access";
 import { advanceTarget, atWaitStep, flowBriefing, isParked, loadTaskFlow, ownerName, parkedReason, type AdvanceTarget } from "@/lib/flow-engine";
 import { nextStepOf, pausedAsUmbrella, pausedMoveNote, pausedStatusNote } from "@/lib/flow-engine-core";
@@ -93,6 +94,13 @@ const text = (t: string): Content => ({ type: "text", text: t });
 const json = (v: unknown): Content => text(JSON.stringify(v, null, 2));
 
 async function findTask(ctx: McpCtx, ref: string): Promise<{ task: TaskDoc; project: ProjectDoc }> {
+  const found = await lookupTask(ctx, ref);
+  // A sign of life on the task: keeps a run mark (VEC-380) alive while the bot is still at it.
+  void touchRunMark(ctx.bot._id, found.task._id, false);
+  return found;
+}
+
+async function lookupTask(ctx: McpCtx, ref: string): Promise<{ task: TaskDoc; project: ProjectDoc }> {
   const c = await cols();
   const s = ref.trim();
   if (/^[a-f0-9]{24}$/i.test(s)) {
@@ -105,6 +113,14 @@ async function findTask(ctx: McpCtx, ref: string): Promise<{ task: TaskDoc; proj
     throw new ToolInputError(/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(s) ? `There's no task ${s.toUpperCase()}.` : `"${ref}" isn't a task key. Keys look like WEB-12.`);
   }
   return found;
+}
+
+/** Runs a tool that ends the bot's run on its `task` (complete_task), then drops the bot's run mark on it (VEC-380). */
+async function endingRun<T>(ctx: McpCtx, args: Args, body: () => Promise<T>): Promise<T> {
+  const out = await body();
+  const found = await lookupTask(ctx, str(args, "task", true)!).catch(() => null);
+  if (found) await endRunMarks(ctx.org._id, ctx.bot._id, { botId: ctx.bot._id, taskId: found.task._id });
+  return out;
 }
 
 async function resolveProject(ctx: McpCtx, ref: string) {
@@ -466,6 +482,8 @@ const TOOLS: Record<string, ToolImpl> = {
         const key = `${project.key}-${task.number}`;
         // A mention of the assignee hands the work back: claim in progress, In Review -> In Progress, Stalled clears.
         const resumed = await resumeOnMention(ctx.org._id, ctx.bot._id, task._id);
+        // Otherwise it's a question: shown as working while the bot answers (VEC-380), with no claim or status move.
+        if (!resumed) await startRunMark(ctx.org._id, ctx.bot._id, task._id, "mentioned", "poll");
         const fresh = resumed ? ((await c.tasks.findOne({ _id: task._id })) ?? task) : task;
         const w = await loadStatusWords(ctx.org._id, fresh.projectId);
         const stoppedNote = fresh.stopped?.botId.equals(ctx.bot._id)
@@ -504,6 +522,8 @@ const TOOLS: Record<string, ToolImpl> = {
         const project = task && (await c.projects.findOne({ _id: task.projectId }));
         if (!task || !project) continue;
         const key = `${project.key}-${task.number}`;
+        // Closing it out is a run with no claim: shown as working on it until complete_task (VEC-380).
+        await startRunMark(ctx.org._id, ctx.bot._id, task._id, "closeout", "poll");
         return taskResult(
           ctx,
           task,
@@ -672,7 +692,8 @@ const TOOLS: Record<string, ToolImpl> = {
       required: ["task"],
       additionalProperties: false,
     },
-    run: async (args, ctx) => {
+    // VEC-380: finishing ends the bot's run on the task, so a run mark (a close-out, a reply) clears with it.
+    run: (args, ctx) => endingRun(ctx, args, async () => {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
       const status = str(args, "status");
       const comment = str(args, "comment");
@@ -758,7 +779,7 @@ const TOOLS: Record<string, ToolImpl> = {
       // Where it is now and who has it (VEC-176), unless the flow note already said so.
       const where = advancing ? "" : await whereNow(ctx, task._id);
       return { content: [text(`Marked your work on ${key} as finished.${statusNote}${flowNote}${where}${comment ? " Comment posted." : ""}${handoff}${blockersNote(owned)}`)] };
-    },
+    }),
   },
 
   release_task: {
@@ -771,7 +792,9 @@ const TOOLS: Record<string, ToolImpl> = {
       if (comment) await addCommentAs(ctx.actor, task._id, comment);
       const c = await cols();
       const claim = await c.agentClaims.findOneAndDelete({ botId: ctx.bot._id, taskId: task._id });
-      if (claim?.state === "in_progress") await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
+      // Handing it back ends this bot's run on it: its run mark (VEC-380) goes too, in the same broadcast.
+      const marked = await endRunMarks(ctx.org._id, ctx.bot._id, { botId: ctx.bot._id, taskId: task._id }, { publish: false });
+      if (claim?.state === "in_progress" || marked.length) await publishWorking(ctx.org._id, ctx.bot._id, [task._id]);
       const key = `${project.key}-${task.number}`;
       if (claim?.kind === "triage") {
         const fresh = await c.tasks.findOne({ _id: task._id }, { projection: { statusId: 1, archivedAt: 1, title: 1 } });

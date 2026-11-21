@@ -4,6 +4,7 @@ import sanitizeHtml from "sanitize-html";
 import { cols } from "@/lib/db";
 import { mcpServerNameFor } from "@/lib/mcp-name";
 import { addRunStalls } from "@/lib/run-stalled";
+import { mergeWorking } from "@/lib/run-marks-core";
 import type {
   ActivityDoc,
   Bot,
@@ -171,10 +172,33 @@ export const toTaskDetail = (
 });
 
 /**
- * Bots holding an in-progress claim (picked up as assignee, or triaging), per task id. One query for any
- * number of tasks.
+ * Bots working on each task right now, per task id: in-progress claims (picked up as assignee, or triaging) plus
+ * live run marks (VEC-380: a run with no claim, e.g. answering a mention or closing out). Two queries for any number
+ * of tasks.
  */
 export async function loadWorkingBots(taskIds: ObjectId[]): Promise<Map<string, string[]>> {
+  const [claims, marks] = await Promise.all([loadClaimBots(taskIds), loadMarkBots(taskIds)]);
+  return mergeWorking(claims, marks);
+}
+
+/** Bots with a live run mark on each task (lib/run-marks-core.ts), oldest run first. */
+async function loadMarkBots(taskIds: ObjectId[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  if (!taskIds.length) return out;
+  const c = await cols();
+  const marks = await c.runMarks
+    .find({ taskId: { $in: taskIds }, expiresAt: { $gt: new Date() } }, { projection: { taskId: 1, botId: 1 } })
+    .sort({ startedAt: 1 })
+    .toArray();
+  for (const m of marks) {
+    const k = m.taskId.toHexString();
+    out.set(k, [...(out.get(k) ?? []), m.botId.toHexString()]);
+  }
+  return out;
+}
+
+/** Bots holding an in-progress claim on each task. */
+async function loadClaimBots(taskIds: ObjectId[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (!taskIds.length) return out;
   const c = await cols();
@@ -192,16 +216,20 @@ export async function loadWorkingBots(taskIds: ObjectId[]): Promise<Map<string, 
   return out;
 }
 
-/** Fills `workingBotIds` and `stalled` on these tasks (in place): one claims query, plus a few more only when some are stalled candidates. */
+/** Fills `workingBotIds` and `stalled` on these tasks (in place): one claims query and one run-marks query, plus a few more only when some are stalled candidates. */
 export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> {
-  const working = await loadWorkingBots(tasks.map((t) => new ObjectId(t.id)));
+  const ids = tasks.map((t) => new ObjectId(t.id));
+  const [working, marks] = await Promise.all([loadClaimBots(ids), loadMarkBots(ids)]);
   // Nobody works on a closed task: a claim left over on one (closed elsewhere, or a status turned into a
   // done stage) never shows the ring.
   const busy = tasks.filter((t) => working.has(t.id));
   const closedStatus = busy.length ? await closedStatusIds(busy.map((t) => t.statusId)) : new Set<string>();
   for (const t of tasks) t.workingBotIds = closedStatus.has(t.statusId) ? [] : (working.get(t.id) ?? []);
+  // Stalled reads claims only: a bot answering a question on the task (a run mark) doesn't make it moving work.
   const stalled = await loadStalled(tasks);
   for (const t of tasks) t.stalled = stalled.get(t.id) ?? null;
+  // VEC-380: then the runs with no claim. Shown on closed tasks too (a reply to a mention on a Done task).
+  if (marks.size) for (const t of tasks) if (marks.has(t.id)) t.workingBotIds = mergeWorking(new Map([[t.id, t.workingBotIds]]), marks).get(t.id)!;
   return tasks;
 }
 

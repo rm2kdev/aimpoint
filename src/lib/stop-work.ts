@@ -121,6 +121,8 @@ export async function stopWorkAs(actor: Actor, taskId: ObjectId): Promise<Task> 
   // Before the broadcast, so the upsert carries the cleared working ring.
   await c.agentClaims.updateMany({ taskId, state: "in_progress" }, { $set: { state: "stopped", finishedAt: now } });
   await c.botWakes.deleteMany({ taskId, kind: { $in: [...WORK_WAKES] } });
+  // Runs with no claim (VEC-380: a reply, a close-out) stop showing too. A later mention is answered with a fresh one.
+  await c.runMarks.deleteMany({ taskId });
 
   const [out] = await withWorkingBots([toTask(after, key)]);
   await publish(hex(actor.orgId), { type: "task.upsert", actorId: hex(actor.id), task: out }, { workingLoaded: true });

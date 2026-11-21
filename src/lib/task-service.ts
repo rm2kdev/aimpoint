@@ -7,6 +7,7 @@ import { findTaskByKey, sanitizeDescription, toFeed, toTask, withWorkingBots } f
 import { rankBetween } from "@/lib/rank";
 import { loadStatuses, requireProjectStatus, statusFor, statusInProject } from "@/lib/statuses";
 import { publishWorking } from "@/lib/claims";
+import { touchRunMark } from "@/lib/run-marks";
 import { newTaskStatusFor } from "@/lib/project-defaults";
 import { ASSIGNEE_FIELDS, CLOSE_OUT_FIELDS, TRIAGE_FIELDS, closeOutStatuses, taskAccess } from "@/lib/access";
 import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
@@ -1018,6 +1019,7 @@ export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {
     c.comments.deleteMany({ taskId }),
     c.activity.deleteMany({ taskId }),
     c.agentClaims.deleteMany({ taskId }),
+    c.runMarks.deleteMany({ taskId }),
     c.botMentions.deleteMany({ taskId }),
     c.notifications.deleteMany({ taskId }),
   ]);
@@ -1055,6 +1057,8 @@ export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string)
   }
   const doc = { _id: new ObjectId(), orgId: actor.orgId, taskId, authorId: actor.id, body: text, mentions, createdAt: new Date() };
   await c.comments.insertOne(doc);
+  // A bot answering on a run mark (VEC-380): its reply shortens how long the ring waits for more.
+  await touchRunMark(actor.id, taskId, true);
   // Mentioned bots get an inbox entry; their next check_for_work surfaces the thread.
   if (mentionedBots.length) {
     await c.botMentions.insertMany(

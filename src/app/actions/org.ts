@@ -222,6 +222,7 @@ export async function deleteProject(slug: string, projectId: string, confirmKey:
         c.comments.deleteMany({ taskId: { $in: taskIds } }),
         c.activity.deleteMany({ taskId: { $in: taskIds } }),
         c.agentClaims.deleteMany({ taskId: { $in: taskIds } }),
+        c.runMarks.deleteMany({ taskId: { $in: taskIds } }),
         c.botMentions.deleteMany({ taskId: { $in: taskIds } }),
       ]);
       await c.tasks.deleteMany({ orgId: org._id, projectId: pid });

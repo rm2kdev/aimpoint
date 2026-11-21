@@ -1,6 +1,7 @@
 import type { ObjectId } from "mongodb";
 import type { FlowAdvance, FlowMode, FlowSource, StepOwnerKind } from "./flow-model";
 import type { FormField } from "./form-fields-core";
+import type { RunMark } from "./run-marks-core";
 
 export type Role = "admin" | "member";
 /**
@@ -858,6 +859,18 @@ export interface AgentClaimDoc {
   unfinishedAt?: Date | null;
   claimedAt: Date;
   finishedAt?: Date | null;
+}
+
+/**
+ * VEC-380: a bot is running on a task without an in-progress claim (answering a mention as a question, closing an
+ * umbrella out). Shows the working ring only; never assigned work, never a status move, never Stalled. One per (bot,
+ * task); rules in lib/run-marks-core.ts, writes in lib/run-marks.ts.
+ */
+export interface RunMarkDoc extends RunMark {
+  _id: ObjectId;
+  orgId: ObjectId;
+  botId: ObjectId;
+  taskId: ObjectId;
 }
 
 /** Inbox entry: a comment mentioned a bot. Delivered once through check_for_work. */

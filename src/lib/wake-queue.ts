@@ -502,6 +502,8 @@ export async function sweepWakes(): Promise<{ retried: number; resent: number; r
   await import("./form-uploads").then((m) => m.sweepFormUploadsSoon()).catch((err) => console.error("[form uploads sweep]", err));
   // Runs that ended without complete_task (VEC-316): one follow-up, then Stalled. Throttled to every 30 s inside.
   await import("./unfinished-runs").then((m) => m.sweepUnfinishedRunsSoon()).catch((err) => console.error("[unfinished runs sweep]", err));
+  // Run marks (VEC-380): the working ring for runs with no claim ends with the run. Throttled to every 10 s inside.
+  await import("./run-marks").then((m) => m.sweepRunMarksSoon()).catch((err) => console.error("[run marks sweep]", err));
   return { retried, resent, released };
 }
 

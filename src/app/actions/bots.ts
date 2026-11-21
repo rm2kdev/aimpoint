@@ -154,13 +154,14 @@ export async function deleteBot(slug: string, id: string): Promise<Result> {
     // Flow steps it owned become unowned and say so; it stops resolving waits (VEC-174).
     await flowOwnerRemoved(org._id, "bot", _id, doomed?.name ?? "A deleted bot");
     // Tasks whose row changes for open clients: the bot's assigned ones and the ones it was working on.
-    const [assigned, working] = await Promise.all([
+    const [assigned, working, marked] = await Promise.all([
       c.tasks.find({ orgId: org._id, assigneeId: _id }, { projection: { _id: 1 } }).toArray(),
       c.agentClaims.find({ botId: _id, state: "in_progress" }, { projection: { taskId: 1 } }).toArray(),
+      c.runMarks.find({ botId: _id }, { projection: { taskId: 1 } }).toArray(),
     ]);
     await c.tasks.updateMany({ orgId: org._id, assigneeId: _id }, { $set: { assigneeId: null, updatedAt: new Date() } });
-    await Promise.all([c.agentClaims.deleteMany({ botId: _id }), c.botMentions.deleteMany({ botId: _id })]);
-    const touched = new Map([...assigned.map((t) => t._id), ...working.map((w) => w.taskId)].map((id) => [id.toHexString(), id]));
+    await Promise.all([c.agentClaims.deleteMany({ botId: _id }), c.runMarks.deleteMany({ botId: _id }), c.botMentions.deleteMany({ botId: _id })]);
+    const touched = new Map([...assigned.map((t) => t._id), ...working.map((w) => w.taskId), ...marked.map((m) => m.taskId)].map((id) => [id.toHexString(), id]));
     await publishWorking(org._id, user._id, [...touched.values()], { workingOnly: false });
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");

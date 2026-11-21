@@ -74,6 +74,7 @@ export async function deleteOrganisationCascade(orgId: ObjectId, actorId: Object
     c.comments.deleteMany({ taskId: { $in: taskIds } }),
     c.activity.deleteMany({ orgId }),
     c.agentClaims.deleteMany({ $or: [{ taskId: { $in: taskIds } }, { botId: { $in: botIds } }] }),
+    c.runMarks.deleteMany({ orgId }),
     c.botMentions.deleteMany({ $or: [{ taskId: { $in: taskIds } }, { botId: { $in: botIds } }] }),
     c.notifications.deleteMany({ orgId }),
     c.invites.deleteMany({ orgId }),

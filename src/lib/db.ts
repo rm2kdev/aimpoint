@@ -15,6 +15,7 @@ import type {
   BotDoc,
   BotRoleDoc,
   AgentClaimDoc,
+  RunMarkDoc,
   BotMentionDoc,
   BotWakeDoc,
   NotificationDoc,
@@ -63,6 +64,7 @@ export async function cols() {
     bots: db.collection<BotDoc>("bots"),
     botRoles: db.collection<BotRoleDoc>("botRoles"),
     agentClaims: db.collection<AgentClaimDoc>("agentClaims"),
+    runMarks: db.collection<RunMarkDoc>("runMarks"),
     botMentions: db.collection<BotMentionDoc>("botMentions"),
     botWakes: db.collection<BotWakeDoc>("botWakes"),
     notifications: db.collection<NotificationDoc>("notifications"),
@@ -114,6 +116,10 @@ async function ensureIndexes(db: Db) {
     db.collection("agentClaims").createIndex({ taskId: 1 }),
     // One bot triages a task at a time: the claim is the lock.
     db.collection("agentClaims").createIndex({ taskId: 1, kind: 1 }, { unique: true, partialFilterExpression: { kind: "triage" }, name: "one_triage_claim_per_task" }),
+    // VEC-380 run marks: one per bot and task, read by task, swept by expiry; Mongo drops any a day past expiry.
+    db.collection("runMarks").createIndex({ botId: 1, taskId: 1 }, { unique: true }),
+    db.collection("runMarks").createIndex({ taskId: 1, expiresAt: 1 }),
+    db.collection("runMarks").createIndex({ expiresAt: 1 }, { expireAfterSeconds: 86_400 }),
     db.collection("botMentions").createIndex({ botId: 1, deliveredAt: 1, createdAt: 1 }),
     db.collection("botMentions").createIndex({ taskId: 1 }),
     // Queued push wake-ups (lib/wake-queue.ts): one per hand-off, due ones found by nextAttemptAt.
