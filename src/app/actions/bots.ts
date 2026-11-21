@@ -20,6 +20,7 @@ import { orgPath } from "@/lib/paths";
 import { MCP_SERVER_NAME } from "@/lib/mcp-name";
 import { flowOwnerRemoved } from "@/lib/flows";
 import { assertOrgActive } from "@/lib/billing";
+import { botEnabledFlipFilter, botEnabledUpdate } from "@/lib/bot-enabled";
 
 export interface BotInput {
   name: string;
@@ -80,6 +81,34 @@ export async function setBotMaxTasks(slug: string, id: string, value: number): P
     const c = await cols();
     const bot = await c.bots.findOneAndUpdate({ _id: botId(id), orgId: org._id }, { $set: { maxTasks: value } }, { returnDocument: "after" });
     if (!bot) throw new UserError("This bot no longer exists.");
+    await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
+    revalidatePath(orgPath(slug), "layout");
+    return toBot(bot);
+  });
+}
+
+/**
+ * Switches a bot on or off (VEC-343). Admins only. A disabled bot stays in the org: its assignments, claims, history,
+ * key and connection are kept (nothing is unassigned), it just isn't woken, offered or let in until it's enabled again
+ * (enforced through lib/bot-enabled.ts, VEC-344). The doc records when and by whom (`disabledAt`, `disabledBy`).
+ * Setting the state it's already in changes nothing and returns the bot as it is.
+ */
+export async function setBotEnabled(slug: string, id: string, enabled: boolean): Promise<Result<Bot>> {
+  return guard(async () => {
+    const { org, user } = await requireOrg(slug, { admin: true });
+    if (typeof enabled !== "boolean") throw new UserError("Say whether the bot should be enabled.");
+    const c = await cols();
+    const _id = botId(id);
+    const bot = await c.bots.findOneAndUpdate(
+      { _id, orgId: org._id, ...botEnabledFlipFilter(enabled) },
+      botEnabledUpdate(enabled, user._id, new Date()),
+      { returnDocument: "after" },
+    );
+    if (!bot) {
+      const current = await c.bots.findOne({ _id, orgId: org._id });
+      if (!current) throw new UserError("This bot no longer exists.");
+      return toBot(current);
+    }
     await publish(org._id.toHexString(), { type: "org.changed", actorId: user._id.toHexString() });
     revalidatePath(orgPath(slug), "layout");
     return toBot(bot);

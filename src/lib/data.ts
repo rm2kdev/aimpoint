@@ -30,6 +30,7 @@ import type {
   TaskSourceDoc,
 } from "@/lib/types";
 import { botMaxTasks } from "@/lib/types";
+import { isBotEnabled } from "@/lib/bot-enabled";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
 import { atWaitStep } from "@/lib/flow-engine";
 
@@ -57,6 +58,9 @@ export const toBot = (b: BotDoc): Bot => ({
   roleId: b.roleId?.toHexString() ?? null,
   maxTasks: botMaxTasks(b),
   mcpServerName: mcpServerNameFor(b),
+  enabled: isBotEnabled(b),
+  disabledAt: b.disabledAt?.toISOString() ?? null,
+  disabledBy: b.disabledAt ? (b.disabledBy?.toHexString() ?? null) : null,
   connection: b.connection
     ? {
         agent: b.connection.agent,

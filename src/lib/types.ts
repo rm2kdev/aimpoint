@@ -651,6 +651,10 @@ export interface BotDoc {
   mcpInstall?: BotMcpInstallDoc | null;
   /** Name the bot's MCP client has Aimpoint's server under (lib/mcp-name.ts, VEC-198): "aimpoint". */
   mcpServerName?: string;
+  /** VEC-343: when an admin switched the bot off (lib/bot-enabled.ts). Unset or null = enabled, so older bots need no migration. */
+  disabledAt?: Date | null;
+  /** The admin who disabled it; cleared with disabledAt on re-enable. */
+  disabledBy?: ObjectId | null;
   createdBy: ObjectId;
   createdAt: Date;
 }
@@ -908,6 +912,11 @@ export interface Bot {
   maxTasks: number;
   /** The MCP server name to tell this bot's client: "aimpoint". */
   mcpServerName: string;
+  /** VEC-343: false while an admin has the bot switched off (kept in the org, but not woken, offered or let in). */
+  enabled: boolean;
+  /** When it was disabled and by which user id; both null while enabled. */
+  disabledAt: string | null;
+  disabledBy: string | null;
   createdBy: string;
   createdAt: string;
 }
