@@ -87,7 +87,7 @@ export function FormFieldsEditor({
       <fieldset className="grid gap-2.5" aria-describedby="form-fields-desc">
         <legend className="mb-1.5 text-sm leading-none font-medium">Extra fields</legend>
         <p id="form-fields-desc" className="-mt-1 text-[12.5px] text-muted-foreground">
-          Questions asked after the title and description, in this order. Each answer becomes its own section in the task.
+          Questions asked after Title and Details, in this order. Each answer becomes its own section in the task.
         </p>
         {fields.length > 0 && (
           <ol className="grid gap-2" aria-label="Extra fields">
@@ -190,16 +190,16 @@ export function FormFieldsEditor({
       <div className="grid divide-y divide-border rounded-lg border border-border">
         <label className={cn("flex items-center justify-between gap-3 px-3 py-2.5", !canHide && "cursor-not-allowed")}>
           <span className="leading-tight">
-            <span className={cn("block text-[13.5px] font-medium", !canHide && "text-muted-foreground")}>Hide the description box</span>
+            <span className={cn("block text-[13.5px] font-medium", !canHide && "text-muted-foreground")}>Hide the Details box</span>
             <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
-              {canHide ? "Submitters answer your fields instead of a free-form description." : "Needs a short or long text field."}
+              {canHide ? "Submitters answer your fields instead of filling in Details." : "Needs a short or long text field."}
             </span>
           </span>
           <Switch
             checked={canHide && hideDescription}
             disabled={!canHide}
             onCheckedChange={onHideDescription}
-            aria-label="Hide the description box"
+            aria-label="Hide the Details box"
           />
         </label>
         <div className="grid gap-1.5 px-3 py-2.5">

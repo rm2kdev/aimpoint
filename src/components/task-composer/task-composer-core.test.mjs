@@ -3,6 +3,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { INTAKE_ERRORS, TASK_TITLE_MAX, TASK_DESCRIPTION_MAX } from "../../lib/task-intake-core.ts";
 import {
+  PUBLIC_TYPE_COPY,
+  requiredText,
+  typeCopy,
   checkComposer,
   charactersLeft,
   clearError,
@@ -123,4 +126,14 @@ test("description helpers", () => {
   assert.equal(summaryHeading(0), "That didn't go through.");
   assert.equal(summaryHeading(1), "One thing needs fixing before you send:");
   assert.equal(summaryHeading(3), "3 things need fixing before you send:");
+});
+
+test("public type words cover every task type; required-field text by kind", async () => {
+  const { TASK_TYPES } = await import("../../lib/types.ts");
+  for (const t of TASK_TYPES) assert.ok(PUBLIC_TYPE_COPY[t]?.label, t);
+  assert.deepEqual(typeCopy("issue"), { label: "Bug report", hint: "Something isn't working" });
+  assert.deepEqual(typeCopy("chore", { chore: "Chore" }), { label: "Chore", hint: "" });
+  assert.equal(typeCopy("x").label, "x");
+  assert.equal(requiredText({ id: "a", label: "A", kind: "screenshot" }), "Add at least one image.");
+  assert.equal(requiredText({ id: "a", label: "A", kind: "short" }), "Fill this in.");
 });

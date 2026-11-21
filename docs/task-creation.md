@@ -3,13 +3,13 @@
 Aimpoint creates tasks from three places. All three end in `createTaskAs` (`src/lib/task-service.ts`), which inserts
 the task, writes the `created` activity, publishes `task.upsert`, enters the project's flow and hands Triage tasks to
 the triage bots. What differs is what runs before it. This doc is the reference for VEC-355 (unify the three inputs):
-VEC-356 built the shared server core, VEC-357/358 move the three client forms onto one composer.
+VEC-356 built the shared server core, VEC-357/358 put the three client forms on one composer (`TaskComposer`).
 
 | # | Surface | Who | Client | Server entry |
 |---|---------|-----|--------|--------------|
-| 1 | In-app **New task** dialog (also REST `POST /api/v1/tasks` and MCP `create_task`) | org members and bots | `components/new-task-dialog.tsx` | `createTask` action -> `createTaskAs` |
-| 2 | **Public project** submit (`/p/<org>/<KEY>?submit=1`) | any signed-in Aimpoint account | `app/p/[org]/[key]/public-project.tsx` `SubmitForm` | `submitPublicTicket` -> `createTaskFromPublicProject` (`lib/project-public.ts`) |
-| 3 | **Project form** (`/f/<publicId>`) | anyone, no account | `app/f/[publicId]/public-form.tsx` | `POST /api/forms/<publicId>` -> `submitPublicForm` (`lib/form-submit.ts`) -> `createTaskFromForm` |
+| 1 | In-app **New task** dialog (also REST `POST /api/v1/tasks` and MCP `create_task`) | org members and bots | `components/new-task-dialog.tsx` on `TaskComposer layout="dialog"` | `createTask` action -> `createTaskAs` |
+| 2 | **Public project** submit (`/p/<org>/<KEY>?submit=1`) | any signed-in Aimpoint account | `app/p/[org]/[key]/public-project.tsx` `SubmitForm` on `TaskComposer layout="page"` | `submitPublicTicket` -> `createTaskFromPublicProject` (`lib/project-public.ts`) |
+| 3 | **Project form** (`/f/<publicId>`) | anyone, no account | `app/f/[publicId]/public-form.tsx` `PublicForm` on `TaskComposer layout="page"` | `POST /api/forms/<publicId>` -> `submitPublicForm` (`lib/form-submit.ts`) -> `createTaskFromForm` |
 
 ## Capability matrix before VEC-356
 
@@ -39,9 +39,9 @@ owns the input rules every surface shares. The three server paths call it instea
 
 - **Limits** (`INTAKE_LIMITS`, also exported one by one for clients): title 300 (`TASK_TITLE_MAX`), description
   10,000 text characters (`TASK_DESCRIPTION_MAX`), 96 KB raw rich HTML (`DESCRIPTION_HTML_MAX`), 10 images
-  (`DESCRIPTION_IMAGES_MAX`), submitter name 100, submitter email 200. The old names (`PUBLIC_TITLE_MAX`,
-  `FORM_TITLE_MAX`, `FORM_DESCRIPTION_MAX`, `FORM_SUBMITTER_*`, `FORM_HTML_MAX`, `FORM_IMAGES_MAX`) are aliases of these
-  until VEC-358 removes them.
+  (`DESCRIPTION_IMAGES_MAX`), submitter name 100 (`SUBMITTER_NAME_MAX`), submitter email 200 (`SUBMITTER_EMAIL_MAX`).
+  These are the only names: VEC-358 removed the old per-surface aliases (`PUBLIC_TITLE_MAX`, `FORM_TITLE_MAX`,
+  `FORM_DESCRIPTION_MAX`, `FORM_SUBMITTER_*`, `FORM_HTML_MAX`, `FORM_IMAGES_MAX`) and `lib/form-rich-core.ts`.
 - **Messages** (`INTAKE_ERRORS`): one text per failure, used by the server and importable by clients:
   - title: "Give it a title." / "Keep the title under 300 characters (it's N)."
   - description: "The description wasn't text. Reload the page and try again." / "Keep the description under 10,000
@@ -55,8 +55,7 @@ owns the input rules every surface shares. The three server paths call it instea
   `resolveType(input, allowed, fallback)`, `resolveStatus(input, allowed)`. All return `{ok:true, ...} | {ok:false,
   error}`; the server wraps errors in `UserError`.
 - **Sanitiser**: the public allow-list (`publicSanitize`, `htmlText`, `imageSources`, `stripMarkdownImages`) lives in the
-  core too; `form-rich-core.ts` re-exports it for old imports. `sanitizeDescription` stays the final pass for every
-  surface inside `createTaskAs`.
+  core too. `sanitizeDescription` stays the final pass for every surface inside `createTaskAs`.
 
 Per surface after VEC-356:
 
@@ -100,9 +99,36 @@ Rate limits (`PUBLIC_RATE_LIMITS`, `RATE_LIMITS`, `UPLOAD_RATE_LIMITS`), the for
 rules (`FORM_DESTINATION_STAGES`, `PUBLIC_SUBMIT_STAGES`), sign-in for public projects, and the `publicForms` plan gate.
 Bad input is always refused before any rate limit is spent.
 
-## Client (VEC-357/358)
+## Client: one composer (VEC-357/358)
 
-The composer imports limits and messages from `task-intake-core.ts` so client-side checks read the same as the
-server's. Internal-only fields (assignee, priority, due date, dependencies) stay in the in-app dialog. The public
-project editor turns images on by pointing the rich editor's `upload` at `/api/public/<org>/<KEY>/uploads` (object
-URL preview swapped for the stored URL on send, as `public-form.tsx` does).
+`src/components/task-composer/` is the only task-creation form. `TaskComposer` owns what every surface shares; each
+surface passes its extras as props/slots and keeps nothing of its own for title, description, type, errors or sending.
+
+- **Shared parts**: title (required, 300), the description (`RichEditor`; uploads in flight are counted and sending waits
+  for them), the type picker (all types or an allowed subset; one offered type shows none), the status picker (only
+  with 2+ allowed statuses), inline field errors with `aria-describedby` and focus on the first invalid part, the
+  page error summary ("One thing needs fixing before you send:"), the submit button with its pending text,
+  Cmd/Ctrl+Enter, and the client checks. Limits and messages come from `task-intake-core.ts`; server refusals are
+  mapped back onto the field they name by `serverFieldErrors` (`task-composer-core.ts`), anything else shows as the
+  summary line (rate limits: the server's "Try again in N minutes" text).
+- **Layouts**: `dialog` (in-app: borderless title, chip pickers, Cancel/Create footer, plain Enter in the title
+  creates) and `page` (public: labelled fields, type cards "What is it?", status chips, a real `<form>` that can post
+  without JavaScript via `action`, with a plain-text `<noscript>` fallback for the rich editor).
+- **Words**: public surfaces call the types Bug report / Feature request / Task (`PUBLIC_TYPE_COPY`, also used by the
+  External forms settings); the description is "Details", the picker "Status", submitter fields "Name"/"Email".
+- **Images**: `usePendingUploads(endpoint)` (`pending-uploads.ts`) uploads to a pending-upload endpoint, shows an
+  object-URL preview and swaps in the stored URL on send (`resolve`). Forms use `/api/forms/<publicId>/uploads`
+  (editor and screenshot fields), public projects `/api/public/<org>/<KEY>/uploads`. The in-app dialog uses the org
+  session upload (`/api/uploads`).
+
+| | 1 In-app dialog | 2 Public project | 3 Form |
+|---|---|---|---|
+| Description | rich, images, no text cap | rich, images (pending uploads), 10,000 | `descriptionMode` rich (form `richText`) / plain textarea / none (`hideDescription`); images when `allowImages`; 10,000 |
+| Type | chip, all types | cards, all types | cards when `typeMode` is choose (`allowedTypes`), none when fixed |
+| Status | in the property row (any project status) | chips when the project allows 2+ submit statuses | none (fixed destination) |
+| Extras (slots) | `properties`: project, status, assignee, priority, due date, dependencies | `errorExtra`: Sign in again on a 401 | `fields`: custom text + screenshot fields; `submitter` name/email (+ email help); `honeypot`; `initialError` from a no-JS redirect; `busy` while screenshot uploads run |
+| After sending | toast, dialog closes | to My submissions with the new key highlighted | thank-you card, Send another |
+| Surface-only | parked note, disabled bots | sign-in requirement, My submissions | embed height report (`aimpoint:form:height`), no-JS post |
+
+Internal-only fields (assignee, priority, due date, dependencies) exist only in the in-app property row; the public
+surfaces never render or send them.

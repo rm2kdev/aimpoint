@@ -137,7 +137,7 @@ export function screenshotUrls(fields: FormField[], values: FormFieldValues): st
 
 const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** Markdown image syntax typed by the public is removed (VEC-243; same rule as form-rich-core's stripMarkdownImages). */
+/** Markdown image syntax typed by the public is removed (VEC-243; same rule as task-intake-core's stripMarkdownImages). */
 const stripMarkdownImages = (text: string) => text.replace(/!\[[^\]\n]*\]\([^)\n]*\)/g, "");
 
 /** Plain text -> editor HTML: blank lines split paragraphs, single newlines become <br>. Nothing typed is markup. */

@@ -89,7 +89,8 @@ export function checkComposer(input: ComposerInput, rules: ComposerRules, messag
   return errors;
 }
 
-const requiredText = (f: ComposerFieldRef) => (f.kind === "screenshot" ? "Add at least one image." : "Fill this in.");
+/** The inline message for an empty required custom field. */
+export const requiredText = (f: ComposerFieldRef) => (f.kind === "screenshot" ? "Add at least one image." : "Fill this in.");
 
 /**
  * Which part of the composer a server error is about, with the inline message for it. Generalises the form's
@@ -159,4 +160,19 @@ export function charactersLeft(max: number | undefined, length: number, warnAt =
 /** Summary heading for the page layout's error box. */
 export function summaryHeading(count: number): string {
   return count === 0 ? "That didn't go through." : count === 1 ? "One thing needs fixing before you send:" : `${count} things need fixing before you send:`;
+}
+
+/**
+ * What each type is called on the public surfaces (public project submit, project forms), with a one-line hint for
+ * someone outside the team. Settings use the same words when they describe what submitters see (VEC-358).
+ */
+export const PUBLIC_TYPE_COPY: Readonly<Record<string, { label: string; hint: string }>> = {
+  issue: { label: "Bug report", hint: "Something isn't working" },
+  feature: { label: "Feature request", hint: "An idea or something missing" },
+  task: { label: "Task", hint: "Something that needs doing" },
+};
+
+/** A type's public label and hint; unknown types fall back to `names[t]` (the app's own name) or the raw value. */
+export function typeCopy(t: string, names: Readonly<Record<string, string>> = {}): { label: string; hint: string } {
+  return PUBLIC_TYPE_COPY[t] ?? { label: names[t] ?? t, hint: "" };
 }

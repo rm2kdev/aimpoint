@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { findOpenForm } from "@/lib/project-forms";
-import { FORM_BODY_MAX, FORM_TITLE_MAX, FORM_UNAVAILABLE, HONEYPOT_FIELD } from "@/lib/form-submit";
+import { FORM_BODY_MAX, FORM_UNAVAILABLE, HONEYPOT_FIELD } from "@/lib/form-submit";
+import { SUBMITTER_EMAIL_MAX, SUBMITTER_NAME_MAX, TASK_DESCRIPTION_MAX, TASK_TITLE_MAX } from "@/lib/task-intake-core";
 import { hasFeature } from "@/lib/billing-limits";
-import { FORM_DESCRIPTION_MAX, FORM_SUBMITTER_EMAIL_MAX, FORM_SUBMITTER_NAME_MAX } from "@/lib/task-service";
 import { FORM_FIELD_SCREENSHOTS_MAX, FORM_FIELD_VALUE_MAX, FORM_FIELDS_TEXT_MAX } from "@/lib/form-fields-core";
 import { PublicForm, type PublicFormProps } from "./public-form";
 import { cn } from "@/lib/utils";
@@ -49,10 +49,10 @@ export default async function FormPage({ params, searchParams }: PageProps<"/f/[
     sent: sp.sent === "1",
     error: errorCode === "input" && form.fields.length ? INPUT_WITH_FIELDS : errorCode && Object.hasOwn(PLAIN_ERRORS, errorCode) ? PLAIN_ERRORS[errorCode] : null,
     limits: {
-      title: FORM_TITLE_MAX,
-      description: FORM_DESCRIPTION_MAX,
-      name: FORM_SUBMITTER_NAME_MAX,
-      email: FORM_SUBMITTER_EMAIL_MAX,
+      title: TASK_TITLE_MAX,
+      description: TASK_DESCRIPTION_MAX,
+      name: SUBMITTER_NAME_MAX,
+      email: SUBMITTER_EMAIL_MAX,
       body: FORM_BODY_MAX,
       short: FORM_FIELD_VALUE_MAX.short,
       long: FORM_FIELD_VALUE_MAX.long,

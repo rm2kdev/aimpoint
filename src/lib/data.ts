@@ -383,7 +383,7 @@ export function sanitizeDescription(html: string): string {
     allowedSchemes: ["http", "https", "mailto"],
     allowedSchemesByTag: { img: ["http", "https"] },
     allowProtocolRelative: false,
-    // A public form's links (VEC-234, lib/form-rich-core.ts) arrive with nofollow added; keep it, add nothing else.
+    // A public form's links (VEC-234, lib/task-intake-core.ts) arrive with nofollow added; keep it, add nothing else.
     transformTags: {
       a: (tagName, attribs) => ({
         tagName: "a",

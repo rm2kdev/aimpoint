@@ -9,7 +9,7 @@ import { createTaskAs, type Actor } from "@/lib/task-service";
 import { hit, ipKey, waitText } from "@/lib/form-submit";
 import { claimUploads, pendingUploads, receivePendingImage, type UploadOwner, type UploadResult } from "@/lib/form-uploads";
 import { PUBLIC_UPLOAD_RATE_LIMITS } from "@/lib/form-upload-core";
-import { INTAKE_ERRORS, SUBMITTER_NAME_MAX, TASK_TITLE_MAX, imageSources, normalizeTitle, prepareDescription, publicSanitize, resolveStatus, resolveType } from "@/lib/task-intake-core";
+import { INTAKE_ERRORS, SUBMITTER_NAME_MAX, imageSources, normalizeTitle, prepareDescription, publicSanitize, resolveStatus, resolveType } from "@/lib/task-intake-core";
 import { loadDirectory, personName } from "@/lib/mcp/context";
 import {
   PUBLIC_COMMENTS_MAX,
@@ -304,9 +304,6 @@ export async function publicImageName(slug: unknown, key: unknown, file: unknown
 
 /* ---------------- submitting ---------------- */
 
-/** Old names of the shared intake limits (VEC-356, lib/task-intake-core.ts), kept for imports until VEC-358. */
-export const PUBLIC_TITLE_MAX = TASK_TITLE_MAX;
-export const PUBLIC_NAME_MAX = SUBMITTER_NAME_MAX;
 
 /** A refusal because the account submitted too much; `retryAfter` in seconds. */
 export class PublicRateLimitError extends UserError {
@@ -362,7 +359,7 @@ export async function createTaskFromPublicProject(user: Pick<UserDoc, "_id" | "n
   const byUrl = new Map(pending.map((u) => [u.url, u._id]));
   const description = publicSanitize(prep.html, { allowImages: byUrl.size > 0, imageAllowed: (src) => byUrl.has(src) });
   const claim = [...new Set(imageSources(description))].map((u) => byUrl.get(u)).filter((id): id is ObjectId => !!id);
-  const userName = String(user.name ?? "").trim().slice(0, PUBLIC_NAME_MAX) || "Aimpoint user";
+  const userName = String(user.name ?? "").trim().slice(0, SUBMITTER_NAME_MAX) || "Aimpoint user";
   const actor: Actor = { orgId: project.orgId, id: project._id, isAdmin: false, isBot: false, name: userName };
   const task = await createTaskAs(
     actor,

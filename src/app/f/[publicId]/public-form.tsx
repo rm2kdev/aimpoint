@@ -1,16 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { RichEditor, type ImageUploader } from "@/components/rich-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { LogoMark } from "@/components/logo";
-import { TYPE_NAMES } from "@/lib/format";
+import { ComposerFieldError, TaskComposer, WAIT_FOR_UPLOADS, fieldKey, requiredText, usePendingUploads, type ComposerErrors } from "@/components/task-composer";
 import type { FormField } from "@/lib/form-fields-core";
 import { cn } from "@/lib/utils";
-import { INTAKE_ERRORS } from "@/lib/task-intake-core";
 
 export interface PublicFormProps {
   publicId: string;
@@ -38,85 +36,6 @@ export interface PublicFormProps {
   hideDescription: boolean;
 }
 
-/**
- * Uploads through the public form endpoint. Uploaded images are only readable by the team, so the submitter's
- * editor shows a local preview (an object URL) and `urls` maps it to the stored URL, swapped in when sending.
- */
-function usePublicUploads(publicId: string, onError: (message: string) => void) {
-  const urls = useRef(new Map<string, string>());
-  const [uploading, setUploading] = useState(0);
-  useEffect(() => {
-    const map = urls.current;
-    return () => map.forEach((_url, preview) => URL.revokeObjectURL(preview));
-  }, []);
-  /** Uploads one image; returns its local preview URL. Throws with a message for the submitter, reporting nothing itself. */
-  const send = async (file: File): Promise<string> => {
-    setUploading((n) => n + 1);
-    try {
-      const body = new FormData();
-      body.set("file", file);
-      let res: Response;
-      try {
-        res = await fetch(`/api/forms/${encodeURIComponent(publicId)}/uploads`, { method: "POST", body });
-      } catch {
-        throw new Error("Couldn't reach the server to upload the image. Check your connection and try again.");
-      }
-      const json = (await res.json().catch(() => null)) as { url?: string; error?: string } | null;
-      if (!res.ok || !json?.url) {
-        if (json?.error) throw new Error(json.error);
-        if (res.status === 413) throw new Error("That image is too large. Images can be up to 5 MB.");
-        if (res.status === 429) {
-          const wait = Math.ceil(Number(res.headers.get("Retry-After")) / 60) || 0;
-          throw new Error(`Too many uploads from here. Try again in ${wait > 1 ? `${wait} minutes` : "a minute"}.`);
-        }
-        throw new Error("The image didn't upload. Try again.");
-      }
-      const preview = URL.createObjectURL(file);
-      urls.current.set(preview, json.url);
-      return preview;
-    } finally {
-      setUploading((n) => n - 1);
-    }
-  };
-  /** The rich editor's uploader: like `send`, and the error goes to the form's message line too. */
-  const upload: ImageUploader = async (file) => {
-    try {
-      return await send(file);
-    } catch (e) {
-      onError((e as Error).message);
-      throw e;
-    }
-  };
-  /** The editor's HTML with every preview URL replaced by its stored URL. */
-  const resolve = (html: string) => {
-    let out = html;
-    urls.current.forEach((url, preview) => (out = out.split(preview).join(url)));
-    return out;
-  };
-  const reset = () => {
-    urls.current.forEach((_url, preview) => URL.revokeObjectURL(preview));
-    urls.current.clear();
-  };
-  /** The stored URL behind a preview (screenshot fields send these). */
-  const stored = (preview: string) => urls.current.get(preview) ?? null;
-  /** Drops one upload the submitter removed (the stored file stays pending and expires unclaimed). */
-  const forget = (preview: string) => {
-    URL.revokeObjectURL(preview);
-    urls.current.delete(preview);
-  };
-  return { send, upload, uploading, resolve, reset, stored, forget };
-}
-
-/** What each type means to someone outside the team. Types without an entry fall back to their usual name. */
-const TYPE_HINTS: Record<string, { label: string; hint: string }> = {
-  issue: { label: "Bug report", hint: "Something isn't working" },
-  feature: { label: "Feature request", hint: "An idea or something missing" },
-  task: { label: "Task", hint: "Something that needs doing" },
-  question: { label: "Question", hint: "Something you'd like to know" },
-};
-const typeCopy = (t: string) =>
-  TYPE_HINTS[t] ?? { label: (TYPE_NAMES as Record<string, string>)[t] ?? t.charAt(0).toUpperCase() + t.slice(1), hint: "" };
-
 /** Tell an embedding page how tall the form is, so it can size its iframe (message `aimpoint:form:height`). */
 function useReportHeight(ref: React.RefObject<HTMLElement | null>, embed: boolean) {
   useEffect(() => {
@@ -134,48 +53,14 @@ function useReportHeight(ref: React.RefObject<HTMLElement | null>, embed: boolea
   }, [ref, embed]);
 }
 
-/** Keys of the things that can be marked invalid: the title, the email and each custom field (by its id). */
-type ErrorKey = "title" | "email" | `field:${string}`;
-const fieldKey = (id: string): ErrorKey => `field:${id}`;
-/** The element to focus for a key: the input, the textarea, or a screenshot field's Add button. */
-const domId = (k: ErrorKey) => (k === "title" ? "form-title" : k === "email" ? "form-email" : `form-field-${k.slice(6)}`);
-const requiredText = (f: FormField) => (f.kind === "screenshot" ? "Add at least one image." : "Fill this in.");
-
-/**
- * Which fields a server 400 is about (TPA-399 names them in quotes, e.g. `Fill in the required fields: "A", "B".`),
- * with the inline message for each. A message naming no field returns nothing and is shown in the summary only.
- */
-function serverFieldErrors(message: string, fields: FormField[]): Partial<Record<ErrorKey, string>> {
-  const out: Partial<Record<ErrorKey, string>> = {};
-  if (message === INTAKE_ERRORS.titleMissing || /^Keep the title\b/.test(message)) out.title = message;
-  if (/^Keep your email\b/.test(message)) out.email = message;
-  const missing = /^Fill in\b/.test(message);
-  for (const f of fields) {
-    if (message.includes(`"${f.label}"`)) out[fieldKey(f.id)] = missing ? requiredText(f) : message;
-  }
-  return out;
-}
-
 function Marker({ required }: { required: boolean }) {
   return <span className="font-normal text-faint">{required ? "(required)" : "(optional)"}</span>;
-}
-
-function FieldError({ id, message }: { id: string; message: string | undefined }) {
-  if (!message) return null;
-  return (
-    <p id={id} className="flex items-start gap-1.5 text-[12.5px] text-destructive">
-      <svg viewBox="0 0 16 16" className="mt-0.5 size-3.5 shrink-0" aria-hidden>
-        <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.5" />
-        <path d="M8 4.75v3.75M8 10.9v.1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-      </svg>
-      <span>{message}</span>
-    </p>
-  );
 }
 
 /** A screenshot field (TPA-400): Add image button (or drop), previews with Remove, uploads through `send`. */
 function ScreenshotField({
   field,
+  buttonId,
   previews,
   busy,
   max,
@@ -185,6 +70,7 @@ function ScreenshotField({
   onRemove,
 }: {
   field: FormField;
+  buttonId: string;
   previews: string[];
   busy: number;
   max: number;
@@ -245,7 +131,7 @@ function ScreenshotField({
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <Button
           ref={buttonRef}
-          id={`form-field-${field.id}`}
+          id={buttonId}
           type="button"
           variant="outline"
           size="sm"
@@ -286,174 +172,38 @@ function ScreenshotField({
   );
 }
 
+/**
+ * A project's external form (VEC-207) on the shared TaskComposer (VEC-358). The composer owns title, details, type,
+ * submitter, honeypot, errors and sending; this adds the form's own questions (text and screenshot fields), the
+ * thank-you state, the no-JavaScript post and the embed height report.
+ */
 export function PublicForm(p: PublicFormProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
   const [sent, setSent] = useState(p.sent);
-  const [error, setError] = useState<string | null>(p.error);
-  const [pending, setPending] = useState(false);
   const [type, setType] = useState(p.allowedTypes.includes(p.type) ? p.type : (p.allowedTypes[0] ?? p.type));
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  // Rich forms: the editor's HTML, its plain text (what the limit counts) and a key that remounts it empty.
-  const [html, setHtml] = useState("");
-  const [richTextLength, setRichTextLength] = useState(0);
-  const [editorKey, setEditorKey] = useState(0);
-  const uploads = usePublicUploads(p.publicId, setError);
+  const uploads = usePendingUploads(`/api/forms/${encodeURIComponent(p.publicId)}/uploads`);
   // TPA-400: custom field values (text by field id), screenshot previews per field and uploads in flight per field.
   const [values, setValues] = useState<Record<string, string>>({});
   const [shots, setShots] = useState<Record<string, string[]>>({});
   const [shotBusy, setShotBusy] = useState<Record<string, number>>({});
-  // What's wrong, by field (inline messages + the summary list), and a summary line that names no field.
-  const [invalid, setInvalid] = useState<Partial<Record<ErrorKey, string>>>({});
-  const [summaryText, setSummaryText] = useState<string | null>(null);
-  const summaryRef = useRef<HTMLDivElement>(null);
   useReportHeight(rootRef, p.embed);
+  const shotsUploading = Object.values(shotBusy).some((n) => n > 0);
 
-  /** Every key in page order, so the summary lists them and focus lands on the first one top to bottom. */
-  const order: ErrorKey[] = ["title", ...p.fields.map((f) => fieldKey(f.id)), "email"];
-  const labelOf = (k: ErrorKey) => (k === "title" ? "Title" : k === "email" ? "Email" : (p.fields.find((f) => fieldKey(f.id) === k)?.label ?? ""));
-  const invalidKeys = order.filter((k) => invalid[k]);
-  const hasFields = p.fields.length > 0;
-
-  const clearInvalid = (k: ErrorKey) => {
-    if (!invalid[k]) return;
-    setInvalid((cur) => {
-      const next = { ...cur };
-      delete next[k];
-      return next;
-    });
-  };
-  const focusKey = (k: ErrorKey) => document.getElementById(domId(k))?.focus();
-  /** Inline messages + summary, then focus on the first field that needs attention. */
-  const showInvalid = (errors: Partial<Record<ErrorKey, string>>, text: string | null) => {
-    setInvalid(errors);
-    setSummaryText(text);
-    setError(null);
-    const first = order.find((k) => errors[k]);
-    // After the render that puts the messages in (aria-describedby then reads them out with the focused field).
-    requestAnimationFrame(() => {
-      if (first) focusKey(first);
-      else summaryRef.current?.focus();
-    });
-  };
-
-  async function addShots(f: FormField, files: File[]) {
-    const room = p.limits.screenshots - (shots[f.id]?.length ?? 0) - (shotBusy[f.id] ?? 0);
-    const take = files.slice(0, Math.max(0, room));
-    if (!take.length) return;
-    clearInvalid(fieldKey(f.id));
-    setShotBusy((b) => ({ ...b, [f.id]: (b[f.id] ?? 0) + take.length }));
-    await Promise.all(
-      take.map(async (file) => {
-        try {
-          const preview = await uploads.send(file);
-          setShots((cur) => ({ ...cur, [f.id]: [...(cur[f.id] ?? []), preview] }));
-        } catch (err) {
-          setInvalid((cur) => ({ ...cur, [fieldKey(f.id)]: (err as Error).message }));
-        } finally {
-          setShotBusy((b) => ({ ...b, [f.id]: (b[f.id] ?? 1) - 1 }));
-        }
-      }),
-    );
-  }
-  const removeShot = (f: FormField, preview: string) => {
-    uploads.forget(preview);
-    setShots((cur) => ({ ...cur, [f.id]: (cur[f.id] ?? []).filter((s) => s !== preview) }));
-  };
-
-  /** The browser-side check before anything is sent (the server checks the same again, TPA-399). */
-  function check(form: HTMLFormElement): { errors: Partial<Record<ErrorKey, string>>; text: string | null } {
-    const errors: Partial<Record<ErrorKey, string>> = {};
-    if (!title.trim()) errors.title = INTAKE_ERRORS.titleMissing;
-    const email = form.querySelector<HTMLInputElement>("#form-email");
-    if (email?.value.trim() && email.validity.typeMismatch) errors.email = "Enter a full email address, like name@example.com, or leave it empty.";
+  /** Required fields and the shared text budget across them (the server checks the same again, TPA-399). */
+  const validate = () => {
+    const errors: ComposerErrors = {};
     let text = 0;
     for (const f of p.fields) {
-      const empty = f.kind === "screenshot" ? !(shots[f.id]?.length) : !(values[f.id] ?? "").trim();
+      const empty = f.kind === "screenshot" ? !shots[f.id]?.length : !(values[f.id] ?? "").trim();
       if (f.kind !== "screenshot") text += (values[f.id] ?? "").trim().length;
       if (f.required && empty) errors[fieldKey(f.id)] = requiredText(f);
     }
-    const over = text > p.limits.fieldsText;
-    return {
-      errors,
-      text: over ? `That's too much text in one go (${text.toLocaleString()} characters across the fields, the most is ${p.limits.fieldsText.toLocaleString()}). Shorten some answers.` : null,
-    };
-  }
-
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (pending) return;
-    const fd = new FormData(e.currentTarget);
-    const body: Record<string, unknown> = Object.fromEntries(
-      [...fd.entries()].filter(([k]) => !k.startsWith("field_")).map(([k, v]) => [k, String(v)]),
-    );
-    if (uploads.uploading > 0) {
-      setError("Wait for the images to finish uploading.");
-      return;
-    }
-    const found = check(e.currentTarget);
-    if (Object.keys(found.errors).length || found.text) {
-      showInvalid(found.errors, found.text);
-      return;
-    }
-    if (hasFields) {
-      const out: Record<string, string | string[]> = {};
-      for (const f of p.fields) {
-        if (f.kind === "screenshot") out[f.id] = (shots[f.id] ?? []).map(uploads.stored).filter((u): u is string => !!u);
-        else out[f.id] = values[f.id] ?? "";
-      }
-      body.fields = out;
-    }
-    if (p.hideDescription) delete body.description;
-    else if (p.richText) {
-      if (uploads.uploading > 0) {
-        setError("Wait for the images to finish uploading.");
-        return;
-      }
-      // Tiptap keeps an empty paragraph after a trailing image; it isn't content.
-      body.description = html ? uploads.resolve(html).replace(/(<p><\/p>)+$/, "") : "";
-      body.descriptionFormat = "html";
-    }
-    setPending(true);
-    setError(null);
-    setInvalid({});
-    setSummaryText(null);
-    try {
-      const res = await fetch(`/api/forms/${encodeURIComponent(p.publicId)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
-      if (res.ok && data?.ok) {
-        setSent(true);
-        formRef.current?.reset();
-        setTitle("");
-        setDescription("");
-        setHtml("");
-        setRichTextLength(0);
-        setEditorKey((k) => k + 1);
-        setValues({});
-        setShots({});
-        uploads.reset();
-      } else if (res.status === 404) {
-        setError("This form isn't taking submissions any more.");
-      } else if (res.status === 400 && data?.error) {
-        // The server's own check (TPA-399): mark the fields it names and show its message in the summary.
-        const named = serverFieldErrors(data.error, p.fields);
-        showInvalid(named, Object.keys(named).length && /^Fill in\b/.test(data.error) ? null : data.error);
-      } else {
-        setError(data?.error ?? "That didn't go through. Try again in a moment.");
-      }
-    } catch {
-      setError("Couldn't reach the server. Check your connection and try again.");
-    } finally {
-      setPending(false);
-    }
-  }
-
-  const descLeft = p.limits.description - (p.richText ? richTextLength : description.length);
+    const summary =
+      text > p.limits.fieldsText
+        ? `That's too much text in one go (${text.toLocaleString()} characters across the fields, the most is ${p.limits.fieldsText.toLocaleString()}). Shorten some answers.`
+        : null;
+    return { errors, summary };
+  };
 
   return (
     <main
@@ -478,7 +228,7 @@ export function PublicForm(p: PublicFormProps) {
               </div>
               <h1 className="mt-4 text-[18px] font-semibold tracking-[-0.01em]">Thanks, we got it</h1>
               <p className="mt-1.5 text-[13.5px] text-muted-foreground">Your submission was sent to the team.</p>
-              <Button type="button" variant="outline" className="mt-6 h-9" onClick={() => { setSent(false); setError(null); }}>
+              <Button type="button" variant="outline" className="mt-6 h-9" onClick={() => setSent(false)}>
                 Send another
               </Button>
             </div>
@@ -486,287 +236,156 @@ export function PublicForm(p: PublicFormProps) {
             <>
               <h1 className="text-[20px] font-semibold tracking-[-0.02em] break-words">{p.name}</h1>
               {p.intro && <p className="mt-2 text-[13.5px] whitespace-pre-line break-words text-muted-foreground">{p.intro}</p>}
-              <form
-                ref={formRef}
+              <TaskComposer
+                layout="page"
+                className="mt-6"
                 action={`/api/forms/${encodeURIComponent(p.publicId)}`}
-                method="post"
-                onSubmit={onSubmit}
-                noValidate
-                className="mt-6 grid gap-4"
-              >
-                {(invalidKeys.length > 0 || summaryText) && (
-                  <div
-                    ref={summaryRef}
-                    tabIndex={-1}
-                    role="alert"
-                    data-form-summary
-                    className="rounded-lg border border-destructive/40 bg-destructive/10 px-3.5 py-3 text-[13px] outline-none focus-visible:ring-[3px] focus-visible:ring-destructive/30"
-                  >
-                    <p className="font-medium text-destructive">
-                      {invalidKeys.length === 0
-                        ? "That didn't go through."
-                        : invalidKeys.length === 1
-                          ? "One thing needs fixing before you send:"
-                          : `${invalidKeys.length} things need fixing before you send:`}
-                    </p>
-                    {invalidKeys.length > 0 && (
-                      <ul className="mt-1.5 grid gap-1">
-                        {invalidKeys.map((k) => (
-                          <li key={k}>
-                            <a
-                              href={`#${domId(k)}`}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                focusKey(k);
-                              }}
-                              className="text-foreground underline decoration-destructive/50 underline-offset-2 hover:decoration-destructive"
-                            >
-                              <span className="font-medium">{labelOf(k)}</span>: {invalid[k]}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {summaryText && <p className={cn("text-foreground", invalidKeys.length > 0 && "mt-1.5")}>{summaryText}</p>}
-                  </div>
-                )}
-                {p.typeMode === "choose" && p.allowedTypes.length > 0 && (
-                  <fieldset className="grid gap-1.5">
-                    <legend className="mb-1.5 text-sm font-medium">What is it?</legend>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {p.allowedTypes.map((t) => {
-                        const copy = typeCopy(t);
-                        return (
-                          <label
-                            key={t}
-                            className={cn(
-                              "flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
-                              type === t ? "border-foreground/60 bg-chip" : "border-border hover:bg-chip/60",
-                            )}
-                          >
-                            <input
-                              type="radio"
-                              name="type"
-                              value={t}
-                              checked={type === t}
-                              onChange={() => setType(t)}
-                              className="mt-0.5 accent-foreground"
-                            />
-                            <span className="grid">
-                              <span className="text-[13.5px] font-medium">{copy.label}</span>
-                              {copy.hint && <span className="text-[12.5px] text-muted-foreground">{copy.hint}</span>}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </fieldset>
-                )}
-                <div className="grid gap-1.5">
-                  <Label htmlFor="form-title">
-                    Title {hasFields && <Marker required />}
-                  </Label>
-                  <Input
-                    id="form-title"
-                    name="title"
-                    required
-                    maxLength={p.limits.title}
-                    value={title}
-                    onChange={(e) => {
-                      setTitle(e.target.value);
-                      clearInvalid("title");
-                    }}
-                    placeholder="A short summary"
-                    aria-invalid={invalid.title ? true : undefined}
-                    aria-describedby={invalid.title ? "form-title-error" : undefined}
-                    className="h-9 bg-background"
-                  />
-                  <FieldError id="form-title-error" message={invalid.title} />
-                </div>
-                {!p.hideDescription && <div className="grid gap-1.5">
-                  {p.richText ? (
-                    <>
-                      <Label id="form-description-label" onClick={() => rootRef.current?.querySelector<HTMLElement>(".ProseMirror")?.focus()}>
-                        Details
-                      </Label>
-                      {/* Shell for the editor (which mounts on the client). Without JavaScript it's hidden and the
-                          plain textarea in <noscript> posts the details as text instead. */}
-                      <div
-                        data-rich-shell
-                        className="min-h-32 rounded-md border border-input bg-background px-3 py-2 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30"
-                      >
-                        <RichEditor
-                          key={editorKey}
-                          orgSlug=""
-                          value=""
-                          onChange={setHtml}
-                          onTextChange={(t) => setRichTextLength(t.trim().length)}
-                          upload={uploads.upload}
-                          images={p.allowImages}
-                          ariaLabel="Details"
-                          placeholder={
-                            p.allowImages
-                              ? "What happened, what you expected, steps to reproduce… Paste or drop screenshots."
-                              : "What happened, what you expected, steps to reproduce…"
+                initialError={p.error}
+                descriptionMode={p.hideDescription ? "none" : p.richText ? "rich" : "plain"}
+                images={p.allowImages}
+                upload={uploads.upload}
+                descriptionMax={p.limits.description}
+                descriptionPlaceholder={
+                  p.allowImages ? "What happened, what you expected, steps to reproduce… Paste or drop screenshots." : "What happened, what you expected, steps to reproduce…"
+                }
+                type={p.typeMode === "choose" && p.allowedTypes.length > 0 ? { value: type, onChange: setType, allowed: p.allowedTypes } : undefined}
+                submitter={{ nameMax: p.limits.name, emailMax: p.limits.email, emailHelp: p.emailHelp }}
+                honeypot={p.honeypot}
+                customFields={p.fields}
+                validate={validate}
+                busy={shotsUploading ? WAIT_FOR_UPLOADS : null}
+                fields={(ctx) =>
+                  p.fields.map((f) => {
+                    const key = fieldKey(f.id);
+                    const id = ctx.fieldId(f.id);
+                    const message = ctx.errors[key];
+                    const describedBy = [f.help && `${id}-help`, message && ctx.errorId(f.id)].filter(Boolean).join(" ") || undefined;
+                    const value = values[f.id] ?? "";
+                    const max = f.kind === "long" ? p.limits.long : p.limits.short;
+                    const left = max - value.length;
+                    const onText = (v: string) => {
+                      setValues((cur) => ({ ...cur, [f.id]: v }));
+                      ctx.clearError(key);
+                    };
+                    const addShots = async (files: File[]) => {
+                      const room = p.limits.screenshots - (shots[f.id]?.length ?? 0) - (shotBusy[f.id] ?? 0);
+                      const take = files.slice(0, Math.max(0, room));
+                      if (!take.length) return;
+                      ctx.clearError(key);
+                      setShotBusy((b) => ({ ...b, [f.id]: (b[f.id] ?? 0) + take.length }));
+                      await Promise.all(
+                        take.map(async (file) => {
+                          try {
+                            const preview = await uploads.upload(file);
+                            setShots((cur) => ({ ...cur, [f.id]: [...(cur[f.id] ?? []), preview] }));
+                          } catch (err) {
+                            ctx.setError(key, (err as Error).message);
+                          } finally {
+                            setShotBusy((b) => ({ ...b, [f.id]: (b[f.id] ?? 1) - 1 }));
                           }
-                          className="[&_.ProseMirror]:min-h-24 [&_.prose-aimpoint]:max-w-none [&_[role=toolbar]]:-mx-1.5 [&_[role=toolbar]]:mb-2 [&_[role=toolbar]]:static [&_[role=toolbar]]:border-0 [&_[role=toolbar]]:bg-transparent [&_[role=toolbar]]:p-0"
-                        />
+                        }),
+                      );
+                    };
+                    const label = (
+                      <>
+                        {f.label} <Marker required={f.required} />
+                      </>
+                    );
+                    return (
+                      <div key={f.id} className="grid gap-1.5" data-form-field={f.kind}>
+                        {f.kind === "screenshot" ? (
+                          <Label asChild>
+                            <span id={`${id}-label`}>{label}</span>
+                          </Label>
+                        ) : (
+                          <Label htmlFor={id}>{label}</Label>
+                        )}
+                        {f.help && (
+                          <p id={`${id}-help`} className="-mt-0.5 text-[12.5px] whitespace-pre-line text-muted-foreground">
+                            {f.help}
+                          </p>
+                        )}
+                        {f.kind === "screenshot" ? (
+                          <ScreenshotField
+                            field={f}
+                            buttonId={id}
+                            previews={shots[f.id] ?? []}
+                            busy={shotBusy[f.id] ?? 0}
+                            max={p.limits.screenshots}
+                            error={message}
+                            describedBy={[`${id}-label`, describedBy].filter(Boolean).join(" ")}
+                            onFiles={(files) => void addShots(files)}
+                            onRemove={(preview) => {
+                              uploads.forget(preview);
+                              setShots((cur) => ({ ...cur, [f.id]: (cur[f.id] ?? []).filter((s) => s !== preview) }));
+                            }}
+                          />
+                        ) : f.kind === "long" ? (
+                          <Textarea
+                            id={id}
+                            name={`field_${f.id}`}
+                            rows={4}
+                            maxLength={max}
+                            value={value}
+                            onChange={(e) => onText(e.target.value)}
+                            aria-invalid={message ? true : undefined}
+                            aria-describedby={describedBy}
+                            aria-required={f.required || undefined}
+                            className="min-h-24 bg-background"
+                          />
+                        ) : (
+                          <Input
+                            id={id}
+                            name={`field_${f.id}`}
+                            maxLength={max}
+                            value={value}
+                            onChange={(e) => onText(e.target.value)}
+                            aria-invalid={message ? true : undefined}
+                            aria-describedby={describedBy}
+                            aria-required={f.required || undefined}
+                            className="h-9 bg-background"
+                          />
+                        )}
+                        <ComposerFieldError id={ctx.errorId(f.id)} message={message} />
+                        {f.kind === "long" && left < 300 && (
+                          <p className={cn("text-xs", left <= 0 ? "text-destructive" : "text-faint")}>{left.toLocaleString()} characters left</p>
+                        )}
                       </div>
-                      <noscript>
-                        <style>{"[data-rich-shell]{display:none}"}</style>
-                        <Textarea
-                          id="form-description"
-                          name="description"
-                          rows={6}
-                          maxLength={p.limits.description}
-                          placeholder="What happened, what you expected, steps to reproduce…"
-                          className="min-h-32 bg-background"
-                        />
-                      </noscript>
-                      {uploads.uploading > 0 && (
-                        <p className="text-xs text-faint" aria-live="polite">
-                          Uploading {uploads.uploading === 1 ? "an image" : `${uploads.uploading} images`}…
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <Label htmlFor="form-description">Details</Label>
-                      <Textarea
-                        id="form-description"
-                        name="description"
-                        rows={6}
-                        maxLength={p.limits.description}
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        placeholder="What happened, what you expected, steps to reproduce…"
-                        className="min-h-32 bg-background"
-                      />
-                    </>
-                  )}
-                  {descLeft < 500 && (
-                    <p className={cn("text-xs", descLeft < 0 ? "text-destructive" : "text-faint")}>{descLeft.toLocaleString()} characters left</p>
-                  )}
-                </div>}
-                {p.fields.map((f) => {
-                  const key = fieldKey(f.id);
-                  const id = `form-field-${f.id}`;
-                  const message = invalid[key];
-                  const describedBy = [f.help && `${id}-help`, message && `${id}-error`].filter(Boolean).join(" ") || undefined;
-                  const value = values[f.id] ?? "";
-                  const max = f.kind === "long" ? p.limits.long : p.limits.short;
-                  const left = max - value.length;
-                  const onText = (v: string) => {
-                    setValues((cur) => ({ ...cur, [f.id]: v }));
-                    clearInvalid(key);
-                  };
-                  const label = (
-                    <>
-                      {f.label} <Marker required={f.required} />
-                    </>
-                  );
-                  return (
-                    <div key={f.id} className="grid gap-1.5" data-form-field={f.kind}>
-                      {f.kind === "screenshot" ? (
-                        <Label asChild>
-                          <span id={`${id}-label`}>{label}</span>
-                        </Label>
-                      ) : (
-                        <Label htmlFor={id}>{label}</Label>
-                      )}
-                      {f.help && (
-                        <p id={`${id}-help`} className="-mt-0.5 text-[12.5px] whitespace-pre-line text-muted-foreground">
-                          {f.help}
-                        </p>
-                      )}
-                      {f.kind === "screenshot" ? (
-                        <ScreenshotField
-                          field={f}
-                          previews={shots[f.id] ?? []}
-                          busy={shotBusy[f.id] ?? 0}
-                          max={p.limits.screenshots}
-                          error={message}
-                          describedBy={[`${id}-label`, describedBy].filter(Boolean).join(" ")}
-                          onFiles={(files) => void addShots(f, files)}
-                          onRemove={(preview) => removeShot(f, preview)}
-                        />
-                      ) : f.kind === "long" ? (
-                        <Textarea
-                          id={id}
-                          name={`field_${f.id}`}
-                          rows={4}
-                          maxLength={max}
-                          value={value}
-                          onChange={(e) => onText(e.target.value)}
-                          aria-invalid={message ? true : undefined}
-                          aria-describedby={describedBy}
-                          aria-required={f.required || undefined}
-                          className="min-h-24 bg-background"
-                        />
-                      ) : (
-                        <Input
-                          id={id}
-                          name={`field_${f.id}`}
-                          maxLength={max}
-                          value={value}
-                          onChange={(e) => onText(e.target.value)}
-                          aria-invalid={message ? true : undefined}
-                          aria-describedby={describedBy}
-                          aria-required={f.required || undefined}
-                          className="h-9 bg-background"
-                        />
-                      )}
-                      <FieldError id={`${id}-error`} message={message} />
-                      {f.kind === "long" && left < 300 && (
-                        <p className={cn("text-xs", left <= 0 ? "text-destructive" : "text-faint")}>{left.toLocaleString()} characters left</p>
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="grid content-start gap-1.5">
-                    <Label htmlFor="form-name">
-                      Name <span className="font-normal text-faint">(optional)</span>
-                    </Label>
-                    <Input id="form-name" name="name" autoComplete="name" maxLength={p.limits.name} className="h-9 bg-background" />
-                  </div>
-                  <div className="grid content-start gap-1.5">
-                    <Label htmlFor="form-email">
-                      Email <span className="font-normal text-faint">(optional)</span>
-                    </Label>
-                    <Input
-                      id="form-email"
-                      name="email"
-                      type="email"
-                      autoComplete="email"
-                      maxLength={p.limits.email}
-                      onChange={() => clearInvalid("email")}
-                      aria-invalid={invalid.email ? true : undefined}
-                      aria-describedby={[p.emailHelp && "form-email-help", invalid.email && "form-email-error"].filter(Boolean).join(" ") || undefined}
-                      className="h-9 bg-background"
-                    />
-                    {p.emailHelp && (
-                      <p id="form-email-help" className="text-[12.5px] text-muted-foreground">
-                        {p.emailHelp}
-                      </p>
-                    )}
-                    <FieldError id="form-email-error" message={invalid.email} />
-                  </div>
-                </div>
-                {/* Honeypot: off screen and out of the tab order. People leave it empty; form-filling bots don't. */}
-                <div aria-hidden className="absolute -left-[9999px] h-px w-px overflow-hidden">
-                  <label htmlFor="form-hp">Leave this empty</label>
-                  <input id="form-hp" name={p.honeypot} type="text" tabIndex={-1} autoComplete="off" defaultValue="" />
-                </div>
-                <p role="alert" aria-live="polite" className="min-h-5 text-[13px] text-destructive">
-                  {error}
-                  {/* Not announced again: the summary at the top already was. */}
-                  {!error && invalidKeys.length > 0 && <span aria-hidden>Fix the {invalidKeys.length === 1 ? "field" : "fields"} marked above, then send again.</span>}
-                </p>
-                <Button type="submit" size="lg" disabled={pending || uploads.uploading > 0} className="-mt-2 h-9">
-                  {pending ? "Sending…" : uploads.uploading > 0 ? "Uploading…" : "Send"}
-                </Button>
-              </form>
+                    );
+                  })
+                }
+                onSubmit={async (v) => {
+                  const body: Record<string, unknown> = { title: v.title, name: v.name, email: v.email, [p.honeypot]: v.honeypot };
+                  if (p.typeMode === "choose") body.type = v.type;
+                  if (p.fields.length) {
+                    const out: Record<string, string | string[]> = {};
+                    for (const f of p.fields) {
+                      if (f.kind === "screenshot") out[f.id] = (shots[f.id] ?? []).map(uploads.stored).filter((u): u is string => !!u);
+                      else out[f.id] = values[f.id] ?? "";
+                    }
+                    body.fields = out;
+                  }
+                  if (!p.hideDescription) {
+                    body.description = p.richText ? uploads.resolve(v.description) : v.description;
+                    if (p.richText) body.descriptionFormat = "html";
+                  }
+                  const res = await fetch(`/api/forms/${encodeURIComponent(p.publicId)}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json", Accept: "application/json" },
+                    body: JSON.stringify(body),
+                  });
+                  const data = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+                  if (res.ok && data?.ok) {
+                    setValues({});
+                    setShots({});
+                    uploads.reset();
+                    setSent(true);
+                    return { ok: true };
+                  }
+                  if (res.status === 404) return { ok: false, error: "This form isn't taking submissions any more." };
+                  return { ok: false, error: data?.error ?? "That didn't go through. Try again in a moment." };
+                }}
+              />
             </>
           )}
         </div>

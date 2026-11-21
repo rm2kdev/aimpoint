@@ -5,7 +5,6 @@ import { currentUser } from "@/lib/session";
 import { cols } from "@/lib/db";
 import { listMyPublicSubmissions, loadPublicProject, loadPublicTask } from "@/lib/project-public";
 import { PUBLIC_UNAVAILABLE } from "@/lib/project-public-core";
-import { INTAKE_LIMITS } from "@/lib/task-intake-core";
 import { projectPath, withTask } from "@/lib/paths";
 import { loginHref, publicPageHref } from "./href";
 import { PublicProjectScreen, PublicUnavailable } from "./public-project";
@@ -82,7 +81,6 @@ export default async function PublicProjectPage({ params, searchParams }: PagePr
       detail={detail?.available ? { task: detail.task, comments: detail.comments } : null}
       mine={mine}
       created={one(sp.created) ?? null}
-      limits={{ title: INTAKE_LIMITS.title, description: INTAKE_LIMITS.description }}
     />
   );
 }

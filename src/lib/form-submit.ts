@@ -7,7 +7,7 @@ import { createTaskFromForm } from "./task-service";
 import { UserError } from "./result";
 import { hasFeature } from "./billing-limits";
 import { rateWindow, retryAfter } from "./form-upload-core";
-import { INTAKE_ERRORS, SUBMITTER_EMAIL_MAX, SUBMITTER_NAME_MAX, TASK_TITLE_MAX, imageSources, keepImages, normalizeTitle, prepareDescription, resolveType } from "./task-intake-core";
+import { INTAKE_ERRORS, SUBMITTER_EMAIL_MAX, SUBMITTER_NAME_MAX, imageSources, keepImages, normalizeTitle, prepareDescription, resolveType } from "./task-intake-core";
 import { claimFormUploads, pendingFormUploads } from "./form-uploads";
 import { composeFormDescription, plainTextToHtml, readFieldValues, screenshotUrls, type FormFieldValues } from "./form-fields-core";
 
@@ -20,12 +20,10 @@ import { composeFormDescription, plainTextToHtml, readFieldValues, screenshotUrl
 
 /**
  * Largest request body taken, in bytes. A full description (10,000 chars) of multi-byte text fits, and so does a rich
- * one up to FORM_HTML_MAX of HTML (VEC-234, lib/form-rich-core.ts) plus the other fields, custom fields included
+ * one up to DESCRIPTION_HTML_MAX of HTML (VEC-234, lib/task-intake-core.ts) plus the other fields, custom fields included
  * (TPA-399, FORM_FIELDS_TEXT_MAX); anything bigger is refused unread.
  */
 export const FORM_BODY_MAX = 160 * 1024;
-/** The shared title limit (VEC-356, lib/task-intake-core.ts); old name kept for imports until VEC-358. */
-export const FORM_TITLE_MAX = TASK_TITLE_MAX;
 /** Name of the hidden field people never see or fill in. Anything in it marks the submission as a bot's. */
 export const HONEYPOT_FIELD = "website";
 

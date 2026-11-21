@@ -27,6 +27,7 @@ import {
   serverSummary,
   summaryHeading,
   trimEmptyParagraphs,
+  typeCopy,
   type ComposerErrorKey,
   type ComposerErrors,
   type ComposerFieldRef,
@@ -89,6 +90,11 @@ export interface TaskComposerProps {
   upload?: ImageUploader;
   /** Images in the description (paste, drop, button). Default true. */
   images?: boolean;
+  /**
+   * The description box: the rich editor (default), a plain textarea (forms with the rich text editor off) or none
+   * (forms that ask their own questions instead). `values.description` is HTML, plain text or "" accordingly.
+   */
+  descriptionMode?: "rich" | "plain" | "none";
   onSubmit: (values: ComposerValues) => Promise<ComposerResult>;
   /** The type picker; leave out for a surface with a fixed type. One offered type shows no picker. */
   type?: { value: string; onChange: (t: TaskType) => void; allowed?: readonly string[] };
@@ -126,6 +132,8 @@ export interface TaskComposerProps {
   header?: React.ReactNode;
   /** Next to the general error line (e.g. a Sign in again link). */
   errorExtra?: React.ReactNode;
+  /** A general error to start with (e.g. back from a no-JavaScript post); page layout shows it in the summary. */
+  initialError?: string | null;
   /** Called whenever the general error changes (e.g. to clear a caller's extra state). */
   onError?: (error: string | null) => void;
   /** Page layout: where the <form> posts without JavaScript (adds a plain-text description fallback). */
@@ -136,16 +144,9 @@ export interface TaskComposerProps {
   className?: string;
 }
 
-const WAIT_FOR_UPLOADS = "Wait for the images to finish uploading.";
+export const WAIT_FOR_UPLOADS = "Wait for the images to finish uploading.";
 const OFFLINE = "Couldn't reach the server. Check your connection and try again.";
-
-/** What each type means to someone outside the team (page layout). */
-const TYPE_COPY: Record<string, { label: string; hint: string }> = {
-  issue: { label: "Bug report", hint: "Something isn't working" },
-  feature: { label: "Feature request", hint: "An idea or something missing" },
-  task: { label: "Task", hint: "Something that needs doing" },
-};
-const typeCopy = (t: string) => TYPE_COPY[t] ?? { label: (TYPE_NAMES as Record<string, string>)[t] ?? t, hint: "" };
+const BAD_EMAIL = "Enter a full email address, like name@example.com, or leave it empty.";
 
 export function ComposerFieldError({ id, message }: { id: string; message: string | undefined }) {
   if (!message) return null;
@@ -179,13 +180,14 @@ export function TaskComposer(p: TaskComposerProps) {
 
   const [title, setTitle] = useState("");
   const [html, setHtml] = useState("");
+  const [plain, setPlain] = useState("");
   const [textLength, setTextLength] = useState(0);
   const [editorKey, setEditorKey] = useState(0);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [errors, setErrors] = useState<ComposerErrors>({});
-  const [summary, setSummary] = useState<string | null>(null);
-  const [error, setErrorState] = useState<string | null>(null);
+  const [summary, setSummary] = useState<string | null>(dialog ? null : (p.initialError ?? null));
+  const [error, setErrorState] = useState<string | null>(dialog ? (p.initialError ?? null) : null);
   const [uploading, setUploading] = useState(0);
   const [pending, start] = useTransition();
 
@@ -217,7 +219,10 @@ export function TaskComposer(p: TaskComposerProps) {
   const focusKey = (k: ComposerErrorKey) => {
     const root = rootRef.current;
     if (!root) return;
-    if (k === "description") return root.querySelector<HTMLElement>(`#${CSS.escape(ids.description)} .ProseMirror`)?.focus();
+    if (k === "description") {
+      const box = document.getElementById(ids.description);
+      return (box?.matches("textarea") ? box : box?.querySelector<HTMLElement>(".ProseMirror"))?.focus();
+    }
     const id = k === "type" ? ids.type : k === "status" ? ids.status : k === "title" ? ids.title : k === "name" ? ids.name : k === "email" ? ids.email : ids.field(k.slice(6));
     const el = document.getElementById(id);
     // A fieldset of radios: focus the checked one (else the first).
@@ -246,6 +251,7 @@ export function TaskComposer(p: TaskComposerProps) {
   const reset = () => {
     setTitle("");
     setHtml("");
+    setPlain("");
     setTextLength(0);
     setEditorKey((k) => k + 1);
     setName("");
@@ -260,10 +266,11 @@ export function TaskComposer(p: TaskComposerProps) {
     if (uploading > 0) return setError(WAIT_FOR_UPLOADS);
     if (p.busy) return setError(p.busy);
     if (p.submitDisabled) return;
+    const mode = p.descriptionMode ?? "rich";
     const values: ComposerValues = {
       title,
-      description: trimEmptyParagraphs(html),
-      descriptionLength: textLength,
+      description: mode === "rich" ? trimEmptyParagraphs(html) : mode === "plain" ? plain : "",
+      descriptionLength: mode === "rich" ? textLength : mode === "plain" ? plain.length : 0,
       type: p.type ? p.type.value : null,
       statusId: p.status ? p.status.value : null,
       name,
@@ -287,6 +294,9 @@ export function TaskComposer(p: TaskComposerProps) {
             : `Keep the description under ${p.descriptionMax.toLocaleString("en-US")} characters (it's ${length.toLocaleString("en-US")}).`,
       },
     );
+    // The browser's own email check (the server's "doesn't look right" catches the rest).
+    const emailInput = p.submitter ? (document.getElementById(ids.email) as HTMLInputElement | null) : null;
+    if (emailInput && email.trim() && emailInput.validity.typeMismatch) found.email = BAD_EMAIL;
     const extra = p.validate?.(values);
     const all = { ...found, ...extra?.errors };
     if (hasErrors(all) || extra?.summary) return showInvalid(all, extra?.summary ?? null);
@@ -317,7 +327,8 @@ export function TaskComposer(p: TaskComposerProps) {
   const describedBy = (k: ComposerErrorKey, ...more: (string | false | null | undefined)[]) =>
     [...more, errors[k] && ids.error(k)].filter(Boolean).join(" ") || undefined;
 
-  const left = charactersLeft(p.descriptionMax, textLength, p.descriptionWarnAt);
+  const descriptionMode = p.descriptionMode ?? "rich";
+  const left = charactersLeft(p.descriptionMax, descriptionMode === "plain" ? plain.length : textLength, p.descriptionWarnAt);
   const leftLine = left !== null && <p className={cn("text-xs", left < 0 ? "text-destructive" : "text-faint")}>{left.toLocaleString()} characters left</p>;
   const uploadingLine = uploading > 0 && (
     <p className="text-xs text-faint" aria-live="polite">
@@ -351,7 +362,7 @@ export function TaskComposer(p: TaskComposerProps) {
           <legend className="mb-1.5 text-sm font-medium">What is it?</legend>
           <div className={cn("grid gap-2", offered.length === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
             {offered.map((t) => {
-              const copy = typeCopy(t);
+              const copy = typeCopy(t, TYPE_NAMES);
               return (
                 <label
                   key={t}
@@ -571,7 +582,12 @@ export function TaskComposer(p: TaskComposerProps) {
               ))}
             </ul>
           )}
-          {summary && <p className={cn("text-foreground", listed.length > 0 && "mt-1.5")}>{summary}</p>}
+          {summary && (
+            <p className={cn("text-foreground", listed.length > 0 && "mt-1.5")}>
+              {summary}
+              {p.errorExtra}
+            </p>
+          )}
         </div>
       )}
       {typePicker}
@@ -598,6 +614,29 @@ export function TaskComposer(p: TaskComposerProps) {
         />
         <ComposerFieldError id={ids.error("title")} message={errors.title} />
       </div>
+      {descriptionMode === "plain" && (
+        <div className="grid gap-1.5">
+          <Label htmlFor={ids.description}>{p.descriptionLabel ?? "Details"}</Label>
+          <Textarea
+            id={ids.description}
+            name="description"
+            rows={6}
+            maxLength={p.descriptionMax}
+            value={plain}
+            onChange={(e) => {
+              setPlain(e.target.value);
+              clearKey("description");
+            }}
+            placeholder={p.descriptionPlaceholder}
+            aria-invalid={errors.description ? true : undefined}
+            aria-describedby={describedBy("description")}
+            className="min-h-32 bg-background"
+          />
+          <ComposerFieldError id={ids.error("description")} message={errors.description} />
+          {leftLine}
+        </div>
+      )}
+      {descriptionMode === "rich" && (
       <div className="grid gap-1.5">
         <Label onClick={() => focusKey("description")}>{p.descriptionLabel ?? "Details"}</Label>
         {/* Shell for the editor (it mounts on the client). With `action` and no JavaScript, the <noscript> textarea
@@ -623,6 +662,7 @@ export function TaskComposer(p: TaskComposerProps) {
         {uploadingLine}
         {leftLine}
       </div>
+      )}
       {p.fields?.(fieldCtx)}
       {statusPicker}
       {p.submitter && (
@@ -684,7 +724,7 @@ export function TaskComposer(p: TaskComposerProps) {
       )}
       <p role="alert" aria-live="polite" className="min-h-5 text-[13px] text-destructive">
         {error}
-        {p.errorExtra}
+        {!summary && p.errorExtra}
         {/* Not announced again: the summary at the top already was. */}
         {!error && listed.length > 0 && <span aria-hidden>Fix the {listed.length === 1 ? "field" : "fields"} marked above, then send again.</span>}
       </p>

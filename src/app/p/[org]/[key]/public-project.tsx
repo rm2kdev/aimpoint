@@ -3,20 +3,19 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RichEditor } from "@/components/rich-editor";
+import { TaskComposer, usePendingUploads } from "@/components/task-composer";
 import { LogoMark } from "@/components/logo";
 import { PriorityIcon, ProjectDot, StatusRing, TypeTag } from "@/components/bits";
 import { StatusTrackBar } from "@/components/status-track-bar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { submitPublicTicket } from "@/app/actions/project-public";
 import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
 import { statusTrack } from "@/lib/status-track";
-import { TASK_TYPES, type PublicComment, type PublicProjectView, type PublicStatus, type PublicTask, type Status, type TaskType } from "@/lib/types";
+import { type PublicComment, type PublicProjectView, type PublicStatus, type PublicTask, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { loginHref, publicPageHref, signupHref } from "./href";
-import { INTAKE_ERRORS } from "@/lib/task-intake-core";
+import { TASK_DESCRIPTION_MAX } from "@/lib/task-intake-core";
 
 type Mode = "all" | "mine" | "task" | "submit";
 
@@ -32,18 +31,10 @@ export interface PublicProjectScreenProps {
   mine: PublicTask[] | null;
   /** Key of a ticket just submitted, highlighted in the list. */
   created: string | null;
-  limits: { title: number; description: number };
 }
 
 /** StatusRing takes the app's Status shape; the public one carries `stage` instead of `category`. */
 const asStatus = (s: PublicStatus, order: number): Status => ({ id: s.id, projectId: "", name: s.name, color: s.color, category: s.stage, order });
-
-/** What each type means to someone outside the team (same copy as public forms). */
-const TYPE_COPY: Record<TaskType, { label: string; hint: string }> = {
-  issue: { label: "Bug report", hint: "Something isn't working" },
-  feature: { label: "Feature request", hint: "An idea or something missing" },
-  task: { label: "Task", hint: "Something that needs doing" },
-};
 
 const CLOSED = new Set(["done", "cancelled"]);
 
@@ -133,7 +124,7 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
           <TaskDetail slug={slug} projectKey={key} task={p.detail.task} comments={p.detail.comments} statuses={statuses} />
         )}
         {p.mode === "submit" && (
-          <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} limits={p.limits} />
+          <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} />
         )}
         {p.mode === "all" && (
           <TaskList slug={slug} projectKey={key} tasks={view.tasks} statuses={statuses} created={p.created} truncated={view.truncated} empty="No tickets yet." />
@@ -371,165 +362,63 @@ function TaskDetail({
 
 /* ---------------- submit ---------------- */
 
-function SubmitForm({
-  slug,
-  projectKey,
-  submitStatuses,
-  statuses,
-  limits,
-}: {
-  slug: string;
-  projectKey: string;
-  submitStatuses: PublicStatus[];
-  statuses: Status[];
-  limits: { title: number; description: number };
-}) {
+/** The ticket form, on the shared TaskComposer (VEC-358): images go through this project's pending uploads. */
+function SubmitForm({ slug, projectKey, submitStatuses, statuses }: { slug: string; projectKey: string; submitStatuses: PublicStatus[]; statuses: Status[] }) {
   const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [html, setHtml] = useState("");
-  const [textLength, setTextLength] = useState(0);
   const [type, setType] = useState<TaskType>("issue");
   const [statusId, setStatusId] = useState(submitStatuses[0]?.id ?? "");
-  const [error, setError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
-  const [pending, setPending] = useState(false);
-  const descLeft = limits.description - textLength;
-
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    if (pending) return;
-    if (!title.trim()) {
-      setError(INTAKE_ERRORS.titleMissing);
-      e.currentTarget.querySelector<HTMLInputElement>("#public-title")?.focus();
-      return;
-    }
-    if (descLeft < 0) {
-      setError(INTAKE_ERRORS.descriptionTooLong(textLength));
-      return;
-    }
-    setPending(true);
-    setError(null);
-    try {
-      const res = await submitPublicTicket(slug, projectKey, {
-        title,
-        // Tiptap keeps an empty paragraph at the end; it isn't content.
-        description: html.replace(/(<p><\/p>)+$/, ""),
-        type,
-        statusId: submitStatuses.length > 1 ? statusId : "",
-      });
-      if (res.ok) {
-        router.push(publicPageHref(slug, projectKey, { view: "mine", created: res.key }));
-        router.refresh();
-        return;
-      }
-      setSignedOut(res.status === 401);
-      setError(res.error);
-    } catch {
-      setError("Couldn't reach the server. Check your connection and try again.");
-    }
-    setPending(false);
-  }
+  const uploads = usePendingUploads(`/api/public/${encodeURIComponent(slug)}/${encodeURIComponent(projectKey)}/uploads`);
+  const again = loginHref(publicPageHref(slug, projectKey, { submit: true }));
 
   return (
     <section className="mt-6" aria-labelledby="submit-heading">
       <Link href={publicPageHref(slug, projectKey)} className="text-[12.5px] text-muted-foreground hover:text-foreground">
         ← All tickets
       </Link>
-      <div className="mt-3 rounded-xl border border-border bg-background p-5 sm:p-7">
+      <div className="mt-3 rounded-xl border border-border bg-background p-5 sm:p-7" data-public-submit>
         <h2 id="submit-heading" className="text-[17px] font-semibold tracking-[-0.015em]">
           Submit a ticket
         </h2>
         <p className="mt-1 text-[13px] text-muted-foreground">It goes straight to the team and shows up in this project&apos;s public list.</p>
-        <form onSubmit={onSubmit} noValidate className="mt-5 grid gap-4" data-public-submit>
-          <fieldset className="grid gap-1.5">
-            <legend className="mb-1.5 text-sm font-medium">What is it?</legend>
-            <div className="grid gap-2 sm:grid-cols-3">
-              {TASK_TYPES.map((t) => (
-                <label
-                  key={t}
-                  className={cn(
-                    "flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5 transition-colors",
-                    type === t ? "border-foreground/60 bg-chip" : "border-border hover:bg-chip/60",
-                  )}
-                >
-                  <input type="radio" name="type" value={t} checked={type === t} onChange={() => setType(t)} className="mt-0.5 accent-foreground" />
-                  <span className="grid">
-                    <span className="text-[13.5px] font-medium">{TYPE_COPY[t].label}</span>
-                    <span className="text-[12.5px] text-muted-foreground">{TYPE_COPY[t].hint}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-          <div className="grid gap-1.5">
-            <Label htmlFor="public-title">Title</Label>
-            <Input
-              id="public-title"
-              name="title"
-              required
-              maxLength={limits.title}
-              value={title}
-              onChange={(e) => {
-                setTitle(e.target.value);
-                if (error && !signedOut) setError(null);
-              }}
-              placeholder="A short summary"
-              className="h-9 bg-background"
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label id="public-description-label" onClick={(e) => e.currentTarget.parentElement?.querySelector<HTMLElement>(".ProseMirror")?.focus()}>
-              Details
-            </Label>
-            <div className="min-h-32 rounded-md border border-input bg-background px-3 py-2 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30">
-              <RichEditor
-                orgSlug=""
-                value=""
-                onChange={setHtml}
-                onTextChange={(t) => setTextLength(t.trim().length)}
-                images={false}
-                ariaLabel="Details"
-                placeholder="What happened, what you expected, steps to reproduce…"
-                className="[&_.ProseMirror]:min-h-24 [&_.prose-aimpoint]:max-w-none [&_[role=toolbar]]:-mx-1.5 [&_[role=toolbar]]:mb-2 [&_[role=toolbar]]:static [&_[role=toolbar]]:border-0 [&_[role=toolbar]]:bg-transparent [&_[role=toolbar]]:p-0"
-              />
-            </div>
-            {descLeft < 500 && <p className={cn("text-xs", descLeft < 0 ? "text-destructive" : "text-faint")}>{descLeft.toLocaleString()} characters left</p>}
-          </div>
-          {submitStatuses.length > 1 && (
-            <fieldset className="grid gap-1.5">
-              <legend className="mb-1.5 text-sm font-medium">Status</legend>
-              <div className="flex flex-wrap gap-2">
-                {submitStatuses.map((s) => (
-                  <label
-                    key={s.id}
-                    className={cn(
-                      "flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-3 text-[13px] transition-colors",
-                      statusId === s.id ? "border-foreground/60 bg-chip" : "border-border hover:bg-chip/60",
-                    )}
-                  >
-                    <input type="radio" name="status" value={s.id} checked={statusId === s.id} onChange={() => setStatusId(s.id)} className="sr-only" />
-                    <StatusRing status={statuses.find((x) => x.id === s.id)} statuses={statuses} size={14} />
-                    {s.name}
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-          )}
-          <p role="alert" aria-live="polite" className="min-h-5 text-[13px] text-destructive">
-            {error}
-            {signedOut && (
+        <TaskComposer
+          layout="page"
+          className="mt-5"
+          upload={uploads.upload}
+          descriptionMax={TASK_DESCRIPTION_MAX}
+          descriptionPlaceholder="What happened, what you expected, steps to reproduce… Paste or drop screenshots."
+          type={{ value: type, onChange: setType }}
+          status={{ value: statusId, onChange: setStatusId, options: submitStatuses, statuses }}
+          submitLabel="Submit ticket"
+          pendingLabel="Submitting…"
+          errorExtra={
+            signedOut && (
               <>
                 {" "}
-                <Link className="underline underline-offset-4" href={loginHref(publicPageHref(slug, projectKey, { submit: true }))}>
+                <Link className="underline underline-offset-4" href={again}>
                   Sign in again
                 </Link>
               </>
-            )}
-          </p>
-          <Button type="submit" size="lg" disabled={pending} className="-mt-2 h-9">
-            {pending ? "Submitting…" : "Submit ticket"}
-          </Button>
-        </form>
+            )
+          }
+          onSubmit={async (v) => {
+            setSignedOut(false);
+            const res = await submitPublicTicket(slug, projectKey, {
+              title: v.title,
+              description: uploads.resolve(v.description),
+              type: v.type,
+              statusId: submitStatuses.length > 1 ? (v.statusId ?? "") : "",
+            });
+            if (!res.ok) {
+              setSignedOut(res.status === 401);
+              return { ok: false, error: res.error };
+            }
+            uploads.reset();
+            router.push(publicPageHref(slug, projectKey, { view: "mine", created: res.key }));
+            router.refresh();
+            return { ok: true };
+          }}
+        />
       </div>
     </section>
   );

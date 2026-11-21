@@ -28,6 +28,7 @@ import {
 import { createProjectForm, deleteProjectForm, updateProjectForm } from "@/app/actions/forms";
 import { fieldsInput, FormFieldsEditor, hasTextField, invalidFieldIds, sameFields } from "@/components/settings/form-fields-editor";
 import { TYPE_LABELS } from "@/lib/format";
+import { typeCopy } from "@/components/task-composer/task-composer-core";
 import { STAGE_LABELS } from "@/lib/stages";
 import { isFormDestinationStage, TASK_TYPES, type FormTypeMode, type ProjectForm, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -525,6 +526,10 @@ function FormEditor({
                     {typeError}
                   </p>
                 ) : (
+                  <>
+                  <p className="text-[12.5px] text-muted-foreground" data-public-type-words>
+                    Submitters pick under &ldquo;What is it?&rdquo;: {orList(allowedList.map((t) => typeCopy(t, TYPE_LABELS).label))}.
+                  </p>
                   <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
                     Preselected
                     <Select value={presetNow} onValueChange={(v) => setPreset(v as TaskType)}>
@@ -541,6 +546,7 @@ function FormEditor({
                       </SelectContent>
                     </Select>
                   </div>
+                  </>
                 )}
               </div>
             )}
@@ -560,7 +566,7 @@ function FormEditor({
             <label className="flex items-center justify-between gap-3 px-3 py-2.5">
               <span className="leading-tight">
                 <span className="block text-[13.5px] font-medium">Rich text editor</span>
-                <span className="mt-0.5 block text-[12.5px] text-muted-foreground">Submitters can format the details: bold, lists, links, quotes.</span>
+                <span className="mt-0.5 block text-[12.5px] text-muted-foreground">Submitters can format Details: bold, lists, links, quotes. Off, Details is a plain text box.</span>
               </span>
               <Switch
                 checked={richText}
@@ -575,7 +581,7 @@ function FormEditor({
               <span className="leading-tight">
                 <span className={cn("block text-[13.5px] font-medium", !richText && "text-muted-foreground")}>Allow image uploads</span>
                 <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
-                  {richText ? "Screenshots up to 5 MB each, added to the task." : "Needs the rich text editor."}
+                  {richText ? "Submitters can paste, drop or attach images in Details, up to 5 MB each." : "Needs the rich text editor."}
                 </span>
               </span>
               <Switch checked={richText && allowImages} disabled={!richText} onCheckedChange={setAllowImages} aria-label="Allow image uploads" />

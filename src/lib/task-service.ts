@@ -19,9 +19,6 @@ import { requireFormDestination } from "@/lib/project-forms";
 import { plainTextToHtml as plainToHtml } from "@/lib/form-fields-core";
 import {
   INTAKE_ERRORS,
-  SUBMITTER_EMAIL_MAX,
-  SUBMITTER_NAME_MAX,
-  TASK_DESCRIPTION_MAX,
   normalizeSubmitter,
   normalizeTitle,
   prepareDescription,
@@ -526,10 +523,6 @@ export interface FormSubmission {
   submitterEmail?: string | null;
 }
 
-/** Old names of the shared intake limits (VEC-356, lib/task-intake-core.ts), kept for imports until VEC-358. */
-export const FORM_DESCRIPTION_MAX = TASK_DESCRIPTION_MAX;
-export const FORM_SUBMITTER_NAME_MAX = SUBMITTER_NAME_MAX;
-export const FORM_SUBMITTER_EMAIL_MAX = SUBMITTER_EMAIL_MAX;
 
 /**
  * A submission through an external form becomes a task in the form's project, in the form's destination status and

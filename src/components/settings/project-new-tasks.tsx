@@ -66,8 +66,9 @@ export function ProjectNewTasks({ projectId, projectName }: { projectId: string;
       title="New tasks start in"
       desc={
         <>
-          The status a task created in {projectName} starts in when nobody picks one. Projects use the {orgLink} ({orgStage}) until you choose one of
-          their own statuses. Bots and the API still start tasks in the first not-started status.
+          The status a task created in {projectName} from the New task dialog starts in when nobody picks one. Projects use the {orgLink} ({orgStage})
+          until you choose one of their own statuses. Bots and the API still start tasks in the first not-started status; public tickets and external
+          forms land in the statuses set under Public access and External forms.
         </>
       }
     >

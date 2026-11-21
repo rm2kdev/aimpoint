@@ -206,7 +206,8 @@ export function ProjectPublic({
         <fieldset className={cn("grid gap-2", !enabled && "opacity-60")} disabled={pending}>
           <legend className="text-[13.5px] font-medium">Who can submit tickets</legend>
           <p className="-mt-1 text-[12.5px] text-muted-foreground">
-            Any signed-in Aimpoint account can submit into the statuses you tick. The default is where a ticket lands unless the submitter picks another.
+            Any signed-in Aimpoint account can submit into the statuses you tick. Submitters write a Title and Details (images allowed) and pick
+            what it is: Bug report, Feature request or Task. With more than one status ticked they also pick the Status, starting on the default.
             Tick none to keep the project read-only.
           </p>
           {destinations.length === 0 ? (
