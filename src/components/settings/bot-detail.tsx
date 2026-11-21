@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronRightIcon, Trash2Icon, WorkflowIcon } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
-import { AnalyticsLink, DetailHeader, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
+import { AnalyticsLink, DetailHeader, DisabledTag, SettingsRow, Tag, WorkList } from "@/components/settings/ui";
 import { BotAvatar } from "@/components/bits";
 import { AvatarPicker } from "@/components/bots/avatar-picker";
 import { BotConnection } from "@/components/bots/connect-wizard";
@@ -14,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   AlertDialog,
@@ -25,7 +27,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { deleteBot, setBotMaxTasks, updateBot } from "@/app/actions/bots";
+import { deleteBot, setBotEnabled, setBotMaxTasks, updateBot } from "@/app/actions/bots";
 import { setBotRole } from "@/app/actions/bot-roles";
 import { MCP_TOOLS } from "@/lib/mcp/catalog";
 import { timeAgo } from "@/lib/format";
@@ -85,6 +87,27 @@ export function BotDetail({
   const maxNum = Number(maxTasks);
   const maxValid = maxTasks.trim() !== "" && Number.isInteger(maxNum) && maxNum >= BOT_MAX_TASKS_MIN && maxNum <= BOT_MAX_TASKS_MAX;
   const maxDirty = maxTasks !== String(bot.maxTasks);
+  // Enabled (VEC-345): optimistic while saving, then the live member list (org.changed refreshes it for every open
+  // client, so another admin's toggle shows up here), falling back to this page's own copy of the bot.
+  const [toggling, setToggling] = useState<boolean | null>(null);
+  const liveMember = memberById.get(bot.id);
+  const enabled = toggling ?? (liveMember?.kind === "bot" ? !liveMember.disabled : bot.enabled);
+  const disabler = bot.disabledBy ? memberById.get(bot.disabledBy) : undefined;
+  const toggleEnabled = (next: boolean) => {
+    if (!isAdmin || toggling !== null) return;
+    setToggling(next);
+    start(async () => {
+      const r = await setBotEnabled(org.slug, bot.id, next);
+      if (!r.ok) toast.error(r.error);
+      else {
+        setBot(r.data!);
+        toast.success(next ? `${bot.name} is enabled` : `${bot.name} is disabled`);
+      }
+      router.refresh();
+      setToggling(null);
+    });
+  };
+
   const saveMax = () =>
     start(async () => {
       const r = await setBotMaxTasks(org.slug, bot.id, maxNum);
@@ -108,12 +131,41 @@ export function BotDetail({
     <>
       <DetailHeader
         back={{ href: orgPath(org.slug, "settings", "bots"), label: "Bots" }}
-        avatar={<BotAvatar avatar={bot.avatar} name={bot.name} size={44} />}
+        avatar={<BotAvatar avatar={bot.avatar} name={bot.name} size={44} disabled={!enabled} />}
         name={bot.name}
-        tags={<Tag>Bot</Tag>}
+        tags={
+          <>
+            <Tag>Bot</Tag>
+            {!enabled && <DisabledTag />}
+          </>
+        }
         subtitle={bot.description || "No description"}
         action={isAdmin ? <AnalyticsLink href={analyticsPath(org.slug, analyticsSearchFor({ bot: bot.id }))} label={`Analytics for ${bot.name}`} /> : undefined}
       />
+
+          <Row
+            id="enabled"
+            title="Enabled"
+            desc={
+              <>
+                Turn {bot.name} off without deleting it. While it&rsquo;s disabled it keeps its tasks, history and settings, but it isn&rsquo;t woken, offered
+                for assignment or triage, or let in with its key. Turning it back on hands it the ready tasks it missed.
+              </>
+            }
+          >
+            <div className="grid max-w-xl gap-1.5">
+              <label className={cn("inline-flex w-fit items-center gap-2.5 text-[13.5px] font-medium", isAdmin && "cursor-pointer")}>
+                <Switch checked={enabled} onCheckedChange={toggleEnabled} disabled={!isAdmin || toggling !== null} aria-label={`${bot.name} enabled`} />
+                {enabled ? "Enabled" : "Disabled"}
+              </label>
+              {(!isAdmin || (!enabled && bot.disabledAt)) && (
+                <p className="text-[12.5px] text-faint">
+                  {!enabled && bot.disabledAt && `Disabled ${disabler ? `by ${disabler.name} ` : ""}${timeAgo(bot.disabledAt)}. `}
+                  {!isAdmin && "Only admins can change this."}
+                </p>
+              )}
+            </div>
+          </Row>
 
           <Row
             title="Backend"

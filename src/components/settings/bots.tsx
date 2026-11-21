@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PlusIcon } from "lucide-react";
 import { useOrg } from "@/components/org-provider";
-import { EntityList, EntityRow, SettingsRow, Tag } from "@/components/settings/ui";
+import { DisabledTag, EntityList, EntityRow, SettingsRow, Tag } from "@/components/settings/ui";
 import { BotAvatar } from "@/components/bits";
 import { AvatarPicker, randomAvatar } from "@/components/bots/avatar-picker";
 import { AgentMark } from "@/components/bots/connect-wizard";
@@ -61,11 +61,13 @@ export function BotsSettings({
               <EntityRow
                 key={b.id}
                 href={orgPath(org.slug, "settings", "bots", b.id)}
-                avatar={<BotAvatar avatar={b.avatar} name={b.name} size={32} />}
+                avatar={<BotAvatar avatar={b.avatar} name={b.name} size={32} disabled={!b.enabled} />}
                 name={b.name}
+                dimmed={!b.enabled}
                 tags={
                   <>
                     <Tag>Bot</Tag>
+                    {!b.enabled && <DisabledTag />}
                     {b.roleId && <Tag tone="faint">{roleNames[b.roleId] ?? "Missing role"}</Tag>}
                     {b.connection?.lastDelivery && !b.connection.lastDelivery.ok && (
                       <span className="shrink-0 rounded-[4px] bg-destructive/10 px-1.5 py-px text-[11.5px] font-medium text-destructive">Last run failed</span>

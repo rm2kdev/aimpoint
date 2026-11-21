@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowRightIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowRightIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, PowerOffIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -49,6 +49,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
+import { disabledBotNote } from "@/lib/bot-picker";
+import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 
 const propBtn =
@@ -358,7 +360,19 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </div>
           )}
           {parked && !task.stopped && <ParkedNote bot={parked.bot} status={parked.status} className="mt-3" />}
-          {canRetry && !closed && !task.archivedAt && !waiting.length && !(task.stalled && isStalledReason(task.stalled.reason)) && assignee?.kind === "bot" && (
+          {assignee?.kind === "bot" && assignee.disabled && !closed && !task.archivedAt && (
+            // VEC-345: the assignee was switched off; the task stays with it but nothing wakes it.
+            <p role="note" className="mt-3 flex items-start gap-2 rounded-lg bg-sidebar px-3 py-2 text-[12.5px] text-muted-foreground">
+              <PowerOffIcon className="mt-px size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1">
+                {disabledBotNote(assignee.name)}{" "}
+                <Link href={orgPath(org.slug, "settings", "bots", assignee.id)} className="underline underline-offset-2 hover:text-foreground">
+                  Bot settings
+                </Link>
+              </span>
+            </p>
+          )}
+          {canRetry && !closed && !task.archivedAt && !waiting.length && !(task.stalled && isStalledReason(task.stalled.reason)) && assignee?.kind === "bot" && !assignee.disabled && (
             <QuietHint botName={assignee.name} working={task.workingBotIds.includes(assignee.id)} since={lastPostBy(feed, assignee.id) ?? task.updatedAt} busy={retrying} onRetry={onRetry} />
           )}
           {waiting.length > 0 && !closed && !task.archivedAt && (
@@ -411,7 +425,10 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               >
                 <button className={propBtn}>
                   {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={18} /> : <UnassignedAvatar size={16} />}
-                  <span className={cn("truncate", !assignee && "text-muted-foreground")}>{assignee?.name ?? "Unassigned"}</span>
+                  <span className={cn("truncate", (!assignee || assignee.disabled) && "text-muted-foreground")} title={assignee?.disabled ? disabledBotNote(assignee.name) : undefined}>
+                    {assignee?.name ?? "Unassigned"}
+                  </span>
+                  {assignee?.disabled && <span className="shrink-0 rounded-[4px] bg-chip px-1.5 py-px text-[11.5px] font-medium text-muted-foreground">disabled</span>}
                 </button>
               </Picker>
             </dd>

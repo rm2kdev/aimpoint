@@ -888,6 +888,8 @@ export interface Member {
   maxTasks?: number;
   /** Bots only: the person who added it (BotDoc.createdBy); may stop / resume its work (VEC-217). */
   ownerId?: string;
+  /** Bots only: switched off by an admin (VEC-343/345). Kept in the list so its tasks and history still render. */
+  disabled?: boolean;
 }
 /** How many tasks a bot is working on right now (see loadBotWorkload). Every bot in the org has an entry. */
 export interface BotWorkload {

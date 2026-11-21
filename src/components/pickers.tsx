@@ -8,6 +8,8 @@ import { useOrg, useOrgBase } from "@/components/org-provider";
 import { BotAvatar, PriorityIcon, ProjectDot, StatusRing, TypeSquare, UnassignedAvatar, UserAvatar } from "@/components/bits";
 import { PRIORITY_LABELS, TYPE_NAMES } from "@/lib/format";
 import { TASK_TYPES, type Priority, type Status, type TaskType } from "@/lib/types";
+import { botPickerEntries, DISABLED_BOT_HINT } from "@/lib/bot-picker";
+import { cn } from "@/lib/utils";
 
 export interface Option<V extends string> {
   value: V;
@@ -15,6 +17,8 @@ export interface Option<V extends string> {
   icon?: React.ReactNode;
   hint?: string;
   group?: string;
+  /** Shown grayed with a "Disabled" label and can't be picked (a disabled bot, VEC-345). */
+  disabled?: boolean;
 }
 
 export function Picker<V extends string>({
@@ -99,6 +103,7 @@ function PickerContent<V extends string>({
               <CommandItem
                 key={o.value}
                 value={`${o.label} ${o.hint ?? ""}`}
+                disabled={o.disabled}
                 onSelect={() => {
                   onClose();
                   if (o.value !== value) onChange(o.value);
@@ -107,7 +112,8 @@ function PickerContent<V extends string>({
               >
                 {o.icon}
                 <span className="truncate">{o.label}</span>
-                {o.value === value && <CheckIcon className="ml-auto size-3.5 text-brand" />}
+                {o.disabled && <span className="ml-auto shrink-0 text-[11.5px] text-muted-foreground">{DISABLED_BOT_HINT}</span>}
+                {o.value === value && <CheckIcon className={cn("size-3.5 text-brand", !o.disabled && "ml-auto")} />}
               </CommandItem>
             ))}
           </CommandGroup>
@@ -216,7 +222,8 @@ export function useStatusOptions(projectId: string | null | undefined): Option<s
 export function useAssigneeOptions(): Option<string>[] {
   const { members, me } = useOrgBase();
   const people = members.filter((m) => m.kind === "user").sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : 0));
-  const bots = members.filter((m) => m.kind === "bot");
+  // Disabled bots (VEC-345) come last, grayed and unselectable; a task that already has one still shows it checked.
+  const bots = botPickerEntries(members.filter((m) => m.kind === "bot"));
   return [
     { value: "none", label: "Unassigned", icon: <UnassignedAvatar size={18} /> },
     ...people.map((m) => ({
@@ -226,11 +233,12 @@ export function useAssigneeOptions(): Option<string>[] {
       group: bots.length ? "People" : undefined,
       icon: <UserAvatar id={m.id} name={m.name} image={m.image} size={18} />,
     })),
-    ...bots.map((m) => ({
+    ...bots.map(({ bot: m, disabled }) => ({
       value: m.id,
       label: m.name,
-      hint: "bot",
+      hint: disabled ? `bot ${DISABLED_BOT_HINT.toLowerCase()}` : "bot",
       group: "Bots",
+      disabled,
       icon: <BotAvatar avatar={m.avatar} name={m.name} size={18} />,
     })),
   ];

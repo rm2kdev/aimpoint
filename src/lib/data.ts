@@ -424,6 +424,7 @@ export async function loadShell(orgId: ObjectId, userId: ObjectId) {
       description: b.description,
       maxTasks: botMaxTasks(b),
       ownerId: b.createdBy.toHexString(),
+      ...(isBotEnabled(b) ? {} : { disabled: true }),
     });
   }
   const counts = await loadCounts(orgId, userId, statuses);

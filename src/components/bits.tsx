@@ -253,18 +253,33 @@ export function BotShapeGlyph({ shape, bg, className }: { shape: BotShape; bg: s
   );
 }
 
-export function BotAvatar({ avatar, name, size = 22, className }: { avatar?: BotAvatarData; name: string; size?: number; className?: string }) {
+export function BotAvatar({
+  avatar,
+  name,
+  size = 22,
+  className,
+  disabled,
+}: {
+  avatar?: BotAvatarData;
+  name: string;
+  size?: number;
+  className?: string;
+  /** A disabled bot (VEC-345): grayed out, with "(disabled)" in its title. */
+  disabled?: boolean;
+}) {
   const radius = Math.round(size * 0.3);
+  const title = disabled ? `${name} (disabled)` : name;
+  const cls = disabled ? cn("opacity-45 grayscale", className) : className;
   if (avatar?.kind === "image") {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={avatar.url}
         alt=""
-        title={name}
+        title={title}
         width={size}
         height={size}
-        className={cn("inline-block shrink-0 object-cover", className)}
+        className={cn("inline-block shrink-0 object-cover", cls)}
         style={{ width: size, height: size, borderRadius: radius }}
       />
     );
@@ -272,8 +287,8 @@ export function BotAvatar({ avatar, name, size = 22, className }: { avatar?: Bot
   const shape = avatar?.kind === "shape" ? avatar : { shape: "blob" as BotShape, color: "#525252" };
   return (
     <span
-      title={name}
-      className={cn("inline-grid shrink-0 place-items-center", className)}
+      title={title}
+      className={cn("inline-grid shrink-0 place-items-center", cls)}
       style={{ width: size, height: size, borderRadius: radius, background: shape.color }}
     >
       <BotShapeGlyph shape={shape.shape} bg={shape.color} className="size-[72%]" />
@@ -283,7 +298,7 @@ export function BotAvatar({ avatar, name, size = 22, className }: { avatar?: Bot
 
 /** Avatar for anyone who can own or be assigned a task: a person or a bot. */
 export function MemberAvatar({ member, id, size = 22, className }: { member?: Member; id: string; size?: number; className?: string }) {
-  if (member?.kind === "bot") return <BotAvatar avatar={member.avatar} name={member.name} size={size} className={className} />;
+  if (member?.kind === "bot") return <BotAvatar avatar={member.avatar} name={member.name} size={size} className={className} disabled={member.disabled} />;
   return <UserAvatar id={id} name={member?.name ?? "?"} image={member?.image} size={size} className={className} />;
 }
 

@@ -159,6 +159,7 @@ export function EntityRow({
   tags,
   subtitle,
   meta,
+  dimmed,
 }: {
   href: string;
   avatar: React.ReactNode;
@@ -166,9 +167,11 @@ export function EntityRow({
   tags?: React.ReactNode;
   subtitle: React.ReactNode;
   meta?: React.ReactNode;
+  /** Grays the name, subtitle and meta (a disabled bot, VEC-345); the row still opens. */
+  dimmed?: boolean;
 }) {
   return (
-    <li>
+    <li data-dimmed={dimmed || undefined}>
       <Link
         href={href}
         className="group flex items-center gap-3 px-3.5 py-2.5 transition-colors first:rounded-t-[10px] last:rounded-b-[10px] hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
@@ -176,12 +179,12 @@ export function EntityRow({
         <span className="shrink-0">{avatar}</span>
         <span className="min-w-0 flex-1 leading-tight">
           <span className="flex items-center gap-1.5 text-[13.5px] font-medium">
-            <span className="truncate">{name}</span>
+            <span className={cn("truncate", dimmed && "text-muted-foreground")}>{name}</span>
             {tags}
           </span>
-          <span className="mt-0.5 block truncate text-[12.5px] text-muted-foreground">{subtitle}</span>
+          <span className={cn("mt-0.5 block truncate text-[12.5px] text-muted-foreground", dimmed && "opacity-70")}>{subtitle}</span>
         </span>
-        {meta && <span className="tabular hidden shrink-0 text-right text-[12px] leading-tight text-faint sm:block">{meta}</span>}
+        {meta && <span className={cn("tabular hidden shrink-0 text-right text-[12px] leading-tight text-faint sm:block", dimmed && "opacity-70")}>{meta}</span>}
         <ChevronRightIcon className="size-4 shrink-0 text-faint transition-transform group-hover:translate-x-0.5" />
       </Link>
     </li>
@@ -194,6 +197,11 @@ export function Tag({ children, tone = "muted" }: { children: React.ReactNode; t
   ) : (
     <span className="shrink-0 rounded-[4px] bg-chip px-1.5 py-px text-[11.5px] font-medium text-muted-foreground">{children}</span>
   );
+}
+
+/** The "Disabled" badge on a switched-off bot (VEC-345), in the list and on its page. */
+export function DisabledTag() {
+  return <span className="shrink-0 rounded-[4px] border border-border px-1.5 py-px text-[11.5px] font-medium text-muted-foreground">Disabled</span>;
 }
 
 /* ---------------- people & bots: detail ---------------- */

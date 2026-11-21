@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { BotAvatar, StatusRing, UnassignedAvatar, UserAvatar } from "@/components/bits";
 import { Picker, type Option } from "@/components/pickers";
+import { botPickerEntries } from "@/lib/bot-picker";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -110,7 +111,7 @@ export function ownerHref(slug: string, o: FlowStepOwner, memberById: Map<string
 
 export function OwnerIcon({ owner, memberById, size = 16 }: { owner: FlowStepOwner; memberById: Map<string, Member>; size?: number }) {
   const m = owner.id ? memberById.get(owner.id) : undefined;
-  if (owner.kind === "bot" && m) return <BotAvatar avatar={m.avatar} name={m.name} size={size} />;
+  if (owner.kind === "bot" && m) return <BotAvatar avatar={m.avatar} name={m.name} size={size} disabled={m.disabled} />;
   if (owner.kind === "person" && m) return <UserAvatar id={m.id} name={m.name} image={m.image} size={size} />;
   if (owner.kind === "triage")
     return (
@@ -128,7 +129,8 @@ export function OwnerIcon({ owner, memberById, size = 16 }: { owner: FlowStepOwn
 function useOwnerOptions(stage: StatusCategory): Option<string>[] {
   const { members, me } = useOrg();
   const people = members.filter((m) => m.kind === "user").sort((a, b) => (a.id === me.id ? -1 : b.id === me.id ? 1 : a.name.localeCompare(b.name)));
-  const bots = members.filter((m) => m.kind === "bot").sort((a, b) => a.name.localeCompare(b.name));
+  // Disabled bots (VEC-345) come last, grayed and unselectable; a step that already names one still shows it.
+  const bots = botPickerEntries(members.filter((m) => m.kind === "bot"), (a, b) => a.name.localeCompare(b.name));
   const icon = (o: FlowStepOwner) => <OwnerIcon owner={o} memberById={new Map(members.map((m) => [m.id, m]))} size={18} />;
   return [
     { value: "keep", label: "Keep the assignee", hint: "whoever has it", icon: icon({ kind: "keep" }) },
@@ -141,7 +143,14 @@ function useOwnerOptions(stage: StatusCategory): Option<string>[] {
       group: "People",
       icon: <UserAvatar id={m.id} name={m.name} image={m.image} size={18} />,
     })),
-    ...bots.map((m) => ({ value: `bot:${m.id}`, label: m.name, hint: "bot", group: "Bots", icon: <BotAvatar avatar={m.avatar} name={m.name} size={18} /> })),
+    ...bots.map(({ bot: m, disabled }) => ({
+      value: `bot:${m.id}`,
+      label: m.name,
+      hint: disabled ? "bot disabled" : "bot",
+      group: "Bots",
+      disabled,
+      icon: <BotAvatar avatar={m.avatar} name={m.name} size={18} />,
+    })),
   ];
 }
 
@@ -672,9 +681,12 @@ function WaitFields({
   const wait = r.wait ?? { label: "", resolvers: [], remindAfterDays: null };
   const resolvers = wait.resolvers ?? [];
   const set = (patch: Partial<typeof wait>) => onChange({ wait: { ...wait, ...patch } });
-  const botOptions: Option<string>[] = members
-    .filter((m) => m.kind === "bot" && !resolvers.includes(m.id))
-    .map((m) => ({ value: m.id, label: m.name, icon: <BotAvatar avatar={m.avatar} name={m.name} size={18} /> }));
+  const botOptions: Option<string>[] = botPickerEntries(members.filter((m) => m.kind === "bot" && !resolvers.includes(m.id))).map(({ bot: m, disabled }) => ({
+    value: m.id,
+    label: m.name,
+    disabled,
+    icon: <BotAvatar avatar={m.avatar} name={m.name} size={18} />,
+  }));
   return (
     <div className="grid gap-4 rounded-lg bg-sidebar px-3 py-3 sm:grid-cols-2">
       <div className="grid gap-1.5">
@@ -715,7 +727,7 @@ function WaitFields({
             const m = memberById.get(id);
             return (
               <span key={id} className="inline-flex h-7 items-center gap-1.5 rounded-md bg-background pr-1 pl-2 text-[12.5px] ring-1 ring-border">
-                {m && <BotAvatar avatar={m.avatar} name={m.name} size={14} />}
+                {m && <BotAvatar avatar={m.avatar} name={m.name} size={14} disabled={m.disabled} />}
                 {m ? (
                   <Link href={orgPath(org.slug, "settings", "bots", id)} className="hover:underline hover:underline-offset-2">
                     {m.name}

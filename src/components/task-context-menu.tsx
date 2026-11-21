@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useOrgBase } from "@/components/org-provider";
 import { useCanRetry, useRetryTask } from "@/components/retry-task";
 import { PRIORITY_OPTIONS, TYPE_OPTIONS, useAssigneeOptions, useStatusOptions, type Option } from "@/components/pickers";
+import { DISABLED_BOT_HINT } from "@/lib/bot-picker";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -312,9 +313,10 @@ function FieldSub<V extends string>({
               {options
                 .filter((o) => o.group === g)
                 .map((o) => (
-                  <ContextMenuRadioItem key={o.value} value={o.value}>
+                  <ContextMenuRadioItem key={o.value} value={o.value} disabled={o.disabled}>
                     {o.icon}
                     <span className="truncate">{o.label}</span>
+                    {o.disabled && <span className="ml-auto shrink-0 pl-3 text-[11.5px] text-muted-foreground">{DISABLED_BOT_HINT}</span>}
                   </ContextMenuRadioItem>
                 ))}
             </div>
