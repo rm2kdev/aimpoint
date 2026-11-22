@@ -949,6 +949,8 @@ const TaskRow = memo(function TaskRow({
   const project = projectById.get(task.projectId);
   const closed = status?.category === "done" || status?.category === "cancelled";
   const parked = useParkedBot(task);
+  const chip = subtasks && task.children && task.children.total > 0 ? task.children : undefined;
+  const partOf = partOfHref && task.parentKey ? task.parentKey : undefined;
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hinted = useRef(false);
   // The row's menus and tooltip mount on first use, not with the row (VEC-81).
@@ -970,6 +972,10 @@ const TaskRow = memo(function TaskRow({
       data-live={fresh ? "" : undefined}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
+        // VEC-412: a row with a progress chip or Part of link keeps at least 11rem for the title cell (the chip and
+        // link go compact under 15rem, see subtasks.tsx); the meta column gives the space back, the live note first,
+        // and a narrow row (under 45rem, e.g. with the task pane open) drops the form source chip.
+        (chip || partOf) && "@container/row grid-cols-[22px_minmax(min(11rem,40%),1fr)_minmax(0,auto)]",
         nested && "h-9",
         // VEC-166: on touch a long-press is the row menu (or a drag), never a native text selection; without
         // this iOS selects across neighbouring rows on rows that can't drag. Desktop keeps selectable titles.
@@ -990,7 +996,7 @@ const TaskRow = memo(function TaskRow({
           <TaskStatusRing task={task} size={18} />
         </button>
       </LazyPicker>
-      <div className="flex min-w-0 items-center gap-1.5">
+      <div className="@container/row-main flex min-w-0 items-center gap-1.5">
       {subtasks && (
         <button
           type="button"
@@ -1048,10 +1054,11 @@ const TaskRow = memo(function TaskRow({
       >
         {task.title}
       </Link>
-      {subtasks && task.children && task.children.total > 0 && <ProgressChip summary={task.children} />}
-      {partOfHref && task.parentKey && <PartOfLink parentKey={task.parentKey} href={partOfHref} />}
+      {chip && <ProgressChip summary={chip} />}
+      {partOf && <PartOfLink parentKey={partOf} href={partOfHref!} />}
       </div>
-      <div className="flex items-center gap-3">
+      {/* VEC-412: only the live note gives way when the row is tight; badges and the key keep their size. */}
+      <div className="flex min-w-0 items-center gap-3 [&>:not([data-fresh-note])]:shrink-0">
         {fresh && <FreshNote fresh={fresh} />}
         {!fresh && task.archivedAt ? (
           <span className="text-[12px] text-faint max-md:hidden" title={new Date(task.archivedAt).toLocaleString()}>
@@ -1071,7 +1078,7 @@ const TaskRow = memo(function TaskRow({
         {parked && !task.stopped && <ParkedChip bot={parked.bot} status={parked.status} className="max-sm:hidden" />}
         {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className="max-sm:hidden" />}
         {!closed && !task.archivedAt && !fresh && <FlowStepChip task={task} className="max-md:hidden" />}
-        {!fresh && <FormSourceChip source={task.source} className="max-lg:hidden" />}
+        {!fresh && <FormSourceChip source={task.source} className={cn("max-lg:hidden", (chip || partOf) && "@max-[45rem]/row:hidden")} />}
         {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className="max-sm:hidden" />}
         {(
           <>
@@ -1093,7 +1100,7 @@ const TaskRow = memo(function TaskRow({
         <span className="w-[22px]">
           {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={20} /> : null}
         </span>
-        <span className="tabular w-[64px] text-right font-mono text-[12px] text-faint max-sm:hidden">{task.key}</span>
+        <span className="tabular w-[64px] shrink-0 text-right font-mono text-[12px] whitespace-nowrap text-faint max-sm:hidden">{task.key}</span>
         {canEdit && <ArchiveButton task={task} onArchive={onArchive} />}
       </div>
       {menu}
@@ -1245,9 +1252,12 @@ function FreshNote({ fresh }: { fresh: Fresh }) {
     return () => clearInterval(t);
   }, []);
   return (
-    <span data-drag-omit="" className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">
-      {who && <MemberAvatar member={who} id={who.id} size={16} />}
-      {who ? (who.kind === "bot" ? who.name : who.name.split(" ")[0]) : "A teammate"} {fresh.verb} · {timeAgo(new Date(fresh.at).toISOString())}
+    // VEC-412: the one meta item that shrinks in a tight row, down to the avatar, with the text truncated.
+    <span data-drag-omit="" data-fresh-note="" className="flex min-w-4 items-center gap-1.5 text-[11.5px] text-muted-foreground max-md:hidden">
+      {who && <MemberAvatar member={who} id={who.id} size={16} className="shrink-0" />}
+      <span className="min-w-0 truncate">
+        {who ? (who.kind === "bot" ? who.name : who.name.split(" ")[0]) : "A teammate"} {fresh.verb} · {timeAgo(new Date(fresh.at).toISOString())}
+      </span>
     </span>
   );
 }

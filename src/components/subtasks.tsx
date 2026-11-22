@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { CornerLeftUpIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { progressLabel, progressTitle } from "@/lib/subtask-groups-core";
+import { progressTitle } from "@/lib/subtask-groups-core";
 import { storageKey } from "@/lib/stored-keys";
 import type { Task, TaskChildren } from "@/lib/types";
 
@@ -86,7 +86,11 @@ export function ProgressChip({ summary, className }: { summary: TaskChildren; cl
       )}
     >
       <ProgressPie value={summary.total ? closed / summary.total : 0} complete={complete} />
-      {progressLabel(summary)}
+      {/* VEC-412: in a tight list row (row-main container under 15rem) the chip drops "done" so the title keeps room. */}
+      <span>
+        {closed}/{summary.total}
+        <span className="@max-[15rem]/row-main:hidden"> done</span>
+      </span>
     </span>
   );
 }
@@ -128,7 +132,7 @@ export function PartOfLink({ parentKey, href, className }: { parentKey: string; 
       )}
     >
       <CornerLeftUpIcon className="size-3" />
-      Part of <span className="tabular font-mono">{parentKey}</span>
+      <span className="@max-[15rem]/row-main:hidden">Part of</span> <span className="tabular font-mono">{parentKey}</span>
     </Link>
   );
 }
