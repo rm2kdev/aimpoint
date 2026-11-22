@@ -163,6 +163,11 @@ Settings > Members tells admins what a change in people costs (VEC-413). The num
   prop (billed seats via `billedSeatsFor`, pending invite count, live subscription). It is null whenever billing
   is off, including the Debug toggle, so self-hosted instances show no cost.
 
+Settings > Billing (`SeatRules` in `src/components/settings/billing.tsx`), the subscribe screen
+(`src/components/subscribe-gate.tsx`) and onboarding state the price as `PER_MEMBER_PRICE_LABEL` ("US$4.95 per
+member per month plus tax") and say the total follows the member count: human members only, bots and pending
+invites free until accepted, a prorated charge when someone joins and a credit when someone leaves (VEC-416).
+
 ## Environment variables
 
 | Variable | Staging (Vercel Preview, branch `development`) | Production (Vercel Production) |

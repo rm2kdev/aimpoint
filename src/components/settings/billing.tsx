@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangleIcon, CheckIcon, CreditCardIcon, ExternalLinkIcon, LoaderIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -8,8 +9,8 @@ import { useOrg } from "@/components/org-provider";
 import { SettingsRow, Tag } from "@/components/settings/ui";
 import { Button } from "@/components/ui/button";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { billedSeatsFor, countNoun, discountedMonthlyCents, discountLabel, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, PRO_PRICE_LABEL, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
-import { billingPath } from "@/lib/paths";
+import { billedSeatsFor, countNoun, discountedMonthlyCents, discountLabel, pendingInvitesCost, PER_MEMBER_PRICE_LABEL, PLAN_LABEL, planHeading, PRO_INCLUDES, SELF_HOST_URL, proMonthlyCents, seatChangeCost, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type BillingSummary, type CountKind } from "@/lib/billing-view";
+import { billingPath, orgPath } from "@/lib/paths";
 import { cn } from "@/lib/utils";
 
 type Checkout = "success" | "cancelled" | null;
@@ -52,7 +53,7 @@ function describe(b: BillingSummary, tz: string): { text: string; warn?: boolean
       return { warn: true, text: `${ended ? `The Pro subscription ended on ${ended}` : "The Pro subscription has ended"}, so the organisation is locked. Subscribe again to unlock it; nothing has been deleted.` };
     }
     default:
-      return { warn: true, text: `No subscription, so the organisation is locked. Subscribe to Pro (${PRO_PRICE_LABEL}) to unlock it; nothing has been deleted.` };
+      return { warn: true, text: `No subscription, so the organisation is locked. Subscribe to Pro (${PER_MEMBER_PRICE_LABEL}) to unlock it; nothing has been deleted.` };
   }
 }
 
@@ -125,18 +126,46 @@ function SeatsNote({ b, pro, billedSeats, tz }: { b: BillingSummary; pro: boolea
   const people = `${b.seats} ${b.seats === 1 ? "person" : "people"}`;
   const updatingTo = seatsUpdatingTo({ pro, liveSubscription: b.liveSubscription, seats: b.seats, subscribedSeats: b.subscribedSeats });
   return (
-    <p className="mt-1.5 text-[13px] text-muted-foreground" data-billing-seats={billedSeats}>
-      <span className="tabular text-foreground">{seatTotalLabel(billedSeats)}</span>
-      {pro || b.liveSubscription
-        ? ". Adding or removing people changes the bill; Stripe prorates the difference."
-        : `, for the ${people} in this organisation now. Adding people later changes the bill.`}
-      {updatingTo !== null && (
-        <span className="block text-[12.5px] text-faint" data-seats-updating={updatingTo}>
-          Updating Stripe to {seatTotalLabel(updatingTo)}.
-        </span>
-      )}
-      {b.discount && <DiscountLine b={b} billedSeats={billedSeats} tz={tz} />}
-    </p>
+    <>
+      <p className="mt-1.5 text-[13px] text-muted-foreground" data-billing-seats={billedSeats}>
+        <span className="tabular text-foreground">{seatTotalLabel(billedSeats)}</span>
+        {pro || b.liveSubscription ? "." : `, for the ${people} in this organisation now.`}
+        {updatingTo !== null && (
+          <span className="block text-[12.5px] text-faint" data-seats-updating={updatingTo}>
+            Updating Stripe to {seatTotalLabel(updatingTo)}.
+          </span>
+        )}
+        {b.discount && <DiscountLine b={b} billedSeats={billedSeats} tz={tz} />}
+      </p>
+      <SeatRules b={b} live={pro || b.liveSubscription} billedSeats={billedSeats} />
+    </>
+  );
+}
+
+/**
+ * How the seat count drives the bill (VEC-416, for VEC-413): only human members are seats, bots and pending invites
+ * are free until an invite is accepted, and each join or removal changes the Stripe quantity with a prorated charge or
+ * credit (seat-sync-core, create_prorations). Settings > Billing only exists with billing on, so self-hosted never sees it.
+ */
+function SeatRules({ b, live, billedSeats }: { b: BillingSummary; live: boolean; billedSeats: number }) {
+  const { org } = useOrg();
+  const add = seatChangeCost({ seats: billedSeats, delta: 1 });
+  const pending = pendingInvitesCost({ seats: billedSeats, pending: b.usage.pendingInvites });
+  return (
+    <div className="mt-2.5 grid gap-1 rounded-md bg-sidebar px-2.5 py-2 text-[12.5px] text-muted-foreground" data-seat-rules={live ? "live" : "before-subscribing"}>
+      <p>
+        Billed per human member, <span className="text-foreground">{PER_MEMBER_PRICE_LABEL}</span>. Bots and pending invites are free; an invite becomes a seat when it&rsquo;s accepted.
+      </p>
+      <p>
+        {live
+          ? `Adding a member raises the bill (one more takes it from ${usd(add.currentMonthlyCents)} to ${add.newLabel}), with a prorated charge for the rest of this billing period. Removing a member lowers it, credited the same way.`
+          : "Once subscribed, the total follows the member count: adding a member raises the bill with a prorated charge for the rest of the billing period, and removing one lowers it."}
+      </p>
+      {pending.label && <p data-pending-invites-cost={pending.pending}>{pending.label}.</p>}
+      <Link href={orgPath(org.slug, "settings", "members")} className="w-fit underline underline-offset-2 hover:text-foreground" data-seat-rules-members>
+        Manage members
+      </Link>
+    </div>
   );
 }
 
@@ -164,7 +193,7 @@ function PlanCard({ current }: { current: boolean }) {
       <div className="flex items-center gap-2">
         <h3 className="text-[13.5px] font-semibold">{PLAN_LABEL.pro}</h3>
         {current && <Tag>Current</Tag>}
-        <span className="ml-auto text-[13px] text-muted-foreground">{PRO_PRICE_LABEL}</span>
+        <span className="ml-auto text-right text-[13px] text-muted-foreground">{PER_MEMBER_PRICE_LABEL}</span>
       </div>
       <ul className="mt-2.5 grid gap-1.5 text-[13px]">
         {PRO_INCLUDES.map((line) => (
@@ -220,7 +249,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
           title="Plan"
           desc={
             <>
-              Pro is {PRO_PRICE_LABEL}, billed per organisation: each person in it is a seat (bots and pending invites aren&rsquo;t). Payments, invoices and cancelling go through Stripe.
+              Pro is {PER_MEMBER_PRICE_LABEL}, billed per organisation: each human member is a seat, so the bill grows with the number of members (bots and pending invites aren&rsquo;t seats). Payments, invoices and cancelling go through Stripe.
             </>
           }
         >
@@ -256,7 +285,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                   {!b.liveSubscription && !(checkout === "success" && !pro) && (
                     <Button onClick={() => go("checkout")} disabled={pending} className="gap-2" data-billing-action="checkout">
                       {going === "checkout" ? <LoaderIcon className="size-3.5 animate-spin" /> : <CreditCardIcon className="size-3.5" />}
-                      {b.status === "canceled" ? "Subscribe again" : `Subscribe to Pro, ${PRO_PRICE_LABEL}`}
+                      {b.status === "canceled" ? "Subscribe again" : `Subscribe to Pro, ${PER_MEMBER_PRICE_LABEL}`}
                     </Button>
                   )}
                   {b.hasCustomer && (

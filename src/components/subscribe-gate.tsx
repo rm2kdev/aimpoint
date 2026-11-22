@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/logo";
 import { logoutAction } from "@/app/actions/auth";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { PRO_PRICE_LABEL, seatTotalLabel, SELF_HOST_URL, type BillingSummary } from "@/lib/billing-view";
+import { PER_MEMBER_PRICE_LABEL, seatTotalLabel, SELF_HOST_URL, type BillingSummary } from "@/lib/billing-view";
 import { billingPath, orgPath } from "@/lib/paths";
 
 /** Why the org is locked, one sentence (the Billing page has the full state). */
@@ -123,7 +123,7 @@ function SubscribeScreen() {
         </p>
         <h1 className="text-[22px] font-semibold tracking-[-0.02em]">{fix ? "Fix billing to continue" : "Subscribe to continue"}</h1>
         <p className="mt-2 text-[13.5px] text-muted-foreground">
-          {lockReason(b, org.name)} Hosted Aimpoint is {PRO_PRICE_LABEL}, with no free tier. Your tasks, projects and bots are all kept and unlock as soon as{" "}
+          {lockReason(b, org.name)} Hosted Aimpoint is {PER_MEMBER_PRICE_LABEL}, with no free tier. Your tasks, projects and bots are all kept and unlock as soon as{" "}
           {fix ? (b.status === "paused" ? "the subscription is resumed." : "the subscription is paid.") : "the subscription starts."}
         </p>
 
@@ -141,7 +141,11 @@ function SubscribeScreen() {
         ) : isAdmin ? (
           <div className="mt-6 rounded-[10px] border border-border bg-background px-4 py-3.5">
             <p className="tabular text-[13px] text-muted-foreground" data-billing-seats={b.seats}>
-              <span className="text-foreground">{seatTotalLabel(fix && b.subscribedSeats !== null ? b.subscribedSeats : b.seats)}</span>. Each person in the organisation is a seat; bots and pending invites aren&rsquo;t.
+              <span className="text-foreground">{seatTotalLabel(fix && b.subscribedSeats !== null ? b.subscribedSeats : b.seats)}</span>.
+            </p>
+            <p className="mt-1.5 text-[12.5px] text-muted-foreground" data-seat-rules="subscribe">
+              That&rsquo;s {PER_MEMBER_PRICE_LABEL} for each human member; bots and pending invites are free until an invite is accepted. The total follows the member count:
+              adding a member raises the bill with a prorated charge, and removing one lowers it.
             </p>
             <div className="mt-3.5 flex flex-wrap items-center gap-2">
               <Button onClick={subscribe} disabled={pending} className="gap-2" data-billing-action={b.liveSubscription ? "portal" : "checkout"}>

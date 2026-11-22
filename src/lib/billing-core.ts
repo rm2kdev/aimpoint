@@ -29,6 +29,8 @@ export const PRO_SEAT_PRICE_CENTS = 495;
 /** Prices are pre-tax: Checkout adds the customer's local tax on top (docs/billing.md), so every shown price says so (VEC-270). */
 export const TAX_NOTE = "plus tax";
 export const PRO_PRICE_LABEL = `US$4.95 per user/month ${TAX_NOTE}`;
+/** "US$4.95 per member per month plus tax": the seat price on Settings > Billing, the subscribe screen and onboarding (VEC-416). */
+export const PER_MEMBER_PRICE_LABEL = `${usd(PRO_SEAT_PRICE_CENTS)} per member per month ${TAX_NOTE}`;
 
 /** "US$4.95", "US$14.85": a US-cent amount as shown in the UI. */
 export function usd(cents: number): string {

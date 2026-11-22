@@ -19,6 +19,7 @@ import {
   planHeading,
   PAST_DUE_GRACE_DAYS,
   PRO_PRICE_LABEL,
+  PER_MEMBER_PRICE_LABEL,
   PRO_SEAT_PRICE_CENTS,
   billableSeats,
   seatQuantity,
@@ -151,6 +152,7 @@ test("feature messages: only an unpaid org lacks Analytics and Public forms, wit
 test("per-seat price (VEC-238): US$4.95 per user per month", () => {
   assert.equal(PRO_SEAT_PRICE_CENTS, 495);
   assert.equal(PRO_PRICE_LABEL, "US$4.95 per user/month plus tax");
+  assert.equal(PER_MEMBER_PRICE_LABEL, "US$4.95 per member per month plus tax");
   assert.equal(usd(495), "US$4.95");
   assert.equal(usd(1485), "US$14.85");
   assert.equal(usd(0), "US$0.00");

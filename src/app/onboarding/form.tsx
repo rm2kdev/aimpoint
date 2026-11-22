@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/logo";
 import { createOrgAction } from "@/app/actions/org";
-import { PRO_PRICE_LABEL, SELF_HOST_URL } from "@/lib/billing-view";
+import { PER_MEMBER_PRICE_LABEL, SELF_HOST_URL } from "@/lib/billing-view";
 
 /** `billing`: managed hosting (VEC-264), where creating an organisation goes straight on to Stripe Checkout. */
 export function OnboardingForm({ firstName, billing }: { firstName: string; billing: boolean }) {
@@ -31,8 +31,8 @@ export function OnboardingForm({ firstName, billing }: { firstName: string; bill
           </div>
           {billing && (
             <p className="rounded-lg border border-border bg-background px-3 py-2.5 text-[13px] text-muted-foreground" data-onboarding-pricing>
-              Hosted Aimpoint is <span className="text-foreground">{PRO_PRICE_LABEL}</span>, with no free tier. Next you&rsquo;ll subscribe through Stripe; each person you
-              add later is a seat.
+              Hosted Aimpoint is <span className="text-foreground">{PER_MEMBER_PRICE_LABEL}</span>, with no free tier. Next you&rsquo;ll subscribe through Stripe; the total
+              follows the member count, so each person you add later raises the bill.
             </p>
           )}
           <p role="alert" aria-live="polite" className="min-h-5 text-[13px] text-destructive">{state?.error}</p>
