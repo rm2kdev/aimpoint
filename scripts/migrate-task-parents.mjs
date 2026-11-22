@@ -1,5 +1,5 @@
 // One-off (VEC-407): backfills sub-task parent links (TaskDoc.parentId) and TaskDoc.createdByBot on the database in
-// .env.local and records the migration in `migrations`, exactly as ensureIndexes does on a fresh start. Needed because a
+// .env.local (or MONGODB_URI / MONGODB_DB from the environment) and records the migration in `migrations`, exactly as ensureIndexes does on a fresh start. Needed because a
 // running dev server caches its init on globalThis and never re-runs ensureIndexes. Idempotent.
 // Usage: node scripts/migrate-task-parents.mjs [--dry-run]
 import fs from "node:fs";
@@ -19,17 +19,24 @@ registerHooks({
 });
 const { backfillTaskParents, TASK_PARENT_MIGRATION } = await import("../src/lib/parent-link-migration.ts");
 
-const env = Object.fromEntries(
-  fs
-    .readFileSync(new URL("../.env.local", import.meta.url), "utf8")
-    .split("\n")
-    .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
-    .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "")]),
-);
+// MONGODB_URI / MONGODB_DB in the environment win over .env.local (as in migrate-parent-started.mjs), so the script can
+// be pointed at the dev/prod database without editing the file; .env.local is optional.
+const file = new URL("../.env.local", import.meta.url);
+const local = fs.existsSync(file)
+  ? Object.fromEntries(
+      fs
+        .readFileSync(file, "utf8")
+        .split("\n")
+        .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
+        .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim().replace(/^["']|["']$/g, "")]),
+    )
+  : {};
+const env = { ...local, ...process.env };
 const dryRun = process.argv.includes("--dry-run");
 const client = await new MongoClient(env.MONGODB_URI ?? "mongodb://127.0.0.1:27017").connect();
 try {
   const db = client.db(env.MONGODB_DB ?? "aimpoint");
+  console.log(`database: ${db.databaseName}`);
   if (!dryRun) {
     await db.collection("tasks").createIndex({ orgId: 1, parentId: 1 });
     await db.collection("tasks").createIndex({ parentId: 1, archivedAt: 1 });
