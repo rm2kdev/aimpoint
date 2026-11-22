@@ -56,6 +56,7 @@ import { disabledBotNote, heldMentionsToast, typedDisabledMentions } from "@/lib
 import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 import { TASK_TITLE_MAX } from "@/lib/task-intake-core";
+import { PartOfLink, ProgressChip } from "@/components/subtasks";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -63,6 +64,7 @@ const propBtn =
 export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClose: () => void; onTask: (t: Task) => void }) {
   const { org, me, isAdmin, statusById, memberById, members, projectById } = useOrg();
   const [task, setTask] = useState<TaskDetail | null>(null);
+  const pathname = usePathname();
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [error, setError] = useState<string>();
   const [deleted, setDeleted] = useState(false);
@@ -118,11 +120,15 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
       setTask((t) => {
         if (!t) return t;
         const listed = t.dependents.some((d) => d.id === ref.id);
+        // VEC-408: a sub-task of this one (new, changed, or moved to another parent).
+        const mine = e.task.parentId === t.id;
+        const sub = (t.subtasks ?? []).some((d) => d.id === ref.id);
         // Unrelated to this task: keep the same object, so the pane doesn't re-render for every edit in the org.
-        if (!dependsOnMe && !listed && !t.dependencies.some((d) => d.id === ref.id)) return t;
+        if (!dependsOnMe && !listed && !t.dependencies.some((d) => d.id === ref.id) && !mine && !sub) return t;
         const dependents = dependsOnMe ? (listed ? t.dependents.map((d) => (d.id === ref.id ? ref : d)) : [...t.dependents, ref]) : t.dependents.filter((d) => d.id !== ref.id);
         const dependencies = t.dependencies.map((d) => (d.id === ref.id ? ref : d));
-        return { ...t, dependents, dependencies };
+        const subtasks = mine ? (sub ? t.subtasks.map((d) => (d.id === ref.id ? ref : d)) : [...(t.subtasks ?? []), ref]) : (t.subtasks ?? []).filter((d) => d.id !== ref.id);
+        return { ...t, dependents, dependencies, subtasks };
       });
     } else if (e.type === "task.upsert" && e.task.id === task.id) {
       setTask((t) => (t ? { ...t, ...e.task } : t));
@@ -363,6 +369,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </Picker>
             <TitleField value={task.title} readOnly={!canEdit} onSave={(title) => patch({ title })} />
           </div>
+          {task.parentKey && (
+            <div className="mt-1 ml-8 flex items-center">
+              <PartOfLink parentKey={task.parentKey} href={`${pathname}?task=${encodeURIComponent(task.parentKey)}`} className="-ml-1 h-6 text-[12.5px]" />
+            </div>
+          )}
           {task.archivedAt && (
             <div className="mt-3 flex items-center gap-2.5 rounded-lg bg-sidebar py-1.5 pr-1.5 pl-3 text-[12.5px] text-muted-foreground">
               <ArchiveIcon className="size-3.5 shrink-0" />
@@ -554,6 +565,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
           </dl>
 
+          <Subtasks task={task} />
+
           <Dependencies
             task={task}
             needsOwner={task.stalled?.reason === "needs_owner" && !closed && !task.archivedAt ? task.stalled : null}
@@ -639,6 +652,25 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
         </AlertDialogContent>
       </AlertDialog>
     </>,
+  );
+}
+
+/** VEC-408: a parent's sub-tasks (the tasks filed from it), with the same rows as the dependencies. */
+function Subtasks({ task }: { task: TaskDetail }) {
+  const list = task.subtasks ?? [];
+  if (!list.length) return null;
+  return (
+    <section className="mt-5 border-t border-border pt-4" aria-label="Sub-tasks">
+      <div className="flex h-7 items-center gap-2">
+        <h3 className="text-[12.5px] font-semibold">Sub-tasks</h3>
+        {task.children && task.children.total > 0 && <ProgressChip summary={task.children} />}
+      </div>
+      <ul className="mt-1 flex flex-col">
+        {list.map((d) => (
+          <RefRow key={d.id} refTask={d} />
+        ))}
+      </ul>
+    </section>
   );
 }
 

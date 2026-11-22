@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -34,6 +34,8 @@ import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
 import { StoppedChip } from "@/components/stop-work";
 import { PublicBadge } from "@/components/settings/project-public";
 import { adoptLegacyKey, storageKey } from "@/lib/stored-keys";
+import { layoutSubtasks, stableChildren } from "@/lib/subtask-groups-core";
+import { createExpandedStore, createKidsStore, PartOfLink, ProgressChip, type ExpandedStore, type KidsStore } from "@/components/subtasks";
 
 export interface Scope {
   projectId?: string;
@@ -92,6 +94,9 @@ export function TaskWorkspace({
   // row subscribes to for its own id, so a highlight re-renders that row only (VEC-73).
   const [freshStore] = useState(createFreshStore);
   const setFresh = freshStore.update;
+  // VEC-408: which parents show their sub-tasks (session), and each parent's sub-tasks, read per row.
+  const [expandedStore] = useState(createExpandedStore);
+  const [kidsStore] = useState(createKidsStore);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   // Manual (shared drag order) is the default for project views and All; My tasks keeps priority.
   const [view, setView] = useViewState(storageKey(`view:${pathname}`), scope.archived ? "archived" : scope.mine ? "priority" : "manual");
@@ -209,8 +214,25 @@ export function TaskWorkspace({
   const filtering = typeFilter !== "all" || filterCount(view) > 0;
   const clearFilters = () => {
     setTypeFilter("all");
-    setView((v) => ({ ...v, assignees: [], priorities: [], due: [], statuses: [] }));
+    setView((v) => ({ ...v, assignees: [], priorities: [], due: [], statuses: [], createdBy: "anyone" }));
   };
+
+  // VEC-408: with "Group sub-tasks under their parent" on, a sub-task whose parent is in the list sits under it
+  // (rows = top-level tasks plus sub-tasks whose parent isn't shown, which get a "Part of" link).
+  const grouping = view.groupSubtasks && !scope.archived;
+  const layout = useMemo(() => layoutSubtasks(tasks.values(), visible, grouping, comparator(view.sort)), [tasks, visible, grouping, view.sort]);
+  // Reuse the arrays the rows already hold where nothing changed, so their memoised groups skip re-rendering.
+  const kids = useMemo(() => stableChildren(kidsStore.all(), layout.children), [layout.children, kidsStore]);
+  useLayoutEffect(() => {
+    kidsStore.replace(kids);
+  }, [kids, kidsStore]);
+  // The open parents among this view's, as a string so the snapshot compares by value.
+  const openSig = useSyncExternalStore(
+    expandedStore.subscribe,
+    () => [...kids.keys()].filter((id) => expandedStore.has(id)).join(","),
+    () => "",
+  );
+  const rows = layout.rows;
 
   const groups = useMemo((): Group[] => {
     const cmp = comparator(view.sort);
@@ -222,7 +244,7 @@ export function TaskWorkspace({
         stage,
         ring: stageStatus(stage),
         ringList: STAGE_RING_LIST,
-        tasks: visible.filter((t) => stageOf(t) === stage).sort(cmp),
+        tasks: rows.filter((t) => stageOf(t) === stage).sort(cmp),
       }));
     }
     // Every status of the project gets a section, empty ones included, so there is always somewhere to drop a task.
@@ -233,14 +255,14 @@ export function TaskWorkspace({
       status: s,
       ring: s,
       ringList: viewStatuses,
-      tasks: visible.filter((t) => t.statusId === s.id).sort(cmp),
+      tasks: rows.filter((t) => t.statusId === s.id).sort(cmp),
     }));
     // Tasks whose status was deleted mid-session (or not yet mapped after a move into this project).
     const known = new Set(viewStatuses.map((s) => s.id));
-    const orphans = visible.filter((t) => !known.has(t.statusId));
+    const orphans = rows.filter((t) => !known.has(t.statusId));
     if (orphans.length) out[0]?.tasks.push(...orphans);
     return out;
-  }, [visible, viewStatuses, scope.projectId, stageOf, view.sort]);
+  }, [rows, viewStatuses, scope.projectId, stageOf, view.sort]);
   const archivedList = useMemo(() => (scope.archived ? [...visible].sort(comparator(view.sort)) : []), [scope.archived, visible, view.sort]);
 
   const openCount = groups.reduce((n, g) => n + (isClosedCategory(g.stage) ? 0 : g.tasks.length), 0);
@@ -249,11 +271,21 @@ export function TaskWorkspace({
   const isFolded = (g: Group) => collapsed.get(g.id) ?? isClosedCategory(g.stage);
 
   /* ----- selection & keyboard ----- */
-  // Tasks in folded groups are out of sight, so j/k skips them.
-  const flat = useMemo(
-    () => (scope.archived ? archivedList : shown.flatMap((g) => ((collapsed.get(g.id) ?? isClosedCategory(g.stage)) ? [] : g.tasks))),
-    [scope.archived, archivedList, shown, collapsed],
-  );
+  // Tasks in folded groups are out of sight, so j/k skips them. Sub-tasks of an expanded parent follow it (VEC-408).
+  const flat = useMemo(() => {
+    if (scope.archived) return archivedList;
+    const open = new Set(openSig ? openSig.split(",") : []);
+    return shown.flatMap((g) =>
+      (collapsed.get(g.id) ?? isClosedCategory(g.stage)) ? [] : g.tasks.flatMap((t) => (open.has(t.id) ? [t, ...(kids.get(t.id) ?? [])] : [t])),
+    );
+  }, [scope.archived, archivedList, shown, collapsed, openSig, kids]);
+
+  // Opening a sub-task whose group is collapsed (from the pane's Sub-tasks list, a link) unfolds its parent.
+  useEffect(() => {
+    if (!grouping || !selectedKey) return;
+    const t = [...tasks.values()].find((x) => x.key === selectedKey);
+    if (t?.parentId && kids.has(t.parentId) && rows.some((r) => r.id === t.parentId)) expandedStore.set(t.parentId, true);
+  }, [grouping, selectedKey, tasks, kids, rows, expandedStore]);
 
   /* ----- glide rows to their new position (FLIP) ----- */
   // Runs only when the rendered order changes (rows moved, added, removed, a group folded), not on every
@@ -506,6 +538,8 @@ export function TaskWorkspace({
   useLayoutEffect(() => {
     actions.current = { patchTask, setArchived, moveToEdge, open, seen, dragHint };
   });
+  const detachedSig = useMemo(() => [...layout.detached].join(","), [layout.detached]);
+  const detached = useMemo(() => new Set(detachedSig ? detachedSig.split(",") : []), [detachedSig]);
   const rowActions = useMemo<RowActions>(
     () => ({
       seen: (id) => actions.current.seen(id),
@@ -519,8 +553,10 @@ export function TaskWorkspace({
         else rowEls.current.delete(id);
       },
       fresh: freshStore,
+      expanded: expandedStore,
+      kids: kidsStore,
     }),
-    [freshStore],
+    [freshStore, expandedStore, kidsStore],
   );
 
   // Dependency keys by task id. Rebuilt only when some key changes (not on every edit), so the row
@@ -530,23 +566,35 @@ export function TaskWorkspace({
 
   /** A status group's rows. Two variants (with or without the menu's Move to top/bottom), both stable. */
   const renderRow = useCallback(
-    (t: Task, { handleProps, isDragging }: { handleProps: SortableHandleProps; isDragging: boolean }, movable: boolean) => (
-      <TaskRow
-        task={t}
-        selected={t.key === selectedKey}
-        showProject={showProject}
-        showStatus={!scope.projectId}
-        waitingKeys={t.waitingOn.map((id) => keyById.get(id) ?? null)}
-        sort={view.sort}
-        href={`${pathname}?task=${t.key}`}
-        actions={rowActions}
-        handleProps={manual ? handleProps : undefined}
-        dragging={isDragging}
-        dragHints
-        movable={movable}
-      />
-    ),
-    [selectedKey, showProject, scope.projectId, keyById, view.sort, pathname, rowActions, manual],
+    (t: Task, { handleProps, isDragging }: { handleProps: SortableHandleProps; isDragging: boolean }, movable: boolean) => {
+      const props: TaskRowProps = {
+        task: t,
+        selected: t.key === selectedKey,
+        showProject,
+        showStatus: !scope.projectId,
+        waitingKeys: t.waitingOn.map((id) => keyById.get(id) ?? null),
+        sort: view.sort,
+        href: `${pathname}?task=${t.key}`,
+        actions: rowActions,
+        handleProps: manual ? handleProps : undefined,
+        dragging: isDragging,
+        dragHints: true,
+        movable,
+      };
+      if (!grouping) return <TaskRow {...props} />;
+      // A parent row brings its sub-tasks along (dragging it moves the whole group, VEC-408); a sub-task whose
+      // parent isn't in this list is an ordinary row with a "Part of" link.
+      return (
+        <TaskGroupItem
+          {...props}
+          selectedKey={selectedKey}
+          partOfHref={detached.has(t.id) && t.parentKey ? `${pathname}?task=${t.parentKey}` : undefined}
+          keyById={keyById}
+          pathname={pathname}
+        />
+      );
+    },
+    [selectedKey, showProject, scope.projectId, keyById, view.sort, pathname, rowActions, manual, grouping, detached],
   );
   const renderers = useMemo(
     () => ({
@@ -604,7 +652,13 @@ export function TaskWorkspace({
                 statusOptions={scope.archived ? undefined : statusFilterOptions}
                 statusLabel={scope.projectId ? "Status" : "Stage"}
               />
-              <SortMenu value={view.sort} onChange={(sort) => setView((v) => ({ ...v, sort }))} options={scope.archived ? ARCHIVE_SORTS : SORTS} />
+              <SortMenu
+                value={view.sort}
+                onChange={(sort) => setView((v) => ({ ...v, sort }))}
+                options={scope.archived ? ARCHIVE_SORTS : SORTS}
+                grouped={view.groupSubtasks}
+                onGroupedChange={scope.archived ? undefined : (groupSubtasks) => setView((v) => ({ ...v, groupSubtasks }))}
+              />
             </div>
             {!scope.archived && (
               <Button onClick={() => newTask()} className="h-[30px] gap-2 rounded-lg px-3">
@@ -811,6 +865,9 @@ interface RowActions {
   rowRef: (id: string, el: HTMLDivElement | null) => void;
   /** Teammates' live changes, by task id. */
   fresh: FreshStore;
+  /** VEC-408: parents showing their sub-tasks, and each parent's sub-tasks in this view. */
+  expanded: ExpandedStore;
+  kids: KidsStore;
 }
 
 interface TaskRowProps {
@@ -832,6 +889,12 @@ interface TaskRowProps {
   dragHints?: boolean;
   /** Offer "Move to top/bottom" in the row menu (Manual sort, more than one row in the group). */
   movable?: boolean;
+  /** VEC-408 (grouping on): this row has sub-tasks; show the chevron (`expanded` = open) and the progress chip. */
+  subtasks?: "open" | "closed";
+  /** VEC-408: a sub-task shown on its own because its parent isn't in this list: link to the parent. */
+  partOfHref?: string;
+  /** VEC-408: a sub-task drawn inside its parent's group. */
+  nested?: boolean;
 }
 
 /** Shallow, except `waitingKeys`, which is rebuilt every render and compared by value. */
@@ -866,6 +929,9 @@ const TaskRow = memo(function TaskRow({
   dragging,
   dragHints,
   movable,
+  subtasks,
+  partOfHref,
+  nested,
 }: TaskRowProps) {
   const { statusById, memberById, projectById, me, isAdmin } = useOrgBase();
   const fresh = useSyncExternalStore(actions.fresh.subscribe, () => actions.fresh.get().get(task.id), () => undefined);
@@ -904,6 +970,7 @@ const TaskRow = memo(function TaskRow({
       data-live={fresh ? "" : undefined}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
+        nested && "h-9",
         // VEC-166: on touch a long-press is the row menu (or a drag), never a native text selection; without
         // this iOS selects across neighbouring rows on rows that can't drag. Desktop keeps selectable titles.
         "pointer-coarse:select-none",
@@ -923,6 +990,20 @@ const TaskRow = memo(function TaskRow({
           <TaskStatusRing task={task} size={18} />
         </button>
       </LazyPicker>
+      <div className="flex min-w-0 items-center gap-1.5">
+      {subtasks && (
+        <button
+          type="button"
+          onClick={() => actions.expanded.set(task.id, subtasks !== "open")}
+          aria-expanded={subtasks === "open"}
+          aria-label={`${subtasks === "open" ? "Hide" : "Show"} sub-tasks of ${task.key}`}
+          title={subtasks === "open" ? "Hide sub-tasks" : "Show sub-tasks"}
+          data-subtask-toggle=""
+          className="relative z-10 -ml-1 grid size-5 shrink-0 place-items-center rounded text-faint transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <ChevronRightIcon className={cn("size-3.5 transition-transform duration-150 motion-reduce:transition-none", subtasks === "open" && "rotate-90")} />
+        </button>
+      )}
       <Link
         href={href}
         scroll={false}
@@ -961,12 +1042,15 @@ const TaskRow = memo(function TaskRow({
           window.addEventListener("pointercancel", stop);
         }}
         className={cn(
-          "truncate text-[14px] outline-none after:absolute after:inset-0 after:rounded-[9px] focus-visible:after:ring-2 focus-visible:after:ring-ring",
+          "min-w-0 truncate text-[14px] outline-none after:absolute after:inset-0 after:rounded-[9px] focus-visible:after:ring-2 focus-visible:after:ring-ring",
           closed && "text-faint",
         )}
       >
         {task.title}
       </Link>
+      {subtasks && task.children && task.children.total > 0 && <ProgressChip summary={task.children} />}
+      {partOfHref && task.parentKey && <PartOfLink parentKey={task.parentKey} href={partOfHref} />}
+      </div>
       <div className="flex items-center gap-3">
         {fresh && <FreshNote fresh={fresh} />}
         {!fresh && task.archivedAt ? (
@@ -1016,6 +1100,55 @@ const TaskRow = memo(function TaskRow({
     </div>
   );
 }, sameRowProps);
+
+interface TaskGroupItemProps extends TaskRowProps {
+  selectedKey: string | null;
+  keyById: Map<string, string>;
+  pathname: string;
+}
+
+/**
+ * VEC-408: a top-level row plus, when expanded, its sub-tasks indented under it. Reads its own open state and
+ * sub-task list from the view's stores, so a toggle or a live edit to one sub-task re-renders this group only.
+ * Sub-task rows can't be dragged (they always stay with their parent); dragging the parent carries the group.
+ */
+const TaskGroupItem = memo(function TaskGroupItem({ selectedKey, keyById, pathname, ...row }: TaskGroupItemProps) {
+  const { task, actions } = row;
+  const kids = useSyncExternalStore(actions.kids.subscribe, () => actions.kids.get(task.id), () => actions.kids.get(task.id));
+  const open = useSyncExternalStore(actions.expanded.subscribe, () => actions.expanded.has(task.id), () => false);
+  const total = task.children?.total ?? 0;
+  const has = kids.length > 0 || total > 0;
+  const missing = Math.max(0, total - kids.filter((k) => !k.archivedAt).length);
+  return (
+    <>
+      <TaskRow {...row} subtasks={has ? (open ? "open" : "closed") : undefined} />
+      {has && open && (
+        <ul aria-label={`Sub-tasks of ${task.key}`} data-subtasks-of={task.key} className="relative mt-1 ml-[21px] flex flex-col gap-1 border-l border-border pl-2">
+          {kids.map((k) => (
+            <li key={k.id}>
+              <TaskRow
+                task={k}
+                selected={k.key === selectedKey}
+                showProject={row.showProject}
+                showStatus={row.showStatus}
+                waitingKeys={k.waitingOn.map((id) => keyById.get(id) ?? null)}
+                sort={row.sort}
+                href={`${pathname}?task=${k.key}`}
+                actions={actions}
+                nested
+              />
+            </li>
+          ))}
+          {missing > 0 && (
+            <li className="flex h-8 items-center px-3 text-[12px] text-faint">
+              {kids.length ? `${missing} more` : missing} sub-task{missing === 1 ? "" : "s"} not in this view
+            </li>
+          )}
+        </ul>
+      )}
+    </>
+  );
+}, (a, b) => sameRowProps(a, b));
 
 /**
  * A row's archive/restore button. Its tooltip mounts the first time a pointer or focus reaches the button

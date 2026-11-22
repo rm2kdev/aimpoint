@@ -173,6 +173,14 @@ bot's sub-tasks under the request they came from instead of listing them beside 
   cancelled, sub-tasks in the same project only) shown as a `3/5` chip. A request's public view lists its sub-tasks
   as key, title and status only (`shapePublicSubtask`); a sub-task still opens by its key and links back to its parent.
   `parentId` is read but never sent to the public.
+- App task lists (VEC-408, `task-workspace.tsx`, rules in `lib/subtask-groups-core.ts`): view option "Group sub-tasks
+  under their parent" (Sort menu > Display, on by default, saved per view as `ViewState.groupSubtasks`). A task whose
+  parent passes the view's filters sits under it behind a chevron (collapsed by default, open parents remembered in
+  sessionStorage), and the group goes wherever the parent's status puts it. Expanding lists every sub-task the view
+  holds (filtered or not) plus a "N not in this view" line, matching the `3/5 done` chip from `children`. A sub-task
+  whose parent isn't shown stays a row with a "Part of KEY" link. Sub-task rows don't drag; dragging the parent moves
+  the group. Filter "Created by: People / Bots / Anyone" (`ViewState.createdBy`; people = members, public submitters
+  and forms). The task pane shows a Sub-tasks section (`TaskDetail.subtasks` from `loadTaskRefs`) and "Part of KEY".
 - Archive and delete. Archiving a parent keeps the link: its sub-tasks stay where they are, pointing at an archived
   task (restoring it regroups them). Deleting a parent (task delete, or a project delete that cascades it) clears
   `parentId` on its sub-tasks, which become top-level tasks; nothing else about them changes.

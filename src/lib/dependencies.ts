@@ -106,16 +106,20 @@ export async function checkDependencies(orgId: ObjectId, taskId: ObjectId | null
   return list;
 }
 
-/** A task's dependencies (in order) and dependents, for the task pane. */
-export async function loadTaskRefs(orgId: ObjectId, task: TaskDoc): Promise<{ dependencies: TaskRef[]; dependents: TaskRef[] }> {
+/** A task's dependencies (in order), dependents and sub-tasks (VEC-408), for the task pane. */
+export async function loadTaskRefs(
+  orgId: ObjectId,
+  task: TaskDoc,
+): Promise<{ dependencies: TaskRef[]; dependents: TaskRef[]; subtasks: TaskRef[] }> {
   const c = await cols();
-  const [deps, dependents, projects] = await Promise.all([
+  const [deps, dependents, subtasks, projects] = await Promise.all([
     task.dependsOn?.length ? c.tasks.find({ orgId, _id: { $in: task.dependsOn } }, { projection: { description: 0 } }).toArray() : [],
     c.tasks.find({ orgId, dependsOn: task._id }, { projection: { description: 0 } }).sort({ createdAt: 1 }).limit(200).toArray(),
+    c.tasks.find({ orgId, parentId: task._id }, { projection: { description: 0 } }).sort({ createdAt: 1 }).limit(200).toArray(),
     c.projects.find({ orgId }, { projection: { key: 1 } }).toArray(),
   ]);
   const pk = new Map(projects.map((p) => [hex(p._id), p.key]));
-  const working = await loadWorkingBots([...(deps as TaskDoc[]), ...(dependents as TaskDoc[])].map((t) => t._id));
+  const working = await loadWorkingBots([...(deps as TaskDoc[]), ...(dependents as TaskDoc[]), ...(subtasks as TaskDoc[])].map((t) => t._id));
   const ref = (t: TaskDoc): TaskRef => ({
     id: hex(t._id),
     key: `${pk.get(hex(t.projectId)) ?? "?"}-${t.number}`,
@@ -129,6 +133,7 @@ export async function loadTaskRefs(orgId: ObjectId, task: TaskDoc): Promise<{ de
   return {
     dependencies: (task.dependsOn ?? []).flatMap((id) => (byId.has(hex(id)) ? [ref(byId.get(hex(id))!)] : [])),
     dependents: (dependents as TaskDoc[]).map(ref),
+    subtasks: (subtasks as TaskDoc[]).map(ref),
   };
 }
 

@@ -169,7 +169,7 @@ export const toTaskSource = (s: TaskSourceDoc): TaskSource =>
 export const toTaskDetail = (
   t: TaskDoc,
   projectKey: string,
-  refs: { dependencies: TaskRef[]; dependents: TaskRef[] },
+  refs: { dependencies: TaskRef[]; dependents: TaskRef[]; subtasks: TaskRef[] },
   workingBotIds: string[] = [],
 ): TaskDetail => ({
   ...toTask(t, projectKey, workingBotIds),

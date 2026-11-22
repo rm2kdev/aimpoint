@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowDownUpIcon, CalendarIcon, CircleDashedIcon, ListFilterIcon, XIcon } from "lucide-react";
+import { ArrowDownUpIcon, BotIcon, CalendarIcon, CircleDashedIcon, ListFilterIcon, UserRoundIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { MemberAvatar, PriorityIcon, UnassignedAvatar } from "@/components/bits";
@@ -29,6 +29,8 @@ import { adoptLegacyKey } from "@/lib/stored-keys";
 
 export type SortKey = "manual" | "priority" | "due" | "created" | "created-asc" | "updated" | "title" | "archived";
 export type DueFilter = "overdue" | "today" | "week" | "none";
+/** VEC-408: who created the task. People = members, public-page submitters and external forms. */
+export type CreatedByFilter = "anyone" | "people" | "bots";
 
 export interface ViewState {
   sort: SortKey;
@@ -38,6 +40,10 @@ export interface ViewState {
   due: DueFilter[];
   /** Status ids in a project view, stage names in a cross-project view (VEC-117). */
   statuses: string[];
+  /** VEC-408: only people's requests, only bots' tasks, or both. */
+  createdBy: CreatedByFilter;
+  /** VEC-408: sub-tasks sit under their parent's row (on by default) instead of as rows of their own. */
+  groupSubtasks: boolean;
 }
 
 /** A status (or stage) a view can filter by. */
@@ -65,7 +71,10 @@ const DUE_LABELS: Record<DueFilter, string> = {
   none: "No due date",
 };
 
-const EMPTY: Omit<ViewState, "sort"> = { assignees: [], priorities: [], due: [], statuses: [] };
+export const CREATED_BY_LABELS: Record<CreatedByFilter, string> = { anyone: "Anyone", people: "People", bots: "Bots" };
+
+/** Cleared by Clear filters. `groupSubtasks` is a display option, not a filter, so it isn't in here. */
+const EMPTY: Omit<ViewState, "sort" | "groupSubtasks"> = { assignees: [], priorities: [], due: [], statuses: [], createdBy: "anyone" };
 
 /**
  * Saved-state version. v1 (before VEC-57) saved the sort on every visit, so a saved "priority" there was
@@ -75,7 +84,7 @@ const VIEW_STATE_VERSION = 2;
 
 /** Per-view sort/filter, remembered in localStorage under the view's path. */
 export function useViewState(storageKey: string, defaultSort: SortKey) {
-  const [state, setState] = useState<ViewState>({ sort: defaultSort, ...EMPTY });
+  const [state, setState] = useState<ViewState>({ sort: defaultSort, ...EMPTY, groupSubtasks: true });
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,9 +100,12 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
         priorities: Array.isArray(saved.priorities) ? saved.priorities : [],
         due: Array.isArray(saved.due) ? saved.due : [],
         statuses: Array.isArray(saved.statuses) ? saved.statuses.filter((s): s is string => typeof s === "string") : [],
+        createdBy: saved.createdBy && saved.createdBy in CREATED_BY_LABELS ? saved.createdBy : "anyone",
+        // Views saved before VEC-408 have no value: grouping is the default.
+        groupSubtasks: saved.groupSubtasks !== false,
       });
     } catch {
-      setState({ sort: defaultSort, ...EMPTY });
+      setState({ sort: defaultSort, ...EMPTY, groupSubtasks: true });
     }
     setLoadedKey(storageKey);
   }, [storageKey, defaultSort]);
@@ -106,7 +118,7 @@ export function useViewState(storageKey: string, defaultSort: SortKey) {
 }
 
 export function filterCount(v: ViewState) {
-  return v.assignees.length + v.priorities.length + v.due.length + v.statuses.length;
+  return v.assignees.length + v.priorities.length + v.due.length + v.statuses.length + (v.createdBy !== "anyone" ? 1 : 0);
 }
 
 /** `statusKey` gives the value a task's status filters by (its status id, or its stage in cross-project views). */
@@ -115,6 +127,7 @@ export function applyFilters(tasks: Task[], v: ViewState, statusKey?: (t: Task) 
     if (v.statuses.length && statusKey && !v.statuses.includes(statusKey(t))) return false;
     if (v.assignees.length && !v.assignees.includes(t.assigneeId ?? "none")) return false;
     if (v.priorities.length && !v.priorities.includes(t.priority)) return false;
+    if (v.createdBy !== "anyone" && (t.createdByKind === "bot") !== (v.createdBy === "bots")) return false;
     if (v.due.length) {
       const n = t.dueDate ? daysUntil(t.dueDate) : null;
       const hit = v.due.some((d) =>
@@ -161,14 +174,27 @@ const triggerCls =
 
 const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-export function SortMenu({ value, onChange, options }: { value: SortKey; onChange: (s: SortKey) => void; options: SortKey[] }) {
+export function SortMenu({
+  value,
+  onChange,
+  options,
+  grouped,
+  onGroupedChange,
+}: {
+  value: SortKey;
+  onChange: (s: SortKey) => void;
+  options: SortKey[];
+  /** VEC-408: the "Group sub-tasks under their parent" display option; left out when `onGroupedChange` isn't given. */
+  grouped?: boolean;
+  onGroupedChange?: (on: boolean) => void;
+}) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger className={triggerCls} aria-label={`Sort by ${SORT_LABELS[value]}`}>
         <ArrowDownUpIcon className="size-3.5" />
         <span className="max-md:hidden">{SORT_LABELS[value]}</span>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent align="end" className={onGroupedChange ? "w-64" : "w-48"}>
         <DropdownMenuLabel className="text-xs font-normal text-faint">Sort by</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={value} onValueChange={(v) => onChange(v as SortKey)}>
           {options.map((o) => (
@@ -177,6 +203,15 @@ export function SortMenu({ value, onChange, options }: { value: SortKey; onChang
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        {onGroupedChange && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-normal text-faint">Display</DropdownMenuLabel>
+            <DropdownMenuCheckboxItem checked={!!grouped} onCheckedChange={(on) => onGroupedChange(on === true)}>
+              Group sub-tasks under their parent
+            </DropdownMenuCheckboxItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -289,6 +324,22 @@ export function FilterMenu({
             ))}
           </DropdownMenuSubContent>
         </DropdownMenuSub>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="gap-2.5">
+            <UserRoundIcon className="size-4 text-muted-foreground" /> Created by
+            {value.createdBy !== "anyone" && <span className="ml-auto text-[11.5px] text-faint">{CREATED_BY_LABELS[value.createdBy]}</span>}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-44">
+            <DropdownMenuRadioGroup value={value.createdBy} onValueChange={(v) => onChange({ ...value, createdBy: v as CreatedByFilter })}>
+              {(Object.keys(CREATED_BY_LABELS) as CreatedByFilter[]).map((k) => (
+                <DropdownMenuRadioItem key={k} value={k} onSelect={keep} className="gap-2.5">
+                  {k === "people" ? <UserRoundIcon className="size-4 text-muted-foreground" /> : k === "bots" ? <BotIcon className="size-4 text-muted-foreground" /> : null}
+                  {CREATED_BY_LABELS[k]}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
         {n > 0 && (
           <>
             <DropdownMenuSeparator />
@@ -363,6 +414,20 @@ export function FilterChips({
       ),
       remove: () => onChange({ ...value, due: value.due.filter((x) => x !== d) }),
     })),
+    ...(value.createdBy !== "anyone"
+      ? [
+          {
+            key: "createdBy",
+            label: (
+              <>
+                {value.createdBy === "bots" ? <BotIcon className="size-3.5" /> : <UserRoundIcon className="size-3.5" />} Created by{" "}
+                {value.createdBy === "bots" ? "bots" : "people"}
+              </>
+            ),
+            remove: () => onChange({ ...value, createdBy: "anyone" as const }),
+          },
+        ]
+      : []),
   ];
   return (
     <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-4 py-2 sm:px-7">

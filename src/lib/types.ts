@@ -1159,6 +1159,8 @@ export interface TaskDetail extends Task {
   dependencies: TaskRef[];
   /** Tasks that wait for this one. */
   dependents: TaskRef[];
+  /** VEC-408: its sub-tasks (tasks whose parentId is this one), oldest first, archived ones included and flagged. */
+  subtasks: TaskRef[];
 }
 export interface Notification {
   id: string;
