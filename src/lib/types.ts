@@ -512,6 +512,12 @@ export interface TaskDoc {
    * notification), so it isn't sent again while that lasts; cleared once the task leaves that state (re-arms).
    */
   stalledNoticeAt?: Date | null;
+  /**
+   * VEC-423: when the public submitter (`source.kind: "public"`) was emailed that the task is done (lib/public-completion.ts).
+   * Claimed with a conditional update before sending, so a task sends at most one; never cleared by reopening.
+   * Server-only: not on the client Task, the public views or activity.
+   */
+  publicCompletionNotifiedAt?: Date | null;
   /** Position in the project's flow (docs/flows.md, VEC-174/175). Absent = not positioned yet (lazy). */
   flow?: TaskFlowState | null;
   /** Set when the task was submitted through an external form (VEC-205); `createdBy` is then the form's id. */

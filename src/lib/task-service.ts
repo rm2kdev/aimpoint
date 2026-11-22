@@ -14,6 +14,7 @@ import { continuesEdit, keptText, normalizePlan } from "@/lib/text-history";
 import { signalStop, wakeBots, wakeTriage } from "@/lib/bot-dispatch";
 import { backlogMove, parkRelease, unparkWakes, writeHandOff, type BacklogMove } from "@/lib/backlog-moves";
 import { notify } from "@/lib/notifications";
+import { notifyPublicCompletion } from "@/lib/public-completion";
 import { checkDependencies, dependencyChanged, detachDeleted, handOffReady, openDependencies, recordCloseout, reopenForHandOff, resolveCloseout, taskKeys, type By } from "@/lib/dependencies";
 import { isParked, planFlowForCreate, planFlowForUpdate, pickupTarget, reopenForNextStep, type FlowActivity, type FlowHandoff, type FlowPlan } from "@/lib/flow-engine";
 import { isClosedCategory, isTaskType, TASK_TYPES, type ActivityDoc, type ActivityNote, type CommentResult, type Priority, type StatusCategory, type StatusDoc, type Task, type TaskDoc, type TaskSourceDoc, type TaskType, type ProjectFormDoc } from "@/lib/types";
@@ -834,6 +835,12 @@ export async function updateTaskAs(
   const orgHex = actor.orgId.toHexString();
   const actorId = actor.id.toHexString();
   await publish(orgHex, { type: "task.upsert", actorId, task, descriptionChanged: set.description !== undefined || set.triagePlan !== undefined });
+  // A public submission moved into done emails its submitter once (VEC-423). Every status move ends up here (pane,
+  // moveTask, flow advances, MCP, REST); the send is detached and never fails this write.
+  if (set.statusId && finalStatus?.category === "done" && after.source?.kind === "public" && !after.publicCompletionNotifiedAt) {
+    const prev = await c.statuses.findOne({ _id: before.statusId }, { projection: { category: 1 } });
+    notifyPublicCompletion(actor.orgId, [after], prev?.category, finalStatus);
+  }
 
   // An autosave burst keeps one history entry: the one holding the text from before the burst (VEC-402).
   // Only a lone text edit coalesces; one that comes with other changes always gets its own entry.

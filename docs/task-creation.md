@@ -133,6 +133,30 @@ surface passes its extras as props/slots and keeps nothing of its own for title,
 Internal-only fields (assignee, priority, due date, dependencies) exist only in the in-app property row; the public
 surfaces never render or send them.
 
+## Completion email for public submitters (VEC-423)
+
+A task submitted on a public project page (surface 2, `source.kind: "public"`) emails its submitter once when it moves
+into a **done-stage** status, with a link back to its public view (`/p/<org>/<KEY>?task=<TASK-KEY>`, absolute via
+`appBaseUrl`: `AUTH_URL`, else the request origin). Rules in `lib/public-completion-core.ts` (node test
+`public-completion.test.mjs`), template `lib/public-completion-email.ts` (subject "Your request KEY is done: <title>",
+org, project, task title, done status name, "View your request" button, plain-text part, tag `public-completion`),
+hook `notifyPublicCompletion` in `lib/public-completion.ts`.
+
+- Sent when: the task's own `source` is public (member- and bot-created tasks, bots' sub-tasks under the request and
+  form submissions never qualify), the new status is done (Cancelled sends nothing), the previous one was not done,
+  the task isn't archived, it wasn't emailed before, and the project is still public (enabled, not archived, plan
+  serves public pages).
+- Paths: the hook runs from `updateTaskAs`, the one status write primitive that the pane, board drag (`moveTask`),
+  flow advances, MCP `set_status` / `complete_task` and REST all use, and from `deleteStatus` when a deleted status's
+  tasks are moved into a done one. Dependency release and parent auto-start never move a task into done.
+- Once only: `TaskDoc.publicCompletionNotifiedAt` is claimed with a conditional update before sending, so concurrent or
+  repeated done moves send at most one email, and reopening then closing again sends nothing. If the send itself fails
+  the claim is dropped, so a later move into done can retry.
+- Recipient: the submitter's current account email (`users` by `source.userId`); a deleted account or one without an
+  email is skipped silently. The address never goes into activity, comments, the client Task or public views.
+- Fire-and-forget: the work runs in `after()` and errors are logged as `[public-completion]`; the status change never
+  fails or waits on email. Local dev without SES prints the message through the log transport (`lib/email-core.ts`).
+
 ## After creation: the description stays the reporter's (VEC-401..403)
 
 Whatever surface a task came from, its description is the original report. Triage does not replace it: the triage

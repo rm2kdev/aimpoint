@@ -26,6 +26,7 @@ import { requestOrigin } from "@/lib/request-origin";
 import { appBaseUrl } from "@/lib/app-url";
 import { renderEmail, sendEmail } from "@/lib/email";
 import { absoluteUrl, inviteEmail } from "@/lib/invite-email";
+import { notifyPublicCompletion } from "@/lib/public-completion";
 import { syncSeatsSoon } from "@/lib/seat-sync";
 import { joinMembership } from "@/lib/seat-sync-core";
 
@@ -345,7 +346,12 @@ export async function deleteStatus(slug: string, projectId: string, id: string, 
     if (!target) throw new UserError(`Pick one of ${project.key}'s statuses to move its tasks to.`);
     assertRequiredStages(statuses.filter((s) => !s._id.equals(removed._id)), `${project.name} (${project.key})`);
     const c = await cols();
+    // Public submissions moved into a done status this way email their submitters too (VEC-423).
+    const moved = target.category === "done" && removed.category !== "done"
+      ? await c.tasks.find({ orgId: org._id, projectId: project._id, statusId: removed._id, "source.kind": "public" }, { projection: { _id: 1, source: 1, publicCompletionNotifiedAt: 1 } }).toArray()
+      : [];
     await c.tasks.updateMany({ orgId: org._id, projectId: project._id, statusId: removed._id }, { $set: { statusId: target._id, updatedAt: new Date() } });
+    if (moved.length) notifyPublicCompletion(org._id, moved, removed.category, target);
     await c.statuses.deleteOne({ _id: removed._id, orgId: org._id, projectId: project._id });
     // A project overriding new tasks into it falls back to the org default (VEC-190), no dangling id.
     await clearNewTaskStatusOverrides(org._id, [removed._id]);
