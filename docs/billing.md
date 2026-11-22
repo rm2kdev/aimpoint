@@ -148,6 +148,21 @@ Turning billing on locks every production organisation without a subscription un
 (nothing is deleted). Vercel's Hobby plan is for non-commercial use only, so the project should move to a
 Pro team before it takes payments.
 
+## Seat cost shown in the app
+
+Settings > Members tells admins what a change in people costs (VEC-413). The numbers come from pure helpers in
+`src/lib/billing-core.ts` (also re-exported by `src/lib/billing-view.ts` for client code), unit tested in
+`billing-core.test.mjs`:
+
+- `seatChangeCost({ seats, delta })`: current and new seat counts and monthly totals (cents and labels) for
+  `delta` people joining (+) or leaving (-), e.g. "Adds 1 seat: US$14.85 -> US$19.80/month plus tax, prorated
+  from the day they join". Seats go through `seatQuantity`, so the plan never drops below 1 seat.
+- `pendingInvitesCost({ seats, pending })`: what open invites would add once accepted, e.g. "2 pending invites
+  would add US$9.90/month plus tax once accepted". Pending invites are not billed until accepted.
+- `memberBillingFor` / `loadMemberBilling` (`src/lib/billing-summary.ts`): the Members page's `memberBilling`
+  prop (billed seats via `billedSeatsFor`, pending invite count, live subscription). It is null whenever billing
+  is off, including the Debug toggle, so self-hosted instances show no cost.
+
 ## Environment variables
 
 | Variable | Staging (Vercel Preview, branch `development`) | Production (Vercel Production) |

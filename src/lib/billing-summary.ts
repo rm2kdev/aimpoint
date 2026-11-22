@@ -6,9 +6,9 @@ import "server-only";
 import { cols } from "@/lib/db";
 import { billingDebugActive, billingDebugProblem, billingOn, getEntitlements, getPlan } from "@/lib/billing";
 import { billingDebugAvailable } from "@/lib/billing-mode";
-import { discountActive, PAST_DUE_GRACE_DAYS, planActive } from "@/lib/billing-core";
+import { billableSeats, discountActive, memberBillingFor, PAST_DUE_GRACE_DAYS, planActive } from "@/lib/billing-core";
 import { canceledEndDate, hasLiveSubscription } from "@/lib/stripe-sync";
-import { UNLIMITED_SUMMARY, type BillingSummary } from "@/lib/billing-view";
+import { UNLIMITED_SUMMARY, type BillingSummary, type MemberBilling } from "@/lib/billing-view";
 import type { OrgDoc } from "@/lib/types";
 
 const iso = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -55,4 +55,30 @@ export async function loadBillingSummary(org: Pick<OrgDoc, "_id" | "billing">): 
     subscribedSeats: typeof b.seats === "number" ? b.seats : null,
     discount,
   };
+}
+
+/**
+ * Seat billing for Settings > Members (VEC-414): null when billing is off (BILLING_ENABLED unset and the VEC-240
+ * Debug toggle off), so self-hosted instances never see a cost. `memberships` are the org's membership docs the page
+ * already loaded; `pendingInvites` the open invites (counted here when the page didn't load them, e.g. for members).
+ */
+export async function loadMemberBilling(
+  org: Pick<OrgDoc, "_id" | "billing">,
+  memberships: readonly { userId: { toString(): string } }[],
+  pendingInvites?: number,
+): Promise<MemberBilling | null> {
+  const enabled = await billingOn();
+  if (!enabled) return null; // memberBillingFor's billing-off answer, without the invite count query
+  const b = org.billing ?? {};
+  const pending =
+    pendingInvites ??
+    (await (await cols()).invites.countDocuments({ orgId: org._id, acceptedAt: { $exists: false }, expiresAt: { $gt: new Date() } }));
+  return memberBillingFor({
+    enabled,
+    plan: getPlan(org),
+    liveSubscription: hasLiveSubscription(b),
+    seats: billableSeats(memberships),
+    subscribedSeats: typeof b.seats === "number" ? b.seats : null,
+    pendingInvites: pending,
+  });
 }

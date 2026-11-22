@@ -24,6 +24,7 @@ import { createInvite, removeMember, revokeInvite, setMemberRole } from "@/app/a
 import { formatDay } from "@/lib/dates";
 import type { Role, Task } from "@/lib/types";
 import type { InviteRow } from "@/components/settings/org-settings";
+import type { MemberBilling } from "@/lib/billing-view";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
 import { tasksBecomeUnassigned } from "@/lib/format";
@@ -38,7 +39,15 @@ const roleLabel = (r: Role) => (r === "admin" ? "Admin" : "Member");
 
 /* ---------------- list ---------------- */
 
-export function MembersSettings({ invites, stats }: { invites: InviteRow[]; stats: Record<string, MemberStats> }) {
+export function MembersSettings({
+  invites,
+  stats,
+}: {
+  invites: InviteRow[];
+  stats: Record<string, MemberStats>;
+  /** VEC-414: seat cost data for the invite / remove flows (null with billing off). Passed in, not rendered yet. */
+  memberBilling?: MemberBilling | null;
+}) {
   const { org, members, me, isAdmin } = useOrg();
   const people = members.filter((m) => m.kind === "user");
   return (

@@ -28,6 +28,9 @@ import {
   discountActive,
   discountedMonthlyCents,
   discountLabel,
+  seatChangeCost,
+  pendingInvitesCost,
+  memberBillingFor,
 } from "./billing-core.ts";
 
 const NOW = new Date("2026-11-18T12:00:00Z");
@@ -243,4 +246,67 @@ test("discount label and active window", () => {
   assert.equal(discountActive(disc({ endsAt: "2026-11-18T11:00:00Z" }), NOW), false);
   assert.equal(discountActive(disc({ endsAt: "2026-12-18T11:00:00Z" }), NOW), true);
   assert.equal(discountActive(null, NOW), false);
+});
+
+// VEC-414: seat cost shown in the invite flow.
+test("seatChangeCost: an invite adds a seat, prorated from the day they join", () => {
+  const c = seatChangeCost({ seats: 3, delta: 1 });
+  assert.equal(c.currentSeats, 3);
+  assert.equal(c.newSeats, 4);
+  assert.equal(c.currentMonthlyCents, 1485);
+  assert.equal(c.newMonthlyCents, 1980);
+  assert.equal(c.differenceCents, 495);
+  assert.equal(c.currentLabel, "US$14.85/month plus tax");
+  assert.equal(c.newLabel, "US$19.80/month plus tax");
+  assert.equal(c.label, "Adds 1 seat: US$14.85 -> US$19.80/month plus tax, prorated from the day they join");
+  assert.equal(seatChangeCost({ seats: 1, delta: 2 }).label, "Adds 2 seats: US$4.95 -> US$14.85/month plus tax, prorated from the day each person joins");
+});
+
+test("seatChangeCost: a removal takes a seat off, credited from the day they leave", () => {
+  const c = seatChangeCost({ seats: 4, delta: -1 });
+  assert.equal(c.newSeats, 3);
+  assert.equal(c.differenceCents, -495);
+  assert.equal(c.label, "Removes 1 seat: US$19.80 -> US$14.85/month plus tax, credited from the day they leave");
+  assert.equal(seatChangeCost({ seats: 5, delta: -2 }).label, "Removes 2 seats: US$24.75 -> US$14.85/month plus tax, credited from the day they leave");
+});
+
+test("seatChangeCost: the plan never drops below 1 seat", () => {
+  const c = seatChangeCost({ seats: 1, delta: -1 });
+  assert.equal(c.currentSeats, 1);
+  assert.equal(c.newSeats, 1);
+  assert.equal(c.differenceCents, 0);
+  assert.equal(c.label, "Removes 1 seat: stays US$4.95/month plus tax (the plan's 1-seat minimum)");
+  // 0 or a bad count bills as 1 seat (seatQuantity), so the first invite goes 1 -> 2.
+  assert.equal(seatChangeCost({ seats: 0, delta: 1 }).label, "Adds 1 seat: US$4.95 -> US$9.90/month plus tax, prorated from the day they join");
+  assert.equal(seatChangeCost({ seats: Number.NaN, delta: 1 }).newSeats, 2);
+  assert.equal(seatChangeCost({ seats: 3, delta: 0 }).label, "No change: US$14.85/month plus tax");
+  assert.equal(seatChangeCost({ seats: 2, delta: -5 }).newSeats, 1);
+});
+
+test("pendingInvitesCost: pending invites are reported separately, not billed until accepted", () => {
+  assert.deepEqual(pendingInvitesCost({ seats: 3, pending: 2 }), {
+    pending: 2,
+    addCents: 990,
+    label: "2 pending invites would add US$9.90/month plus tax once accepted",
+  });
+  assert.equal(pendingInvitesCost({ seats: 3, pending: 1 }).label, "1 pending invite would add US$4.95/month plus tax once accepted");
+  assert.deepEqual(pendingInvitesCost({ seats: 3, pending: 0 }), { pending: 0, addCents: 0, label: null });
+});
+
+test("memberBillingFor: null with billing off; billed seats, pending invites and live subscription otherwise", () => {
+  // Billing off (self-hosted, incl. the Debug toggle switched off): no cost data, whatever the org's billing.
+  assert.equal(memberBillingFor({ enabled: false, plan: "unlimited", liveSubscription: true, seats: 4, subscribedSeats: 4, pendingInvites: 2 }), null);
+  // Live subscription: the quantity Stripe confirmed, even while a sync to the member count is pending.
+  assert.deepEqual(memberBillingFor({ enabled: true, plan: "pro", liveSubscription: true, seats: 4, subscribedSeats: 3, pendingInvites: 2 }), {
+    billedSeats: 3,
+    pendingInvites: 2,
+    liveSubscription: true,
+  });
+  // Before the subscription webhook landed, or with no subscription (locked org): the members now.
+  assert.equal(memberBillingFor({ enabled: true, plan: "pro", liveSubscription: true, seats: 4, subscribedSeats: null, pendingInvites: 0 }).billedSeats, 4);
+  assert.deepEqual(memberBillingFor({ enabled: true, plan: "unpaid", liveSubscription: false, seats: 2, subscribedSeats: 5, pendingInvites: 1 }), {
+    billedSeats: 2,
+    pendingInvites: 1,
+    liveSubscription: false,
+  });
 });

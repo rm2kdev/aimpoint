@@ -60,6 +60,113 @@ export function seatTotalLabel(seats: number): string {
   return `${n} ${n === 1 ? "seat" : "seats"} x ${usd(PRO_SEAT_PRICE_CENTS)} = ${usd(proMonthlyCents(n))}/month ${TAX_NOTE}`;
 }
 
+const seatsWord = (n: number) => `${n} ${n === 1 ? "seat" : "seats"}`;
+
+/** What adding or removing people does to the Pro bill (VEC-414), for the invite and remove-member UI. */
+export interface SeatChangeCost {
+  /** Seats asked to change: +1 for an invite accepted, -1 for a removal. */
+  delta: number;
+  /** Billed seats before and after the change (both through seatQuantity, so never below 1). */
+  currentSeats: number;
+  newSeats: number;
+  /** Monthly Pro totals before and after, in US cents (pre-tax). */
+  currentMonthlyCents: number;
+  newMonthlyCents: number;
+  /** newMonthlyCents - currentMonthlyCents (negative for a removal, 0 at the 1-seat floor). */
+  differenceCents: number;
+  /** "US$14.85/month plus tax", "US$19.80/month plus tax". */
+  currentLabel: string;
+  newLabel: string;
+  /** "Adds 1 seat: US$14.85 -> US$19.80/month plus tax, prorated from the day they join". */
+  label: string;
+}
+
+/**
+ * The cost of changing an org from `seats` billed seats by `delta` (VEC-414). Pure: the caller passes the seats Stripe
+ * bills now (billedSeatsFor). Stripe prorates quantity changes (`create_prorations`, seat-sync-core), so an added seat
+ * is charged from the day the person joins and a removed one is credited from the day they leave. The plan never
+ * drops below 1 seat (seatQuantity), so a removal at the floor costs nothing and says so.
+ */
+export function seatChangeCost({ seats, delta }: { seats: number; delta: number }): SeatChangeCost {
+  const d = Math.trunc(Number.isFinite(delta) ? delta : 0);
+  const currentSeats = seatQuantity(seats);
+  const newSeats = seatQuantity(currentSeats + d);
+  const currentMonthlyCents = proMonthlyCents(currentSeats);
+  const newMonthlyCents = proMonthlyCents(newSeats);
+  const month = (cents: number) => `${usd(cents)}/month ${TAX_NOTE}`;
+  const change = `${usd(currentMonthlyCents)} -> ${month(newMonthlyCents)}`;
+  let label: string;
+  if (newSeats === currentSeats) {
+    label = d < 0 ? `Removes ${seatsWord(-d)}: stays ${month(currentMonthlyCents)} (the plan's 1-seat minimum)` : `No change: ${month(currentMonthlyCents)}`;
+  } else if (d > 0) {
+    label = `Adds ${seatsWord(d)}: ${change}, prorated from the day ${d === 1 ? "they join" : "each person joins"}`;
+  } else {
+    label = `Removes ${seatsWord(-d)}: ${change}, credited from the day they leave`;
+  }
+  return {
+    delta: d,
+    currentSeats,
+    newSeats,
+    currentMonthlyCents,
+    newMonthlyCents,
+    differenceCents: newMonthlyCents - currentMonthlyCents,
+    currentLabel: month(currentMonthlyCents),
+    newLabel: month(newMonthlyCents),
+    label,
+  };
+}
+
+/** Pending invites priced separately (VEC-414): not billed until accepted, so this is what they would add. */
+export interface PendingInvitesCost {
+  pending: number;
+  /** Monthly increase if every pending invite is accepted, in US cents (pre-tax). */
+  addCents: number;
+  /** "2 pending invites would add US$9.90/month plus tax once accepted", or null with none pending. */
+  label: string | null;
+}
+
+/**
+ * Seat billing for Settings > Members (VEC-414; loaded by `loadMemberBilling`, lib/billing-summary.ts). Null when
+ * billing is off (self-hosted, including the VEC-240 Debug toggle switched off), so the invite flow shows no cost.
+ * Feed `billedSeats` to seatChangeCost / pendingInvitesCost.
+ */
+export interface MemberBilling {
+  /** Seats Stripe bills now (billedSeatsFor: the webhook's quantity on a live subscription, else the members now). */
+  billedSeats: number;
+  /** Open (unaccepted, unexpired) invites: not seats until accepted. */
+  pendingInvites: number;
+  /** A subscription Stripe still bills (active, trialing, past_due, unpaid, paused). False = no charge happens now. */
+  liveSubscription: boolean;
+}
+
+/** The pure part of loadMemberBilling: null with billing off, else the billed seats and pending invites. */
+export function memberBillingFor(input: {
+  enabled: boolean;
+  plan: Plan;
+  liveSubscription: boolean;
+  /** Members now (billableSeats). */
+  seats: number;
+  subscribedSeats: number | null;
+  pendingInvites: number;
+}): MemberBilling | null {
+  if (!input.enabled) return null;
+  return {
+    billedSeats: billedSeatsFor({ pro: input.plan === "pro", liveSubscription: input.liveSubscription, seats: input.seats, subscribedSeats: input.subscribedSeats }),
+    pendingInvites: Math.max(0, Math.floor(input.pendingInvites)),
+    liveSubscription: input.liveSubscription,
+  };
+}
+
+export function pendingInvitesCost({ seats, pending }: { seats: number; pending: number }): PendingInvitesCost {
+  const n = Math.max(0, Math.floor(Number.isFinite(pending) ? pending : 0));
+  const addCents = seatChangeCost({ seats, delta: n }).differenceCents;
+  return {
+    pending: n,
+    addCents,
+    label: n ? `${n} pending ${n === 1 ? "invite" : "invites"} would add ${usd(addCents)}/month ${TAX_NOTE} once accepted` : null,
+  };
+}
+
 /** A subscription discount as Settings > Billing sees it (VEC-311; OrgBilling.discount with an ISO end date). */
 export interface DiscountInfo {
   code: string | null;

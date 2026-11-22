@@ -5,11 +5,11 @@
  * in billing-core; this only describes the result. With billing off (`enabled: false`) every check here
  * passes and the UI shows no Billing entry and no prompts.
  */
-import { billedSeatsFor, discountedMonthlyCents, discountLabel, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type DiscountInfo, type Plan } from "./billing-core";
+import { billedSeatsFor, discountedMonthlyCents, discountLabel, orgAccessMessage, pendingInvitesCost, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatChangeCost, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd, type DiscountInfo, type MemberBilling, type PendingInvitesCost, type Plan, type SeatChangeCost } from "./billing-core";
 import type { BillingStatus } from "./types";
 
-export { billedSeatsFor, discountedMonthlyCents, discountLabel, orgAccessMessage, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd };
-export type { DiscountInfo, Plan };
+export { billedSeatsFor, discountedMonthlyCents, discountLabel, orgAccessMessage, pendingInvitesCost, PLAN_LABEL, planHeading, PRO_PRICE_LABEL, PRO_SEAT_PRICE_CENTS, proMonthlyCents, seatChangeCost, seatsUpdatingTo, seatTotalLabel, TAX_NOTE, usd };
+export type { DiscountInfo, MemberBilling, PendingInvitesCost, Plan, SeatChangeCost };
 
 export type CountKind = "members" | "bots" | "projects";
 
