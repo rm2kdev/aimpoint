@@ -952,6 +952,18 @@ function Feed({
             removed the dependency on <b className="font-medium text-foreground">{f.to ?? "another task"}</b>
           </>
         );
+      case "parent":
+        // VEC-426: same wording as parentChangeText (lib/parent-link-core.ts), keys in bold.
+        return f.to ? (
+          <>
+            made this a sub-task of <b className="font-medium text-foreground">{f.to}</b>
+            {f.from ? <> (was under <b className="font-medium text-foreground">{f.from}</b>)</> : null}
+          </>
+        ) : (
+          <>
+            removed this from <b className="font-medium text-foreground">{f.from ?? "its parent task"}</b>
+          </>
+        );
       case "retried":
         return (
           <>

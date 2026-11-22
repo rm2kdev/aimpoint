@@ -174,7 +174,7 @@ bot's sub-tasks under the request they came from instead of listing them beside 
 - One level only. A parent never has a parent, and a task with sub-tasks never becomes one. A task can't be its own
   parent, and an archived task can't take new sub-tasks. An explicit `parent` that breaks a rule is refused with a
   message naming the task to use instead (for a sub-task, its own parent).
-- How it gets set, on create only:
+- How it gets set on create:
   - Explicit: MCP `create_task` `parent` (task key or id), REST `POST /api/v1/tasks` `parent`. It wins over the
     automatic one. `"none"` (MCP/REST) or `null` (REST) creates a top-level task on purpose.
   - Automatic, bots only (MCP and REST share `createTaskAs`): the open, unarchived tasks the bot holds an in-progress
@@ -182,6 +182,20 @@ bot's sub-tasks under the request they came from instead of listing them beside 
     parent. Several different ones = unset, since the call doesn't say which run it belongs to (a Hermes bot with
     parallel runs usually holds several claims, which is why the triage steps and the blocker note tell bots to pass
     `parent` explicitly). People's, forms' and public submissions never get one automatically.
+- Changing it later (VEC-426): `TaskPatch.parentId` in `updateTaskAs` (task id, or null = top-level), through
+  `parentForUpdate` in `lib/parent-link.ts` and `planParentChange` in `lib/parent-link-core.ts`. People (the
+  `updateTask` server action), MCP `update_task` `parent` (key or id; `"none"` or null = top-level) and REST
+  `PATCH /api/v1/tasks/KEY` `parent` (key, id, `null` or `"none"`) all use it.
+  - Same rights as dependencies: the creator, an admin, or the bot triaging it. An assignee is refused.
+  - Same rules as on create (one level, same org, not itself, no cycle, no archived parent), plus: a task that has
+    sub-tasks of its own (archived ones count) can't become a sub-task, and the error says so. A parent that is
+    itself a sub-task is flattened: the task goes under that sub-task's own parent (MCP's reply says so; REST returns
+    `parentFlattenedFrom`). Asking for the parent it already has, or none when it has none, changes nothing.
+  - Activity: one `parent` entry on the task (`from`/`to` = the old/new parent's key), read as "made it a sub-task
+    of VEC-10", "removed it from VEC-10" or "made it a sub-task of VEC-11 (was under VEC-10)" (`parentChangeText`).
+  - The old and the new parent are republished so their `children` counts and list groups update live. Attaching a
+    started or done task to a not-started parent starts the parent (VEC-419's `startParentOnActivity`, the same as the
+    sub-task moving); detaching never moves either task's status.
 - `TaskDoc.createdByBot` is stamped on every bot-created task. The client `Task` carries `parentId`, `parentKey`,
   `createdByKind` (`"user"` for members and public-page submitters, `"bot"`, `"form"`) and, on parents, `children`
   `{ total, done, cancelled }` (unarchived sub-tasks; null when there are none). `withWorkingBots` fills `parentKey`

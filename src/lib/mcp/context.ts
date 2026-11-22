@@ -14,6 +14,7 @@ import { decodeEntities as decode, htmlToMarkdown, markdownToHtml } from "@/lib/
 import { commentImages } from "@/lib/comment-images";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
 import { parentProgressText } from "@/lib/parent-progress-core";
+import { parentChangeText } from "@/lib/parent-link-core";
 
 /* ---------------- people directory ---------------- */
 
@@ -209,6 +210,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
       case "restored": return "restored it from the archive";
       case "dependency_added": return `made it depend on ${a.to ?? "another task"}`;
       case "dependency_removed": return `removed its dependency on ${a.to ?? "another task"}`;
+      case "parent": return parentChangeText(a.from, a.to);
       case "retried": return `asked ${name(a.to)} to ${a.note === "closeout" ? "retry the close-out" : "retry it (its earlier run stopped)"}`;
       case "stopped": return `stopped ${name(a.to)}'s ${a.note === "triage" ? "triage" : "work"} on it (paused until resumed)`;
       case "resumed": return a.to ? `resumed it and handed it back to ${name(a.to)}` : "resumed it";

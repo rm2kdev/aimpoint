@@ -35,6 +35,53 @@ export function checkParentLink(child: { id: string | null; key: string | null; 
   return { ok: true };
 }
 
+/** An existing task whose parent is being set, changed or cleared (VEC-426). */
+export interface ParentChild {
+  id: string;
+  key: string;
+  /** Its current parent, null = top-level. */
+  parentId: string | null;
+  /** Whether any task (archived ones too) names it as parent. */
+  hasChildren: boolean;
+}
+
+export type ParentChange =
+  | { ok: true; change: null }
+  /** `to` null = make it top-level. `flattenedFrom`: the key asked for, a sub-task, whose own parent `to` is. */
+  | { ok: true; change: { from: string | null; to: string | null; flattenedFrom?: string } }
+  | { ok: false; error: string };
+
+/**
+ * VEC-426: set or change an existing task's parent. `requested` null clears it. A requested parent that is itself a
+ * sub-task is flattened to its own parent (`requestedRoot`, the task it belongs to), so asking for VEC-12 (under
+ * VEC-10) files it under VEC-10, unless that would be the task itself (VEC-12 is the child's own sub-task: a cycle).
+ * Then the same rules as on create (checkParentLink): not itself, no cycle, no archived parent, and a task that has
+ * sub-tasks of its own can't become one. Asking for the parent it already has is no change.
+ */
+export function planParentChange(child: ParentChild, requested: ParentCandidate | null, requestedRoot?: ParentCandidate | null): ParentChange {
+  if (!requested) return { ok: true, change: child.parentId ? { from: child.parentId, to: null } : null };
+  let target = requested;
+  let flattenedFrom: string | undefined;
+  if (requested.parentId && requested.parentId !== child.id && requestedRoot && requestedRoot.id === requested.parentId) {
+    target = requestedRoot;
+    flattenedFrom = requested.key;
+  }
+  const check = checkParentLink({ id: child.id, key: child.key, hasChildren: child.hasChildren }, target);
+  if (!check.ok) return check;
+  if (target.id === child.parentId) return { ok: true, change: null };
+  return { ok: true, change: { from: child.parentId, to: target.id, ...(flattenedFrom ? { flattenedFrom } : {}) } };
+}
+
+/**
+ * The activity line for a parent change (`parent` entry, `from`/`to` = the parents' keys at the time), as read in the
+ * task's history: "made it a sub-task of VEC-10", "removed it from VEC-10", or "made it a sub-task of VEC-11 (was
+ * under VEC-10)". `it` is the pronoun for the task ("it" for agents, "this" in the pane).
+ */
+export function parentChangeText(from: string | null | undefined, to: string | null | undefined, it = "it"): string {
+  if (to) return `made ${it} a sub-task of ${to}${from ? ` (was under ${from})` : ""}`;
+  return `removed ${it} from ${from ?? "its parent task"}`;
+}
+
 /** An open, unarchived task a bot holds an in-progress claim on (triage or work), with its own parent. */
 export interface ClaimedTask {
   id: string;

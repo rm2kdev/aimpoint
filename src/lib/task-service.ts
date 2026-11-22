@@ -28,7 +28,7 @@ import {
   resolveType,
 } from "@/lib/task-intake-core";
 import { assertNotStopped } from "@/lib/stop-guard";
-import { detachChildren, parentForCreate } from "@/lib/parent-link";
+import { detachChildren, parentForCreate, parentForUpdate, type ParentUpdate } from "@/lib/parent-link";
 import { startParentOnActivity } from "@/lib/parent-progress";
 import { disabledAssigneeMessage, heldMentionsOf, isBotEnabled } from "@/lib/bot-enabled";
 
@@ -603,6 +603,11 @@ export interface TaskPatch {
   archived?: boolean;
   /** Replaces the whole dependency list (ids). An empty list removes every dependency. */
   dependsOn?: string[];
+  /**
+   * VEC-426: the task it's a sub-task of (id), null = make it top-level. Same rights as dependsOn (creator, admin,
+   * triager). A sub-task given as parent flattens to its own parent; rules in lib/parent-link-core.ts.
+   */
+  parentId?: string | null;
 }
 
 /**
@@ -619,7 +624,7 @@ export async function updateTaskAs(
   const before = await c.tasks.findOne({ _id: taskId, orgId: actor.orgId });
   if (!before) throw new UserError("This task no longer exists.");
   // The stopped bot's writes on a stopped task, or linking another task to it, are refused (VEC-216).
-  await assertNotStopped(actor, [taskId, ...(patch.dependsOn ?? [])]);
+  await assertNotStopped(actor, [taskId, ...(patch.dependsOn ?? []), ...(patch.parentId ? [patch.parentId] : [])]);
   const access = taskAccess(
     { createdBy: before.createdBy.toHexString(), assigneeId: before.assigneeId?.toHexString() ?? null },
     actor.id.toHexString(),
@@ -711,6 +716,15 @@ export async function updateTaskAs(
       const keys = await taskKeys(actor.orgId, [...added, ...removedDeps]);
       for (const id of added) acts.push({ kind: "dependency_added", to: keys.get(id.toHexString()) ?? null });
       for (const id of removedDeps) acts.push({ kind: "dependency_removed", to: keys.get(id.toHexString()) ?? null });
+    }
+  }
+  // VEC-426: attach, detach or re-parent. One activity entry with the parents' keys at the time.
+  let parentChange: ParentUpdate | null = null;
+  if (patch.parentId !== undefined) {
+    parentChange = await parentForUpdate(actor.orgId, before, patch.parentId);
+    if (parentChange) {
+      set.parentId = parentChange.toId;
+      acts.push({ kind: "parent", from: parentChange.fromKey, to: parentChange.toKey });
     }
   }
   if (patch.assigneeId !== undefined && (patch.assigneeId ?? null) !== (before.assigneeId?.toHexString() ?? null)) {
@@ -879,10 +893,13 @@ export async function updateTaskAs(
   const upstream = doneChanged || set.archivedAt !== undefined ? [...(after.dependsOn ?? []), ...removedDeps] : [...addedDeps, ...removedDeps];
   // A sub-task entering a started or done status starts its not-started parent (VEC-419). Every status path lands here
   // (pane, board drag via moveTask, MCP set_status / complete_task, REST); bot pickup goes through markStartedByBot.
-  const parentMoved = !!set.statusId && !!after.parentId && (await startParentOnActivity(actor, after, finalStatus?.category));
+  // Attaching a started or done task counts too (VEC-426): its new parent starts as if the sub-task had just moved.
+  const parentCategory = parentChange?.toId ? (finalStatus ?? (await c.statuses.findOne({ _id: after.statusId }, { projection: { category: 1 } })))?.category : finalStatus?.category;
+  const parentMoved = (!!set.statusId || !!parentChange?.toId) && !!after.parentId && (await startParentOnActivity(actor, after, parentCategory));
   // A sub-task's status or archive change moves its parent's `children` counts (VEC-407); a moved parent's own upsert
-  // already carried them.
-  if (after.parentId && !parentMoved && (set.statusId !== undefined || set.archivedAt !== undefined) && !upstream.some((u) => u.equals(after.parentId!))) upstream.push(after.parentId);
+  // already carried them. A parent change moves both the old parent's and the new one's (VEC-426).
+  if (after.parentId && !parentMoved && (set.statusId !== undefined || set.archivedAt !== undefined || parentChange) && !upstream.some((u) => u.equals(after.parentId!))) upstream.push(after.parentId);
+  if (parentChange?.fromId && !upstream.some((u) => u.equals(parentChange.fromId!))) upstream.push(parentChange.fromId);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   // A bot leaving its own task parked behind open dependencies (moved to an open status, or deps added) takes
   // the ones nobody owns, so someone is woken for them (VEC-107).
@@ -892,10 +909,19 @@ export async function updateTaskAs(
   // Republished after the ownership step, so no broadcast shows an auto-owned blocker as unassigned Stalled
   // (that would send a false stalled notice, VEC-111).
   if (upstream.length) await publishWorking(actor.orgId, actor.id, upstream);
+  if (parentChange?.flattenedFrom) flattenedParents.set(task, parentChange.flattenedFrom);
   return task;
 }
 
 /* ---------------- owners for blockers a bot parks its own task behind (VEC-107) ---------------- */
+
+/** VEC-426: the key a write asked for as parent when it was a sub-task, so the task went under that task's parent. */
+const flattenedParents = new WeakMap<Task, string>();
+
+/** The sub-task key the write that returned `task` asked for as its parent, when it was flattened to its parent. */
+export function flattenedParentOf(task: Task | null | undefined): string | null {
+  return (task && flattenedParents.get(task)) ?? null;
+}
 
 /** Keys of the blockers a write assigned to the acting bot, for the tool / API reply. Keyed by the returned Task. */
 const ownedBlockers = new WeakMap<Task, string[]>();

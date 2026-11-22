@@ -3,7 +3,7 @@ import { ObjectId } from "mongodb";
 import { cols } from "@/lib/db";
 import { UserError } from "@/lib/result";
 import { isClosedCategory } from "@/lib/types";
-import { autoParentId, checkParentLink, type ClaimedTask } from "@/lib/parent-link-core";
+import { autoParentId, checkParentLink, planParentChange, type ClaimedTask } from "@/lib/parent-link-core";
 
 /** Who is creating the task: the parent rules only need the org, the actor and whether it's a bot. */
 interface ParentActor {
@@ -41,6 +41,66 @@ export async function parentForCreate(actor: ParentActor, explicit: string | nul
   }
   if (!actor.isBot) return null;
   return autoParent(actor);
+}
+
+/** A resolved parent change for updateTaskAs: ids for the write, keys for the activity entry. */
+export interface ParentUpdate {
+  fromId: ObjectId | null;
+  toId: ObjectId | null;
+  fromKey: string | null;
+  toKey: string | null;
+  /** The key the caller asked for when it was a sub-task and the task went under its parent instead. */
+  flattenedFrom?: string;
+}
+
+/**
+ * VEC-426: set, change or clear an existing task's parent (`requested`: a task id, or null = top-level). Rules in
+ * planParentChange (lib/parent-link-core.ts): a sub-task parent flattens to its own parent; itself, a cycle, an
+ * archived parent, or a child that has sub-tasks of its own are refused with a UserError. Null when nothing changes.
+ * Permission (creator, admin or triager, like dependencies) is checked by updateTaskAs before this runs.
+ */
+export async function parentForUpdate(
+  orgId: ObjectId,
+  child: { _id: ObjectId; parentId?: ObjectId | null },
+  requested: string | null,
+): Promise<ParentUpdate | null> {
+  const c = await cols();
+  const proj = { projection: { projectId: 1, number: 1, parentId: 1, archivedAt: 1 } } as const;
+  let parent = null;
+  let root = null;
+  if (requested !== null) {
+    if (!ObjectId.isValid(requested)) throw new UserError("Unknown parent task.");
+    parent = await c.tasks.findOne({ _id: new ObjectId(requested), orgId }, proj);
+    if (!parent) throw new UserError("Unknown parent task.");
+    if (parent.parentId) root = await c.tasks.findOne({ _id: parent.parentId, orgId }, proj);
+  }
+  const hasChildren = !!(await c.tasks.findOne({ orgId, parentId: child._id }, { projection: { _id: 1 } }));
+  const ids = [child._id, ...(child.parentId ? [child.parentId] : []), ...(parent ? [parent._id] : []), ...(root ? [root._id] : [])];
+  const keys = await keysOf(orgId, ids);
+  const keyOf = (id: ObjectId) => keys.get(id.toHexString()) ?? "That task";
+  const candidate = (t: NonNullable<typeof parent>) => ({
+    id: t._id.toHexString(),
+    key: keyOf(t._id),
+    parentId: t.parentId?.toHexString() ?? null,
+    parentKey: t.parentId ? (keys.get(t.parentId.toHexString()) ?? null) : null,
+    archived: !!t.archivedAt,
+  });
+  const plan = planParentChange(
+    { id: child._id.toHexString(), key: keyOf(child._id), parentId: child.parentId?.toHexString() ?? null, hasChildren },
+    parent ? candidate(parent) : null,
+    root ? candidate(root) : null,
+  );
+  if (!plan.ok) throw new UserError(plan.error);
+  if (!plan.change) return null;
+  const fromId = plan.change.from ? new ObjectId(plan.change.from) : null;
+  const toId = plan.change.to ? new ObjectId(plan.change.to) : null;
+  return {
+    fromId,
+    toId,
+    fromKey: fromId ? (keys.get(fromId.toHexString()) ?? null) : null,
+    toKey: toId ? (keys.get(toId.toHexString()) ?? null) : null,
+    ...(plan.change.flattenedFrom ? { flattenedFrom: plan.change.flattenedFrom } : {}),
+  };
 }
 
 /** The task a bot's in-progress claims lead to (see autoParentId), counting only open, unarchived tasks of its org. */

@@ -654,6 +654,8 @@ export interface ActivityDoc {
     /** `to` holds the dependency's key at the time. */
     | "dependency_added"
     | "dependency_removed"
+    /** VEC-426: its parent was set, changed or cleared. `from` / `to` = the old / new parent's key (null = none). */
+    | "parent"
     /** Every dependency is done. `from` holds the key(s) of the one(s) that finished it, comma-separated. */
     | "unblocked"
     /** VEC-159: the actor asked Aimpoint to hand the task to its bot again (`to` = the bot's id). `note` "closeout"

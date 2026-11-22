@@ -6,7 +6,7 @@ import { findTaskByKey, projectContext } from "@/lib/data";
 import { groupStatusesByProject, loadStatusWords, resolveProjectStatus, reviewWord, statusFilterIds } from "@/lib/statuses";
 import { toolsForBot } from "@/lib/bots";
 import { listedToAgents } from "@/lib/bot-enabled";
-import { addCommentAs, assignedBlockersOf, createTaskAs, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
+import { addCommentAs, assignedBlockersOf, createTaskAs, flattenedParentOf, markStartedByBot, moveTask, ownUnownedBlockers, recordTriagedBy, resumeOnMention, updateTaskAs, type Actor, type TaskPatch } from "@/lib/task-service";
 import { READY, resolveCloseout, taskKeys } from "@/lib/dependencies";
 import { BLOCKER_NOTE, CLOSEOUT_STEPS, PROGRESS_HINT, STOP_NOTE, TRIAGE_STEPS, flowLastNote, wakeTriage } from "@/lib/bot-dispatch";
 import { publishWorking } from "@/lib/claims";
@@ -1030,7 +1030,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   update_task: {
     description:
-      "Edit a task. On tasks you created you can change anything. On tasks assigned to you, priority, type and due date. Title, description, plan, project, dependencies and archiving are creator-only. Description accepts Markdown and replaces the whole description. `plan` is the triage plan (Markdown, replaces the whole plan; \"\" or null clears it), kept apart from the description. While you're triaging a task, set `plan`, not `description`: the description is the reporter's original report and stays as they wrote it (a triager sending `description` is refused). A triager can edit everything else a creator can except archiving. `depends_on` replaces the whole dependency list ([] removes them all). To reorder it in the shared manual order (what people see under Sort: Manual), pass `before` (the task it goes directly above) and/or `after` (the task it goes directly below), optionally with `status` and `project` to move it there in the same write; reordering is creator/admin only and can't be combined with other fields.",
+      "Edit a task. On tasks you created you can change anything. On tasks assigned to you, priority, type and due date. Title, description, plan, project, dependencies, parent and archiving are creator-only. Description accepts Markdown and replaces the whole description. `plan` is the triage plan (Markdown, replaces the whole plan; \"\" or null clears it), kept apart from the description. While you're triaging a task, set `plan`, not `description`: the description is the reporter's original report and stays as they wrote it (a triager sending `description` is refused). A triager can edit everything else a creator can except archiving. `depends_on` replaces the whole dependency list ([] removes them all). `parent` makes it a sub-task of another task (key), moves it to a different one, or \"none\" makes it a top-level task again; one level only, so a sub-task given as parent files it under that sub-task's own parent, and a task with sub-tasks of its own can't become one. To reorder it in the shared manual order (what people see under Sort: Manual), pass `before` (the task it goes directly above) and/or `after` (the task it goes directly below), optionally with `status` and `project` to move it there in the same write; reordering is creator/admin only and can't be combined with other fields.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1044,6 +1044,11 @@ const TOOLS: Record<string, ToolImpl> = {
         project: { type: "string", description: "Move to another project (key, name or id). The task gets a new key." },
         archived: { type: "boolean" },
         depends_on: DEPENDS_ARG,
+        parent: {
+          type: ["string", "null"],
+          description:
+            'Key of the task this one should be a sub-task of, so it\'s grouped under it; "none" or null makes it top-level. A sub-task given here files it under that sub-task\'s own parent (one level only). Creator, admin or triager only.',
+        },
         before: { type: "string", description: "Reorder: task key it should sit directly above." },
         after: { type: "string", description: "Reorder: task key it should sit directly below." },
         status: { type: "string", description: 'Status name of the task\'s project (of the destination project when `project` is given), e.g. "Todo". With before/after it moves there in the same write.' },
@@ -1083,11 +1088,21 @@ const TOOLS: Record<string, ToolImpl> = {
         projectId: destProject?.toHexString(),
         archived: typeof args.archived === "boolean" ? args.archived : undefined,
         dependsOn: args.depends_on === undefined ? undefined : await resolveTaskIds(ctx, args.depends_on, "depends_on"),
+        // VEC-426: a key or id; "none" / "" / null = top-level.
+        parentId: await parentArg(ctx, args.parent),
       };
       if (Object.values(patch).every((v) => v === undefined)) throw new ToolInputError("Pass at least one field to change.");
       const t = await updateTaskAs(ctx.actor, task._id, patch);
       const owned = assignedBlockersOf(t);
-      return { content: [text(`Updated ${t.key}.${blockersNote(owned)}`), json({ key: t.key, url: taskUrl(ctx.origin, ctx.org, t.key), ...(owned.length ? { assignedToYou: owned } : {}) })] };
+      const flattened = flattenedParentOf(t);
+      const parentKey = patch.parentId !== undefined && t.parentId ? ((await taskKeys(ctx.org._id, [new ObjectId(t.parentId)])).get(t.parentId) ?? null) : null;
+      const parentNote = flattened && parentKey ? ` ${flattened} is itself a sub-task of ${parentKey}, so ${t.key} went under ${parentKey} (sub-tasks only go one level deep).` : "";
+      return {
+        content: [
+          text(`Updated ${t.key}.${parentNote}${blockersNote(owned)}`),
+          json({ key: t.key, url: taskUrl(ctx.origin, ctx.org, t.key), ...(patch.parentId !== undefined ? { parent: parentKey } : {}), ...(owned.length ? { assignedToYou: owned } : {}) }),
+        ],
+      };
     },
   },
 

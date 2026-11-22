@@ -13,14 +13,14 @@ export const ASSIGNEE_FIELDS = ["statusId", "assigneeId", "priority", "type", "d
  * may reshape it like its creator, short of archiving it and replacing the reporter's description (VEC-402): its
  * write-up goes in the separate triage plan (`triagePlan`) instead, so the original report is never lost.
  */
-export const TRIAGE_FIELDS = [...ASSIGNEE_FIELDS, "title", "triagePlan", "projectId", "dependsOn"] as const;
+export const TRIAGE_FIELDS = [...ASSIGNEE_FIELDS, "title", "triagePlan", "projectId", "dependsOn", "parentId"] as const;
 
 /** Refusal for a triaging bot (not the creator or an admin) that sent `description` (VEC-402). */
 export const TRIAGE_DESCRIPTION_REFUSAL = "While triaging you can't replace the reporter's description; put your plan in `plan` instead.";
 /** Refusal for a triaging bot that tried anything else outside TRIAGE_FIELDS (archiving). */
 export const TRIAGE_ARCHIVE_REFUSAL = "While triaging you can change everything except archiving. Only the task's creator or an admin can archive it.";
 export const ASSIGNEE_REFUSAL =
-  "Only the task's creator or an admin can change its title, description, plan, project or dependencies, or archive it. As the assignee you can change status, assignee, priority, type and due date.";
+  "Only the task's creator or an admin can change its title, description, plan, project, dependencies or parent task, or archive it. As the assignee you can change status, assignee, priority, type and due date.";
 
 /**
  * The patch fields a non-full actor may not set (undefined values don't count), and why, or null when the patch is

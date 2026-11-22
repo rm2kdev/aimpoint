@@ -2,7 +2,22 @@ import { botRoute, parsePriority, parseType, readJson, resolveAssignee, resolveP
 import { findTaskByKey, loadFeed, toTaskDetail, withWorkingBots } from "@/lib/data";
 import { loadTaskRefs } from "@/lib/dependencies";
 import { UserError } from "@/lib/result";
-import { assignedBlockersOf, moveTask, updateTaskAs } from "@/lib/task-service";
+import { assignedBlockersOf, flattenedParentOf, moveTask, updateTaskAs } from "@/lib/task-service";
+import type { ObjectId } from "mongodb";
+
+/** VEC-426: PATCH `parent`: a task key or id, null / "none" / "" = top-level, undefined = unchanged. Unknown = 400. */
+async function parentRef(orgId: ObjectId, v: unknown): Promise<string | null | undefined> {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  if (typeof v !== "string") throw new UserError("`parent` is a task key like \"WEB-12\", or null.");
+  const s = v.trim();
+  if (!s || s.toLowerCase() === "none") return null;
+  try {
+    return (await resolveTaskRefs(orgId, [s]))![0];
+  } catch {
+    throw new UserError(`Unknown task "${s}" in \`parent\`.`);
+  }
+}
 import { botTaskFlow } from "@/lib/flow-bot-view";
 import { loadDirectory, personName } from "@/lib/mcp/context";
 
@@ -35,6 +50,9 @@ const MOVE_FIELDS = new Set(["before", "after", "status", "project"]);
  * project, so another project's name or id is a 400 and nothing changes. A project move without `status` keeps the stage.
  * `before` / `after` (task keys) reorder it in the shared manual order: it goes directly above `before` / below
  * `after`, optionally with `status` and `project` in the same write. Creator or admin only.
+ * `parent` (VEC-426): key or id of the task it becomes a sub-task of (or moves to), null / "none" = top-level again.
+ * Creator, admin or triager, like `dependsOn`. One level only: a sub-task given as parent files it under that task's
+ * own parent (`parentFlattenedFrom` in the reply names the key asked for); a task with sub-tasks can't become one.
  */
 export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
   const found = await findTaskByKey(ctx.org._id, key);
@@ -66,8 +84,11 @@ export const PATCH = botRoute<{ key: string }>(async (req, ctx, { key }) => {
     dueDate: b.dueDate === undefined ? undefined : (b.dueDate as string | null),
     archived: b.archived === undefined ? undefined : Boolean(b.archived),
     dependsOn: await resolveTaskRefs(ctx.org._id, b.dependsOn),
+    parentId: await parentRef(ctx.org._id, b.parent),
   });
   const assigned = assignedBlockersOf(task);
+  // VEC-426: a sub-task given as `parent` files it under that sub-task's own parent; say which one it went under.
+  const flattened = flattenedParentOf(task);
   // VEC-107: open dependencies nobody owned, now assigned to the calling bot because its own task waits on them.
-  return { task, ...(assigned.length ? { assignedBlockers: assigned } : {}) };
+  return { task: (await withWorkingBots([task]))[0], ...(flattened ? { parentFlattenedFrom: flattened } : {}), ...(assigned.length ? { assignedBlockers: assigned } : {}) };
 }, "update_task");
