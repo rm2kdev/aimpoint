@@ -15,6 +15,7 @@ import {
   PUBLIC_COMMENTS_MAX,
   PUBLIC_RATE_LIMITS,
   PUBLIC_STATS_RATE_LIMIT,
+  PUBLIC_SUBTASKS_MAX,
   PUBLIC_TASKS_MAX,
   PUBLIC_UNAVAILABLE,
   PUBLIC_UPLOAD_FILE,
@@ -25,8 +26,10 @@ import {
   resolveSubmitStatuses,
   rewritePublicImages,
   shapePublicComment,
+  shapePublicSubtask,
   shapePublicTask,
   computeStats,
+  publicProgress,
   type PublicProjectStats,
   type StatsRow,
 } from "@/lib/project-public-core";
@@ -37,9 +40,11 @@ import {
   type ProjectPublicAccess,
   type ProjectPublicAccessDoc,
   type PublicComment,
+  type PublicProgress,
   type PublicProjectResult,
   type PublicProjectView,
   type PublicStatus,
+  type PublicSubtask,
   type PublicTask,
   type StatusCategory,
   type StatusDoc,
@@ -205,36 +210,85 @@ export async function findPublicProject(slugIn: unknown, keyIn: unknown): Promis
   return { org, project, available: await hasFeature(org._id, "publicForms") };
 }
 
-/** Projection of the only task fields the public view reads. */
-const TASK_FIELDS = { _id: 1, number: 1, title: 1, type: 1, statusId: 1, priority: 1, description: 1, createdAt: 1, updatedAt: 1 } as const;
-type PublicTaskDoc = Pick<TaskDoc, "_id" | "number" | "title" | "type" | "statusId" | "priority" | "description" | "createdAt" | "updatedAt">;
+/**
+ * Projection of the only task fields the public view reads. `parentId` (VEC-409) is read to fold sub-tasks under
+ * their request and is never copied out: the public shapes (shapePublicTask / shapePublicSubtask) are allow-lists.
+ */
+const TASK_FIELDS = { _id: 1, number: 1, title: 1, type: 1, statusId: 1, priority: 1, description: 1, createdAt: 1, updatedAt: 1, parentId: 1 } as const;
+type PublicTaskDoc = Pick<TaskDoc, "_id" | "number" | "title" | "type" | "statusId" | "priority" | "description" | "createdAt" | "updatedAt" | "parentId">;
+
+type ProjectRef = Pick<ProjectDoc, "_id" | "orgId">;
+
+/**
+ * Aggregation stages keeping only a public project's top-level tasks (VEC-409): tasks with no parent, or whose parent
+ * isn't visible on this page (archived, or in another project), so a sub-task never vanishes with nothing to sit under.
+ */
+const topLevelStages = (project: ProjectRef) => [
+  {
+    $lookup: {
+      from: "tasks",
+      let: { pid: "$parentId" },
+      pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$pid"] } } }, { $match: { orgId: project.orgId, projectId: project._id, archivedAt: null } }, { $project: { _id: 1 } }],
+      as: "_visibleParent",
+    },
+  },
+  { $match: { "_visibleParent.0": { $exists: false } } },
+];
+
+/**
+ * Sub-task progress of the given parents (VEC-409): one $group aggregation over their unarchived sub-tasks in this
+ * project (a sub-task filed into another project is never counted or named here), stages from the project's statuses.
+ */
+async function childProgress(project: ProjectRef, parentIds: ObjectId[], statuses: StatusDoc[]): Promise<Map<string, PublicProgress>> {
+  if (!parentIds.length) return new Map();
+  const c = await cols();
+  const groups = await c.tasks
+    .aggregate<{ _id: { parentId: ObjectId; statusId: ObjectId }; count: number }>([
+      { $match: { orgId: project.orgId, projectId: project._id, archivedAt: null, parentId: { $in: parentIds } } },
+      { $group: { _id: { parentId: "$parentId", statusId: "$statusId" }, count: { $sum: 1 } } },
+    ])
+    .toArray();
+  const stageOf = new Map(statuses.map((s) => [s._id.toHexString(), s.category]));
+  return publicProgress(groups.map((g) => ({ parentId: g._id.parentId, stage: stageOf.get(String(g._id.statusId)) ?? null, count: g.count })));
+}
 
 async function viewParts(f: Found) {
   const statuses = await loadStatuses(f.project.orgId, f.project._id);
   const byId = new Map(statuses.map((s) => [s._id.toHexString(), toPublicStatus(s)]));
   const allowed = pruneSubmitStatuses((f.project.publicAccess?.submitStatusIds ?? []).map((id) => id.toHexString()), statuses.map(statusLike));
   const ctx = { orgId: f.org._id.toHexString(), slug: f.org.slug, key: f.project.key };
-  const shape = (t: PublicTaskDoc) => shapePublicTask(t, f.project.key, byId, rewritePublicImages(publicSanitize(t.description ?? "", { allowImages: true }), ctx));
-  return { statuses, byId, allowed, shape };
+  const shape = (t: PublicTaskDoc, progress?: PublicProgress | null) =>
+    shapePublicTask(t, f.project.key, byId, rewritePublicImages(publicSanitize(t.description ?? "", { allowImages: true }), ctx), progress ?? null);
+  /** Shapes docs with their sub-task progress (one aggregation for the whole list). */
+  const shapeAll = async (docs: PublicTaskDoc[]) => {
+    const progress = await childProgress(f.project, docs.map((d) => d._id), statuses);
+    return docs.map((d) => shape(d, progress.get(d._id.toHexString())));
+  };
+  return { statuses, byId, allowed, shape, shapeAll };
 }
 
 /**
  * The public view of a project: null unless it's public; `{available: false}` (and nothing else) while the plan lacks
- * the feature. Otherwise its name/key/colour, statuses, the statuses open to submissions, and its non-archived tasks
- * (newest activity first, at most PUBLIC_TASKS_MAX) in the allow-listed public shape. No member, bot, activity,
- * flow, claim, project metadata or other project data is ever read into it.
+ * the feature. Otherwise its name/key/colour, statuses, the statuses open to submissions, and its non-archived
+ * top-level tasks (VEC-409: sub-tasks fold under their request, see topLevelStages; newest activity first, at most
+ * PUBLIC_TASKS_MAX) in the allow-listed public shape with their sub-task progress. No member, bot, activity, flow,
+ * claim, parent id, project metadata or other project data is ever read into it.
  */
 export async function loadPublicProject(slug: unknown, key: unknown): Promise<PublicProjectResult | null> {
   const f = await findPublicProject(slug, key);
   if (!f) return null;
   if (!f.available) return { available: false };
   const c = await cols();
-  const [{ statuses, byId, allowed, shape }, docs, stats] = await Promise.all([
+  const [{ statuses, byId, allowed, shapeAll }, docs, stats] = await Promise.all([
     viewParts(f),
     c.tasks
-      .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null }, { projection: TASK_FIELDS })
-      .sort({ updatedAt: -1 })
-      .limit(PUBLIC_TASKS_MAX + 1)
+      .aggregate<PublicTaskDoc>([
+        { $match: { orgId: f.project.orgId, projectId: f.project._id, archivedAt: null } },
+        { $sort: { updatedAt: -1 } },
+        ...topLevelStages(f.project),
+        { $limit: PUBLIC_TASKS_MAX + 1 },
+        { $project: TASK_FIELDS },
+      ])
       .toArray(),
     // Header counts (VEC-364) only when the admin opted into public statistics.
     f.project.publicAccess?.showStats ? projectStats(f.project) : null,
@@ -245,19 +299,30 @@ export async function loadPublicProject(slug: unknown, key: unknown): Promise<Pu
     statuses: statuses.map(toPublicStatus),
     submitStatuses: allowed.map((id) => byId.get(id)!).filter(Boolean),
     showComments: !!f.project.publicAccess?.showComments,
-    tasks: docs.slice(0, PUBLIC_TASKS_MAX).map(shape),
+    tasks: await shapeAll(docs.slice(0, PUBLIC_TASKS_MAX)),
     truncated: docs.length > PUBLIC_TASKS_MAX,
     stats: stats && { open: stats.open, inProgress: stats.inProgress, done: stats.done, total: stats.total },
   };
   return { available: true, view };
 }
 
-export type PublicTaskResult = { available: true; task: PublicTask; comments: PublicComment[] | null } | { available: false };
+export type PublicTaskResult =
+  | {
+      available: true;
+      task: PublicTask;
+      comments: PublicComment[] | null;
+      /** VEC-409: the request a sub-task was filed under, when it's visible here (same project, unarchived). */
+      parent: { key: string; title: string } | null;
+      /** VEC-409: its unarchived sub-tasks in this project, by number (at most PUBLIC_SUBTASKS_MAX). */
+      subtasks: PublicSubtask[];
+    }
+  | { available: false };
 
 /**
  * One task of a public project (`taskKey` like "VEC-12"): null unless the project is public and the task is one of
  * its non-archived tasks (a task moved to another project is gone from here). `comments` is null unless the project
- * shows comments; authors are display names only.
+ * shows comments; authors are display names only. A sub-task opens by its key too and links back to its `parent`;
+ * a request lists its `subtasks` (key, title, status only).
  */
 export async function loadPublicTask(slug: unknown, key: unknown, taskKey: unknown): Promise<PublicTaskResult | null> {
   const f = await findPublicProject(slug, key);
@@ -268,7 +333,18 @@ export async function loadPublicTask(slug: unknown, key: unknown, taskKey: unkno
   const c = await cols();
   const doc = await c.tasks.findOne({ orgId: f.project.orgId, projectId: f.project._id, number: Number(m[2]), archivedAt: null }, { projection: TASK_FIELDS });
   if (!doc) return null;
-  const { shape } = await viewParts(f);
+  const [{ shape, statuses, byId }, parentDoc, subDocs] = await Promise.all([
+    viewParts(f),
+    doc.parentId
+      ? c.tasks.findOne({ _id: doc.parentId, orgId: f.project.orgId, projectId: f.project._id, archivedAt: null }, { projection: { number: 1, title: 1 } })
+      : null,
+    c.tasks
+      .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null, parentId: doc._id }, { projection: { number: 1, title: 1, statusId: 1 } })
+      .sort({ number: 1 })
+      .limit(PUBLIC_SUBTASKS_MAX)
+      .toArray(),
+  ]);
+  const progress = subDocs.length ? (await childProgress(f.project, [doc._id], statuses)).get(doc._id.toHexString()) : null;
   let comments: PublicComment[] | null = null;
   if (f.project.publicAccess?.showComments) {
     const list = await c.comments.find({ orgId: f.project.orgId, taskId: doc._id }, { projection: { authorId: 1, body: 1, createdAt: 1 } }).sort({ createdAt: 1 }).limit(PUBLIC_COMMENTS_MAX).toArray();
@@ -276,24 +352,30 @@ export async function loadPublicTask(slug: unknown, key: unknown, taskKey: unkno
     const nameOf = (id: string) => (dir ? personName(dir, id) : undefined);
     comments = list.map((cm) => shapePublicComment(cm, nameOf));
   }
-  return { available: true, task: shape(doc), comments };
+  return {
+    available: true,
+    task: shape(doc, progress),
+    comments,
+    parent: parentDoc ? { key: `${f.project.key}-${parentDoc.number}`, title: parentDoc.title } : null,
+    subtasks: subDocs.map((d) => shapePublicSubtask(d, f.project.key, byId)),
+  };
 }
 
 /**
- * The signed-in account's own submissions to a public project (non-archived, still in this project), newest first.
- * Null when the project isn't public or is unavailable.
+ * The signed-in account's own submissions to a public project (non-archived, still in this project), newest first,
+ * with their sub-task progress. Null when the project isn't public or is unavailable.
  */
 export async function listMyPublicSubmissions(user: Pick<UserDoc, "_id">, slug: unknown, key: unknown): Promise<PublicTask[] | null> {
   const f = await findPublicProject(slug, key);
   if (!f || !f.available) return null;
   const c = await cols();
-  const { shape } = await viewParts(f);
+  const { shapeAll } = await viewParts(f);
   const docs = await c.tasks
     .find({ orgId: f.project.orgId, projectId: f.project._id, archivedAt: null, "source.kind": "public", "source.userId": user._id }, { projection: TASK_FIELDS })
     .sort({ createdAt: -1 })
     .limit(PUBLIC_TASKS_MAX)
     .toArray();
-  return docs.map(shape);
+  return shapeAll(docs);
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -326,8 +408,9 @@ export type PublicStatsResult =
 /**
  * Task counts of a public project for the stats and shields.io badge routes. Served only when the project is public,
  * not archived, its org isn't locked (plan feature) and `publicAccess.showStats` is on; anything else is a bare 404,
- * like the public page. Rate limited per client IP per project. One aggregation over the project's non-archived tasks
- * (grouped by status + type, nothing else read), with stages from the project's statuses.
+ * like the public page. Rate limited per client IP per project. One aggregation over the project's non-archived
+ * top-level tasks (VEC-409: a request with 10 sub-tasks counts once; grouped by status + type, nothing else read),
+ * with stages from the project's statuses.
  */
 export async function loadPublicStats(slug: unknown, key: unknown, ip: string): Promise<PublicStatsResult> {
   const f = await findPublicProject(slug, key);
@@ -337,13 +420,14 @@ export async function loadPublicStats(slug: unknown, key: unknown, ip: string): 
   return { ok: true, project: { key: f.project.key, name: f.project.name }, stats: await projectStats(f.project) };
 }
 
-/** One $group aggregation (status + type) over a project's non-archived tasks, counted by stage. No rate limit. */
-async function projectStats(project: Pick<ProjectDoc, "_id" | "orgId">): Promise<PublicProjectStats> {
+/** One $group aggregation (status + type) over a project's non-archived top-level tasks, counted by stage. No rate limit. */
+async function projectStats(project: ProjectRef): Promise<PublicProjectStats> {
   const c = await cols();
   const [groups, statuses] = await Promise.all([
     c.tasks
       .aggregate<{ _id: { statusId: ObjectId; type: string }; count: number }>([
         { $match: { orgId: project.orgId, projectId: project._id, archivedAt: null } },
+        ...topLevelStages(project),
         { $group: { _id: { statusId: "$statusId", type: "$type" }, count: { $sum: 1 } } },
       ])
       .toArray(),

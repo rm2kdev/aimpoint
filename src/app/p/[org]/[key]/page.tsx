@@ -78,7 +78,7 @@ export default async function PublicProjectPage({ params, searchParams }: PagePr
       me={user ? { name: user.name || user.email.split("@")[0] } : null}
       appHref={appHref}
       mode={detail?.available ? "task" : submitting && view.submitStatuses.length ? "submit" : mineView ? "mine" : "all"}
-      detail={detail?.available ? { task: detail.task, comments: detail.comments } : null}
+      detail={detail?.available ? { task: detail.task, comments: detail.comments, parent: detail.parent, subtasks: detail.subtasks } : null}
       mine={mine}
       created={one(sp.created) ?? null}
     />

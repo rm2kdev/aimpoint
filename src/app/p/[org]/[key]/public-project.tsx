@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { submitPublicTicket } from "@/app/actions/project-public";
 import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
 import { statusTrack } from "@/lib/status-track";
-import { type PublicComment, type PublicProjectView, type PublicStatus, type PublicTask, type Status, type TaskType } from "@/lib/types";
+import { type PublicComment, type PublicProgress, type PublicProjectView, type PublicStatus, type PublicSubtask, type PublicTask, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { loginHref, publicPageHref, signupHref } from "./href";
 import { TASK_DESCRIPTION_MAX } from "@/lib/task-intake-core";
@@ -27,7 +27,7 @@ export interface PublicProjectScreenProps {
   /** In-app link for members of the org; null for everyone else. */
   appHref: string | null;
   mode: Mode;
-  detail: { task: PublicTask; comments: PublicComment[] | null } | null;
+  detail: { task: PublicTask; comments: PublicComment[] | null; parent: { key: string; title: string } | null; subtasks: PublicSubtask[] } | null;
   /** The signed-in account's own submissions (only in the "mine" view). */
   mine: PublicTask[] | null;
   /** Key of a ticket just submitted, highlighted in the list. */
@@ -123,7 +123,15 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
         )}
 
         {p.mode === "task" && p.detail && (
-          <TaskDetail slug={slug} projectKey={key} task={p.detail.task} comments={p.detail.comments} statuses={statuses} />
+          <TaskDetail
+            slug={slug}
+            projectKey={key}
+            task={p.detail.task}
+            comments={p.detail.comments}
+            parent={p.detail.parent}
+            subtasks={p.detail.subtasks}
+            statuses={statuses}
+          />
         )}
         {p.mode === "submit" && (
           <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} />
@@ -246,6 +254,7 @@ function TaskList({
               <StatusRing status={t.status ? statusById.get(t.status.id) : undefined} statuses={statuses} size={16} />
               <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{t.key}</span>
               <span className="min-w-0 flex-1 truncate text-[13.5px]">{t.title}</span>
+              {t.progress && <ProgressChip progress={t.progress} />}
               <TypeTag type={t.type} className="hidden sm:inline-flex" />
               <span className="hidden w-14 shrink-0 text-right text-[12px] text-faint sm:block" suppressHydrationWarning>
                 {timeAgo(t.updatedAt)}
@@ -257,6 +266,23 @@ function TaskList({
       </ul>
       {truncated && <p className="mt-2 text-[12px] text-faint">Showing the {tasks.length} most recently updated tickets.</p>}
     </>
+  );
+}
+
+/** Sub-task progress on a request's row (VEC-409), like the app's chip: closed (done or cancelled) / all. */
+function ProgressChip({ progress }: { progress: PublicProgress }) {
+  const all = progress.done >= progress.total;
+  return (
+    <span
+      data-public-progress
+      title={`${progress.done} of ${progress.total} sub-tasks closed`}
+      className={cn(
+        "inline-flex h-5 shrink-0 items-center rounded-full bg-chip px-1.5 font-mono text-[11.5px] tabular-nums",
+        all ? "text-foreground" : "text-muted-foreground",
+      )}
+    >
+      {progress.done}/{progress.total}
+    </span>
   );
 }
 
@@ -285,14 +311,19 @@ function TaskDetail({
   projectKey,
   task,
   comments,
+  parent,
+  subtasks,
   statuses,
 }: {
   slug: string;
   projectKey: string;
   task: PublicTask;
   comments: PublicComment[] | null;
+  parent: { key: string; title: string } | null;
+  subtasks: PublicSubtask[];
   statuses: Status[];
 }) {
+  const statusById = new Map(statuses.map((s) => [s.id, s]));
   return (
     <article className="mt-6" data-public-task={task.key}>
       <Link href={publicPageHref(slug, projectKey)} className="text-[12.5px] text-muted-foreground hover:text-foreground">
@@ -300,6 +331,15 @@ function TaskDetail({
       </Link>
       <div className="mt-3 rounded-xl border border-border bg-background p-5 sm:p-7">
         <p className="font-mono text-[12px] text-faint">{task.key}</p>
+        {parent && (
+          <p data-public-parent className="mt-1 flex min-w-0 items-center gap-1.5 text-[12.5px] text-muted-foreground">
+            <span className="shrink-0">Part of</span>
+            <Link href={publicPageHref(slug, projectKey, { task: parent.key })} className="flex min-w-0 items-center gap-1.5 hover:text-foreground">
+              <span className="shrink-0 font-mono text-[12px]">{parent.key}</span>
+              <span className="truncate">{parent.title}</span>
+            </Link>
+          </p>
+        )}
         <h2 className="mt-1 text-[19px] leading-snug font-semibold tracking-[-0.015em] break-words">{task.title}</h2>
         {/* The task pane's status bar (VEC-330), read-only: the public view carries no flow, so the track is the
             project's statuses (statusTrack's no-flow fallback); no owners or step actions here. */}
@@ -334,6 +374,28 @@ function TaskDetail({
           <p className="mt-5 border-t border-border pt-5 text-[13.5px] text-faint">No description.</p>
         )}
       </div>
+      {subtasks.length > 0 && (
+        <section className="mt-6" aria-label="Sub-tasks" data-public-subtasks>
+          <h3 className="text-[13px] font-semibold">
+            Sub-tasks{" "}
+            <span className="font-normal text-faint tabular-nums">
+              {task.progress ? `${task.progress.done}/${task.progress.total}` : subtasks.length}
+            </span>
+          </h3>
+          <ul className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-background">
+            {subtasks.map((t) => (
+              <li key={t.key} data-task-key={t.key}>
+                <Link href={publicPageHref(slug, projectKey, { task: t.key })} className="flex min-h-11 items-center gap-2.5 px-3.5 py-2.5 hover:bg-chip/60">
+                  <StatusRing status={t.status ? statusById.get(t.status.id) : undefined} statuses={statuses} size={16} />
+                  <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{t.key}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13.5px]">{t.title}</span>
+                  <span className="hidden shrink-0 text-[12px] text-faint sm:block">{t.status?.name ?? ""}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {comments && (
         <section className="mt-6" aria-label="Comments">
           <h3 className="text-[13px] font-semibold">

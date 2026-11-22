@@ -1,4 +1,4 @@
-import type { FORM_DESTINATION_STAGES, Priority, PublicComment, PublicStatus, PublicTask, StatusCategory, TaskType } from "./types";
+import type { FORM_DESTINATION_STAGES, Priority, PublicComment, PublicProgress, PublicStatus, PublicSubtask, PublicTask, StatusCategory, TaskType } from "./types";
 
 /**
  * Public projects (VEC-255): the pure rules, free of server-only imports so `project-public-core.test.mjs` runs them
@@ -21,8 +21,10 @@ export const PUBLIC_RATE_LIMITS = {
   project: { max: 60, windowMs: 60 * 60_000 },
 } as const;
 
-/** Tasks returned by one public project load (newest activity first). */
+/** Top-level tasks returned by one public project load (newest activity first); sub-tasks don't count (VEC-409). */
 export const PUBLIC_TASKS_MAX = 500;
+/** Sub-tasks listed on one public task view (VEC-409). */
+export const PUBLIC_SUBTASKS_MAX = 200;
 /** Comments returned per task in the public view. */
 export const PUBLIC_COMMENTS_MAX = 200;
 
@@ -156,9 +158,10 @@ export interface TaskLike {
 
 /**
  * One task for the public: a fixed allow-list of fields, whatever else the stored task carries (assignee, creator,
- * source, flow, claims, dependencies are never copied). `description` must already be public-sanitised.
+ * source, flow, claims, dependencies, parent id are never copied). `description` must already be public-sanitised.
+ * `progress` is the task's visible sub-task counts (publicProgress), null when it has none (VEC-409).
  */
-export function shapePublicTask(t: TaskLike, projectKey: string, statuses: ReadonlyMap<string, PublicStatus>, description: string): PublicTask {
+export function shapePublicTask(t: TaskLike, projectKey: string, statuses: ReadonlyMap<string, PublicStatus>, description: string, progress: PublicProgress | null = null): PublicTask {
   const status = statuses.get(String(t.statusId)) ?? null;
   return {
     key: `${projectKey}-${t.number}`,
@@ -169,7 +172,43 @@ export function shapePublicTask(t: TaskLike, projectKey: string, statuses: Reado
     description,
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
+    progress: progress && progress.total > 0 ? { total: progress.total, done: progress.done } : null,
   };
+}
+
+/**
+ * One sub-task in a public task view's list (VEC-409): key, title and public status only. No description, assignee,
+ * bot name, flow, claims or plan, whatever the stored task carries.
+ */
+export function shapePublicSubtask(t: Pick<TaskLike, "number" | "title" | "statusId">, projectKey: string, statuses: ReadonlyMap<string, PublicStatus>): PublicSubtask {
+  const status = statuses.get(String(t.statusId)) ?? null;
+  return { key: `${projectKey}-${t.number}`, title: t.title, status: status ? { ...status } : null };
+}
+
+/** One row of the sub-task count aggregation: how many visible sub-tasks of one parent sit in one status. */
+export interface ProgressRow {
+  parentId: { toString(): string } | string;
+  stage: StatusCategory | null | undefined;
+  count: number;
+}
+
+/**
+ * Sub-task progress per parent id (VEC-409), like the app's chip (VEC-408): `done` counts closed sub-tasks (done or
+ * cancelled), `total` all of them; an unresolved status counts in `total` only. Bad counts are 0; parents with no
+ * counted sub-task are left out.
+ */
+export function publicProgress(rows: readonly ProgressRow[]): Map<string, PublicProgress> {
+  const out = new Map<string, PublicProgress>();
+  for (const r of rows) {
+    const n = Number.isFinite(r.count) && r.count > 0 ? Math.floor(r.count) : 0;
+    if (!n) continue;
+    const id = String(r.parentId);
+    const p = out.get(id) ?? { total: 0, done: 0 };
+    p.total += n;
+    if (r.stage === "done" || r.stage === "cancelled") p.done += n;
+    out.set(id, p);
+  }
+  return out;
 }
 
 export function shapePublicComment(c: { authorId: { toString(): string } | string; body: string; createdAt: Date }, nameOf: (id: string) => string | undefined): PublicComment {
@@ -200,7 +239,10 @@ export interface PublicStatsCounts {
   cancelled: number;
 }
 
-/** A public project's statistics: counts over its non-archived tasks, overall and per task type. */
+/**
+ * A public project's statistics: counts over its non-archived top-level tasks (sub-tasks filed under a request count
+ * once, as that request; VEC-409), overall and per task type.
+ */
 export interface PublicProjectStats extends PublicStatsCounts {
   byType: Record<TaskType, PublicStatsCounts>;
 }

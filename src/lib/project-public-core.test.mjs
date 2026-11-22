@@ -14,6 +14,8 @@ import {
   publicImagePath,
   publicCommentBody,
   shapePublicTask,
+  shapePublicSubtask,
+  publicProgress,
   shapePublicComment,
   parsePublicRef,
   computeStats,
@@ -133,11 +135,14 @@ test("shapePublicTask copies only the allow-listed fields", () => {
     waitingOn: [OTHER],
     closeout: { botId: OTHER },
     rank: "a0",
+    parentId: OTHER,
+    createdByBot: true,
+    triagePlan: "<p>secret plan</p>",
     createdAt: new Date("2026-11-18T01:00:00Z"),
     updatedAt: new Date("2026-11-18T02:00:00Z"),
   };
   const t = shapePublicTask(doc, "VEC", new Map([[T, status]]), "<p>clean</p>");
-  assert.deepEqual(Object.keys(t).sort(), ["createdAt", "description", "key", "priority", "status", "title", "type", "updatedAt"]);
+  assert.deepEqual(Object.keys(t).sort(), ["createdAt", "description", "key", "priority", "progress", "status", "title", "type", "updatedAt"]);
   assert.deepEqual(t, {
     key: "VEC-12",
     title: "Crash on save",
@@ -147,6 +152,7 @@ test("shapePublicTask copies only the allow-listed fields", () => {
     description: "<p>clean</p>",
     createdAt: "2026-11-18T01:00:00.000Z",
     updatedAt: "2026-11-18T02:00:00.000Z",
+    progress: null,
   });
   assert.equal(shapePublicTask({ ...doc, statusId: S }, "VEC", new Map([[T, status]]), "").status, null);
   assert.ok(!JSON.stringify(t).includes(OTHER));
@@ -274,4 +280,73 @@ test("badgeMarkdown links the shields image to the public board (VEC-364)", () =
   // Labels match the badge JSON.
   const stats = computeStats([]);
   for (const m of BADGE_METRICS) assert.equal(shapeBadge(m, stats).label, badgeLabel(m));
+});
+
+/* ---------------- sub-tasks folded under requests (VEC-409) ---------------- */
+
+test("shapePublicTask carries sub-task progress only as {total, done}, null when there are none", () => {
+  const doc = { number: 5, title: "Umbrella", type: "feature", statusId: U, priority: 0, createdAt: new Date(0), updatedAt: new Date(0) };
+  const map = new Map();
+  assert.deepEqual(shapePublicTask(doc, "VEC", map, "", { total: 5, done: 3, cancelled: 1, extra: OTHER }).progress, { total: 5, done: 3 });
+  assert.equal(shapePublicTask(doc, "VEC", map, "", { total: 0, done: 0 }).progress, null);
+  assert.equal(shapePublicTask(doc, "VEC", map, "").progress, null);
+});
+
+test("shapePublicSubtask copies key, title and status only", () => {
+  const status = { id: S, name: "In Progress", color: "#f5a524", stage: "started" };
+  const doc = {
+    _id: ORG,
+    number: 7,
+    title: "Add parentId",
+    statusId: S,
+    description: "<p>private detail</p>",
+    assigneeId: OTHER,
+    createdBy: OTHER,
+    createdByBot: true,
+    parentId: ORG,
+    flow: { stepId: "build" },
+    triagePlan: "<p>plan</p>",
+  };
+  const t = shapePublicSubtask(doc, "VEC", new Map([[S, status]]));
+  assert.deepEqual(t, { key: "VEC-7", title: "Add parentId", status });
+  assert.equal(shapePublicSubtask({ ...doc, statusId: D }, "VEC", new Map([[S, status]])).status, null);
+  assert.ok(!JSON.stringify(t).includes(OTHER) && !JSON.stringify(t).includes(ORG));
+});
+
+test("publicProgress: an umbrella with 5 sub-tasks, done and cancelled count as closed", () => {
+  const P = "6b023046a7ffe3ad7b70343a";
+  const Q = "6b023046a7ffe3ad7b70343b";
+  const rows = [
+    { parentId: P, stage: "done", count: 2 },
+    { parentId: P, stage: "cancelled", count: 1 },
+    { parentId: P, stage: "started", count: 1 },
+    { parentId: P, stage: "triage", count: 1 },
+    { parentId: { toString: () => Q }, stage: "unstarted", count: 2 },
+  ];
+  const m = publicProgress(rows);
+  assert.deepEqual(m.get(P), { total: 5, done: 3 });
+  assert.deepEqual(m.get(Q), { total: 2, done: 0 });
+  assert.equal(m.size, 2);
+});
+
+test("publicProgress: unknown status counts in total only, bad counts ignored, empty in -> empty out", () => {
+  const P = "6b023046a7ffe3ad7b70343a";
+  const m = publicProgress([
+    { parentId: P, stage: null, count: 2 },
+    { parentId: P, stage: "done", count: 1.9 },
+    { parentId: P, stage: "done", count: -3 },
+    { parentId: P, stage: "done", count: Number.NaN },
+    { parentId: "x", stage: "done", count: 0 },
+  ]);
+  assert.deepEqual(m.get(P), { total: 3, done: 1 });
+  assert.equal(m.has("x"), false);
+  assert.equal(publicProgress([]).size, 0);
+});
+
+test("stats over top-level rows: an umbrella with 5 sub-tasks counts once", () => {
+  // The loader groups only top-level tasks (topLevelStages), so the rows it hands computeStats hold the umbrella alone.
+  const s = computeStats([{ stage: "started", type: "feature", count: 1 }]);
+  assert.equal(s.total, 1);
+  assert.equal(s.inProgress, 1);
+  assert.equal(s.byType.feature.open, 1);
 });

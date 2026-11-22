@@ -167,6 +167,12 @@ bot's sub-tasks under the request they came from instead of listing them beside 
 - Agents: MCP `get_task` returns `parent` (key, title, status, stage, archived) and `children` (key, title, status,
   stage, assignee). `list_tasks` entries carry `parent` (key or null) and take `top_level: true` (only tasks with no
   parent) or `parent: "VEC-12"` (that task's sub-tasks). REST `GET /api/v1/tasks` takes `topLevel=true` / `parent=`.
+- Public project page (VEC-409, `lib/project-public.ts`): the list, its truncation (`PUBLIC_TASKS_MAX`) and the stats
+  count top-level tasks only, i.e. tasks whose parent isn't visible there (no parent, or a parent that is archived or
+  in another project, so no sub-task becomes unreachable). Rows carry `progress` `{ total, done }` (done = done or
+  cancelled, sub-tasks in the same project only) shown as a `3/5` chip. A request's public view lists its sub-tasks
+  as key, title and status only (`shapePublicSubtask`); a sub-task still opens by its key and links back to its parent.
+  `parentId` is read but never sent to the public.
 - Archive and delete. Archiving a parent keeps the link: its sub-tasks stay where they are, pointing at an archived
   task (restoring it regroups them). Deleting a parent (task delete, or a project delete that cascades it) clears
   `parentId` on its sub-tasks, which become top-level tasks; nothing else about them changes.

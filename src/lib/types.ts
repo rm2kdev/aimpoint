@@ -268,6 +268,19 @@ export interface PublicTask {
   description: string;
   createdAt: string;
   updatedAt: string;
+  /** VEC-409: its visible sub-tasks (same project, unarchived) and how many are closed; null when it has none. */
+  progress: PublicProgress | null;
+}
+/** VEC-409: a public task's sub-task counts; `done` = done or cancelled. */
+export interface PublicProgress {
+  total: number;
+  done: number;
+}
+/** VEC-409: a sub-task as listed on its parent's public view: key, title and status only. */
+export interface PublicSubtask {
+  key: string;
+  title: string;
+  status: PublicStatus | null;
 }
 /** A comment in the public view (only when the project shows comments). Mentions read as @Name. */
 export interface PublicComment {
@@ -282,10 +295,11 @@ export interface PublicProjectView {
   /** Statuses a signed-in account may submit into, in the admin's order (first = default). Empty = read-only. */
   submitStatuses: PublicStatus[];
   showComments: boolean;
+  /** Top-level tasks only (VEC-409): a sub-task shows on its parent's view, unless its parent isn't visible here. */
   tasks: PublicTask[];
-  /** More non-archived tasks exist than were returned. */
+  /** More non-archived top-level tasks exist than were returned. */
   truncated: boolean;
-  /** Task counts by stage (VEC-364) when the project shows statistics (`publicAccess.showStats`), else null. */
+  /** Top-level task counts by stage (VEC-364/409) when the project shows statistics (`publicAccess.showStats`), else null. */
   stats: { open: number; inProgress: number; done: number; total: number } | null;
 }
 /**

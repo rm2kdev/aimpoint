@@ -28,7 +28,8 @@ key, as in the public page `/p/<org>/<KEY>` (both case-insensitive).
 }
 ```
 
-Counts cover the project's non-archived tasks, by status stage, so custom status names don't matter: `open` =
+Counts cover the project's non-archived top-level tasks (VEC-409: a sub-task filed under a request in the same
+project counts once, as that request; one whose parent is archived or in another project counts itself), by status stage, so custom status names don't matter: `open` =
 backlog + triage + not started + started, `inProgress` = started, `done`, `cancelled`, `total` = all.
 
 ## Badges
