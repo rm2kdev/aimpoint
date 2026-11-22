@@ -244,6 +244,28 @@ export function publicListRows(tasks: readonly PublicTask[], subtasks: readonly 
   return rows;
 }
 
+/**
+ * The direct sub-tasks of each request in the public list's index (VEC-427), by parent key, by number: what a
+ * request row shows when it's expanded. Only entries whose `parentKey` is the request's own key, so a sub-task's own
+ * sub-tasks stay with it (reached from that sub-task's view), matching the progress chip, which counts direct ones.
+ */
+export function publicSubtasksByParent(subtasks: readonly PublicSubtaskEntry[]): Map<string, PublicSubtaskEntry[]> {
+  const out = new Map<string, PublicSubtaskEntry[]>();
+  for (const s of subtasks) {
+    const list = out.get(s.parentKey) ?? [];
+    list.push(s);
+    out.set(s.parentKey, list);
+  }
+  for (const list of out.values()) list.sort((a, b) => keyNumber(a.key) - keyNumber(b.key));
+  return out;
+}
+
+/**
+ * How many of a request's sub-tasks its expanded row can't list (VEC-427): the progress total minus the entries the
+ * index carries (the index keeps the newest PUBLIC_SUBTASK_INDEX_MAX), never below 0.
+ */
+export const publicSubtasksUnlisted = (progress: PublicProgress | null, listed: number): number => Math.max(0, (progress?.total ?? 0) - listed);
+
 /** One row of the sub-task count aggregation: how many visible sub-tasks of one parent sit in one status. */
 export interface ProgressRow {
   parentId: { toString(): string } | string;

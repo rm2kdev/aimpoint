@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { ChevronRightIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { TaskComposer, usePendingUploads } from "@/components/task-composer";
 import { LogoMark } from "@/components/logo";
@@ -17,7 +18,7 @@ import { type PublicComment, type PublicProgress, type PublicProjectView, type P
 import { cn } from "@/lib/utils";
 import { loginHref, publicPageHref, signupHref } from "./href";
 import { TASK_DESCRIPTION_MAX } from "@/lib/task-intake-core";
-import { publicListRows } from "@/lib/project-public-core";
+import { publicListRows, publicSubtasksByParent, publicSubtasksUnlisted } from "@/lib/project-public-core";
 
 type Mode = "all" | "mine" | "task" | "submit";
 
@@ -218,7 +219,8 @@ function TaskList({
   slug: string;
   projectKey: string;
   tasks: PublicTask[];
-  /** VEC-411: folded sub-tasks, listed only when the query matches one and not its request. */
+  /** VEC-411: folded sub-tasks, listed only when the query matches one and not its request; VEC-427: also what an
+   *  expanded request row lists under itself. */
   subtasks: PublicSubtaskEntry[];
   statuses: Status[];
   created: string | null;
@@ -237,6 +239,21 @@ function TaskList({
   const shown = useMemo(() => publicListRows(tasks, subtasks, query, filter), [tasks, subtasks, query, filter]);
   const titleByKey = useMemo(() => new Map(tasks.map((t) => [t.key, t.title])), [tasks]);
   const statusById = new Map(statuses.map((s) => [s.id, s]));
+  // VEC-427: request rows with sub-tasks fold them, collapsed by default. Plain component state, so it lasts while
+  // the page is open and every visit (reload, tab switch) starts collapsed. A search keeps VEC-411's rows: a matching
+  // sub-task of a request that doesn't match stands in its place; a matching request can still be expanded.
+  const kidsByParent = useMemo(() => publicSubtasksByParent(subtasks), [subtasks]);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (k: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  const foldable = (t: PublicTask) => (kidsByParent.get(t.key)?.length ?? 0) > 0 || (t.progress?.total ?? 0) > 0;
+  // Rows line up when any visible request has a disclosure: the rest get its width as a spacer.
+  const gutter = shown.some((r) => r.kind === "task" && foldable(r.task));
 
   if (!tasks.length) return <p className="mt-10 text-center text-[13.5px] text-muted-foreground">{empty}</p>;
   return (
@@ -290,24 +307,118 @@ function TaskList({
           }
           const t = row.task;
           return (
-            <li key={t.key} data-task-key={t.key} className={cn(created === t.key && "bg-chip")}>
-              <Link href={publicPageHref(slug, projectKey, { task: t.key })} className="flex min-h-11 items-center gap-2.5 px-3.5 py-2.5 hover:bg-chip/60">
-                <StatusRing status={t.status ? statusById.get(t.status.id) : undefined} statuses={statuses} size={16} />
-                <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{t.key}</span>
-                <span className="min-w-0 flex-1 truncate text-[13.5px]">{t.title}</span>
-                {t.progress && <ProgressChip progress={t.progress} />}
-                <TypeTag type={t.type} className="hidden sm:inline-flex" />
-                <span className="hidden w-14 shrink-0 text-right text-[12px] text-faint sm:block" suppressHydrationWarning>
-                  {timeAgo(t.updatedAt)}
-                </span>
-              </Link>
-            </li>
+            <RequestRow
+              key={t.key}
+              slug={slug}
+              projectKey={projectKey}
+              task={t}
+              kids={foldable(t) ? (kidsByParent.get(t.key) ?? []) : null}
+              open={expanded.has(t.key)}
+              onToggle={() => toggle(t.key)}
+              gutter={gutter}
+              highlight={created === t.key}
+              statuses={statuses}
+              statusById={statusById}
+            />
           );
         })}
         {!shown.length && <li className="px-3.5 py-6 text-center text-[13px] text-muted-foreground">No tickets match.</li>}
       </ul>
       {truncated && <p className="mt-2 text-[12px] text-faint">Showing the {tasks.length} most recently updated tickets.</p>}
     </>
+  );
+}
+
+/**
+ * One request in the public list. With sub-tasks (VEC-427) a chevron button (aria-expanded) folds them, read-only,
+ * indented under the row; each opens its own public view. `kids` null = no sub-tasks (no button, a spacer when
+ * `gutter`). The progress chip keeps showing while it's collapsed.
+ */
+function RequestRow({
+  slug,
+  projectKey,
+  task: t,
+  kids,
+  open,
+  onToggle,
+  gutter,
+  highlight,
+  statuses,
+  statusById,
+}: {
+  slug: string;
+  projectKey: string;
+  task: PublicTask;
+  kids: PublicSubtaskEntry[] | null;
+  open: boolean;
+  onToggle: () => void;
+  gutter: boolean;
+  highlight: boolean;
+  statuses: Status[];
+  statusById: Map<string, Status>;
+}) {
+  const listId = useId();
+  const total = kids ? Math.max(kids.length, t.progress?.total ?? 0) : 0;
+  const unlisted = kids ? publicSubtasksUnlisted(t.progress, kids.length) : 0;
+  const noun = total === 1 ? "sub-task" : "sub-tasks";
+  return (
+    <li data-task-key={t.key} data-public-expanded={kids ? String(open) : undefined} className={cn(highlight && "bg-chip")}>
+      <div className="flex items-stretch">
+        {kids ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-controls={open ? listId : undefined}
+            aria-label={`${open ? "Hide" : "Show"} ${total} ${noun} of ${t.key}`}
+            title={open ? `Hide ${noun}` : `Show ${total} ${noun}`}
+            data-public-disclosure
+            className="flex w-9 shrink-0 items-center justify-center text-faint outline-none hover:bg-chip/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset"
+          >
+            <ChevronRightIcon aria-hidden className={cn("size-4 transition-transform motion-reduce:transition-none", open && "rotate-90")} />
+          </button>
+        ) : (
+          gutter && <span aria-hidden className="w-9 shrink-0" />
+        )}
+        <Link
+          href={publicPageHref(slug, projectKey, { task: t.key })}
+          className={cn("flex min-h-11 min-w-0 flex-1 items-center gap-2.5 py-2.5 pr-3.5 hover:bg-chip/60", gutter ? "pl-0.5" : "pl-3.5")}
+        >
+          <StatusRing status={t.status ? statusById.get(t.status.id) : undefined} statuses={statuses} size={16} />
+          <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{t.key}</span>
+          <span className="min-w-0 flex-1 truncate text-[13.5px]">{t.title}</span>
+          {t.progress && <ProgressChip progress={t.progress} />}
+          <TypeTag type={t.type} className="hidden sm:inline-flex" />
+          <span className="hidden w-14 shrink-0 text-right text-[12px] text-faint sm:block" suppressHydrationWarning>
+            {timeAgo(t.updatedAt)}
+          </span>
+        </Link>
+      </div>
+      {kids && open && (
+        <ul id={listId} aria-label={`Sub-tasks of ${t.key}`} data-public-children={t.key} className="divide-y divide-border/70 border-t border-border/70 bg-sidebar/50">
+          {kids.map((s) => (
+            <li key={s.key} data-task-key={s.key} data-public-child>
+              <Link
+                href={publicPageHref(slug, projectKey, { task: s.key })}
+                className="flex min-h-10 items-center gap-2.5 py-2 pr-3.5 pl-[3.25rem] hover:bg-chip/60 sm:pl-[3.75rem]"
+              >
+                <StatusRing status={s.status ? statusById.get(s.status.id) : undefined} statuses={statuses} size={14} />
+                <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{s.key}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px]">{s.title}</span>
+                <span className="shrink-0 text-[12px] text-faint max-sm:sr-only">{s.status?.name ?? ""}</span>
+              </Link>
+            </li>
+          ))}
+          {unlisted > 0 && (
+            <li className="py-2 pr-3.5 pl-[3.25rem] text-[12.5px] text-muted-foreground sm:pl-[3.75rem]">
+              <Link href={publicPageHref(slug, projectKey, { task: t.key })} className="underline underline-offset-4 hover:text-foreground">
+                {kids.length ? `${unlisted} more` : `${unlisted} ${unlisted === 1 ? "sub-task" : "sub-tasks"}`} in {t.key}
+              </Link>
+            </li>
+          )}
+        </ul>
+      )}
+    </li>
   );
 }
 

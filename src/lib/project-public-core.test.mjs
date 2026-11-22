@@ -17,6 +17,8 @@ import {
   shapePublicSubtask,
   shapePublicSubtaskEntry,
   publicListRows,
+  publicSubtasksByParent,
+  publicSubtasksUnlisted,
   passesPublicStatusFilter,
   publicProgress,
   shapePublicComment,
@@ -410,6 +412,36 @@ test("publicListRows: sub-tasks of requests beyond the list come last; no match 
   const subs = [sub(455, "Fold sub-tasks", 451), sub(461, "Fold child", 460)];
   assert.deepEqual(keys(publicListRows(tasks, subs, "fold", "")), ["subtask:TPA-461", "subtask:TPA-455"]);
   assert.deepEqual(publicListRows(tasks, subs, "zzz", ""), []);
+});
+
+/* ---------------- expandable request rows (VEC-427) ---------------- */
+
+test("publicSubtasksByParent: direct sub-tasks per request, by number; nested ones stay under their own parent", () => {
+  const subs = [sub(455, "Five", 451), sub(452, "Two", 451), sub(470, "Nested", 452), sub(461, "Other", 460), sub(453, "Three", 451)];
+  const by = publicSubtasksByParent(subs);
+  assert.deepEqual((by.get("TPA-451") ?? []).map((s) => s.key), ["TPA-452", "TPA-453", "TPA-455"]);
+  assert.deepEqual((by.get("TPA-452") ?? []).map((s) => s.key), ["TPA-470"]);
+  assert.deepEqual((by.get("TPA-460") ?? []).map((s) => s.key), ["TPA-461"]);
+  assert.equal(by.get("TPA-999"), undefined);
+  // Entries are the index's own objects: nothing added, nothing new in the payload.
+  assert.equal(by.get("TPA-451")[0], subs[1]);
+  assert.equal(publicSubtasksByParent([]).size, 0);
+});
+
+test("publicSubtasksByParent: a request with 5 sub-tasks still lists as 1 row; expanding reads its 5", () => {
+  const tasks = [{ ...task(451, "Request"), progress: { total: 5, done: 2 } }, task(460, "Other")];
+  const subs = [451, 451, 451, 451, 451].map((p, i) => sub(452 + i, `Sub ${i}`, p, i < 2 ? SD : SS));
+  assert.deepEqual(keys(publicListRows(tasks, subs, "", "")), ["task:TPA-451", "task:TPA-460"]);
+  const kids = publicSubtasksByParent(subs).get("TPA-451");
+  assert.equal(kids.length, 5);
+  assert.deepEqual(kids.map((s) => s.status.stage), ["done", "done", "started", "started", "started"]);
+  assert.equal(publicSubtasksUnlisted(tasks[0].progress, kids.length), 0);
+});
+
+test("publicSubtasksUnlisted: what the capped index leaves out, never negative", () => {
+  assert.equal(publicSubtasksUnlisted({ total: 7, done: 1 }, 5), 2);
+  assert.equal(publicSubtasksUnlisted({ total: 3, done: 0 }, 5), 0);
+  assert.equal(publicSubtasksUnlisted(null, 2), 0);
 });
 
 test("passesPublicStatusFilter: all, open (not done or cancelled), one status id", () => {
