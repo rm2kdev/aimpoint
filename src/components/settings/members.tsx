@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CopyIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
+import { CopyIcon, CreditCardIcon, Trash2Icon, UserPlusIcon } from "lucide-react";
 import { toast } from "sonner";
 import { useOrg } from "@/components/org-provider";
 import { UserAvatar } from "@/components/bits";
@@ -24,7 +24,7 @@ import { createInvite, removeMember, revokeInvite, setMemberRole } from "@/app/a
 import { formatDay } from "@/lib/dates";
 import type { Role, Task } from "@/lib/types";
 import type { InviteRow } from "@/components/settings/org-settings";
-import type { MemberBilling } from "@/lib/billing-view";
+import { pendingInvitesCost, PRO_SEAT_PRICE_CENTS, seatChangeCost, TAX_NOTE, usd, type MemberBilling } from "@/lib/billing-view";
 import { analyticsPath, orgPath } from "@/lib/paths";
 import { analyticsSearchFor } from "@/lib/analytics-range";
 import { tasksBecomeUnassigned } from "@/lib/format";
@@ -42,10 +42,11 @@ const roleLabel = (r: Role) => (r === "admin" ? "Admin" : "Member");
 export function MembersSettings({
   invites,
   stats,
+  memberBilling = null,
 }: {
   invites: InviteRow[];
   stats: Record<string, MemberStats>;
-  /** VEC-414: seat cost data for the invite / remove flows (null with billing off). Passed in, not rendered yet. */
+  /** VEC-414: seat cost data for the invite / remove flows (null with billing off, so nothing about cost renders). */
   memberBilling?: MemberBilling | null;
 }) {
   const { org, members, me, isAdmin } = useOrg();
@@ -87,13 +88,44 @@ export function MembersSettings({
           ))}
         </EntityList>
       </SettingsRow>
-      {isAdmin && <InviteRows invites={invites} />}
+      {isAdmin && <InviteRows invites={invites} billing={memberBilling} />}
     </>
   );
 }
 
-function InviteRows({ invites }: { invites: InviteRow[] }) {
+const seatsWord = (n: number) => `${n} ${n === 1 ? "seat" : "seats"}`;
+
+/**
+ * VEC-415: what seats cost, shown above the invite form on a paid org. Billing off (self-hosted) renders nothing.
+ * An org with no live subscription is locked (Members sits behind the subscribe screen), but say "once you subscribe" anyway.
+ */
+function SeatNote({ billing }: { billing: MemberBilling }) {
+  const now = seatChangeCost({ seats: billing.billedSeats, delta: 0 });
+  return (
+    <div className="mb-4 flex max-w-lg gap-2.5 rounded-[10px] border border-border bg-muted/40 px-3.5 py-2.5 text-[12.5px] text-muted-foreground" data-seat-note>
+      <CreditCardIcon className="mt-0.5 size-3.5 shrink-0 text-foreground" aria-hidden />
+      <p>
+        <span className="font-medium text-foreground">Each person who joins is a paid seat</span> at {usd(PRO_SEAT_PRICE_CENTS)}/month {TAX_NOTE}
+        {billing.liveSubscription ? "" : " once you subscribe"}. Bots are free.{" "}
+        {billing.liveSubscription && (
+          <>
+            You&apos;re billed for <span className="tabular text-foreground">{seatsWord(now.currentSeats)}</span>:{" "}
+            <span className="tabular text-foreground">{now.currentLabel}</span>.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
+function InviteRows({ invites, billing }: { invites: InviteRow[]; billing: MemberBilling | null }) {
   const { org } = useOrg();
+  // VEC-415: on a live subscription, Send invite asks first (the bill goes up once they accept).
+  const [confirming, setConfirming] = useState(false);
+  const sendRef = useRef<HTMLButtonElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const charge = billing?.liveSubscription ? seatChangeCost({ seats: billing.billedSeats, delta: 1 }) : null;
+  const pendingCost = billing?.liveSubscription && invites.length ? pendingInvitesCost({ seats: billing.billedSeats, pending: invites.length }) : null;
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<Role>("member");
   // The last invite created here: whether it was emailed, and its link for copying either way (VEC-296).
@@ -103,28 +135,32 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
     navigator.clipboard.writeText(`${location.origin}${path}`).catch(() => {});
     if (!quiet) toast.success("Invite link copied");
   };
+  const send = () =>
+    run(async () => {
+      const r = await createInvite(org.slug, email, role);
+      if (r.ok && r.data) {
+        setSent(r.data);
+        setEmail("");
+        if (r.data.emailed) toast.success(`Invite sent to ${r.data.email}`);
+        else {
+          copy(r.data.url, true);
+          toast.warning(`Couldn't email ${r.data.email}, copy the link`, { description: "The invite was created; its link is on your clipboard." });
+        }
+      }
+      return r;
+    });
   return (
     <SettingsRow title="Invite people" desc="Emails a link that works once and expires in 14 days. You can also copy the link and send it however you like.">
+      {billing && <SeatNote billing={billing} />}
       <form
         className="flex max-w-lg flex-wrap gap-2"
         onSubmit={(e) => {
           e.preventDefault();
-          run(async () => {
-            const r = await createInvite(org.slug, email, role);
-            if (r.ok && r.data) {
-              setSent(r.data);
-              setEmail("");
-              if (r.data.emailed) toast.success(`Invite sent to ${r.data.email}`);
-              else {
-                copy(r.data.url, true);
-                toast.warning(`Couldn't email ${r.data.email}, copy the link`, { description: "The invite was created; its link is on your clipboard." });
-              }
-            }
-            return r;
-          });
+          if (charge) setConfirming(true);
+          else send();
         }}
       >
-        <Input type="email" placeholder="teammate@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-56 flex-1" aria-label="Email" />
+        <Input ref={emailRef} type="email" placeholder="teammate@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-56 flex-1" aria-label="Email" />
         <Select value={role} onValueChange={(v) => setRole(v as Role)}>
           <SelectTrigger className="w-28" aria-label="Role">
             <SelectValue />
@@ -170,6 +206,45 @@ function InviteRows({ invites }: { invites: InviteRow[] }) {
           ))}
         </ul>
       )}
+      {pendingCost?.label && (
+        <p className="mt-2 text-[12px] text-faint" data-pending-cost>
+          Not billed until accepted. If {pendingCost.pending === 1 ? "it is" : pendingCost.pending === 2 ? "both are" : `all ${pendingCost.pending} are`}, the bill goes from{" "}
+          <span className="tabular">{usd(charge!.currentMonthlyCents)}</span> to{" "}
+          <span className="tabular">{usd(charge!.currentMonthlyCents + pendingCost.addCents)}/month {TAX_NOTE}</span> (+{usd(pendingCost.addCents)}).
+        </p>
+      )}
+      {charge && (
+        <AlertDialog open={confirming} onOpenChange={setConfirming}>
+          <AlertDialogContent
+            data-seat-confirm
+            onOpenAutoFocus={(e) => {
+              // Enter, Enter sends: focus the confirm button, not Cancel.
+              e.preventDefault();
+              sendRef.current?.focus();
+            }}
+            onCloseAutoFocus={(e) => {
+              // Opened from the form, not a trigger: hand focus back to the email field.
+              e.preventDefault();
+              emailRef.current?.focus();
+            }}
+          >
+            <AlertDialogHeader>
+              <AlertDialogTitle>Add a paid seat?</AlertDialogTitle>
+              <AlertDialogDescription>
+                When <span className="text-foreground">{email.trim()}</span> accepts, {org.name} is billed for {seatsWord(charge.newSeats)}: your bill goes from{" "}
+                <span className="tabular text-foreground">{usd(charge.currentMonthlyCents)}</span> to{" "}
+                <span className="tabular text-foreground">{charge.newLabel}</span>, prorated from the day they join. Nothing is charged if they don&apos;t accept.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction ref={sendRef} onClick={send}>
+                Send invite
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </SettingsRow>
   );
 }
@@ -180,10 +255,13 @@ export function MemberDetail({
   member,
   stats,
   assigned,
+  memberBilling = null,
 }: {
   member: { id: string; name: string; email: string; role: Role; image?: string | null };
   stats: MemberStats;
   assigned: Task[];
+  /** VEC-415: seat billing for the remove dialog; loaded for admins only, null with billing off. */
+  memberBilling?: MemberBilling | null;
 }) {
   const { org, me, isAdmin } = useOrg();
   const router = useRouter();
@@ -191,6 +269,7 @@ export function MemberDetail({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const self = member.id === me.id;
   const back = orgPath(org.slug, "settings", "members");
+  const drop = isAdmin && memberBilling?.liveSubscription ? seatChangeCost({ seats: memberBilling.billedSeats, delta: -1 }) : null;
 
   return (
     <>
@@ -267,6 +346,20 @@ export function MemberDetail({
                 ? "You'll need a new invite to come back."
                 : `${member.name} loses access to ${org.name}${stats.assigned ? ` and ${tasksBecomeUnassigned(stats.assigned)}` : ""}.`}
             </AlertDialogDescription>
+            {drop && (
+              <p className="text-center text-[13px] text-muted-foreground sm:text-left" data-seat-drop>
+                {drop.newSeats < drop.currentSeats ? (
+                  <>
+                    Your bill drops by one seat: <span className="tabular text-foreground">{usd(drop.currentMonthlyCents)}</span> to{" "}
+                    <span className="tabular text-foreground">{drop.newLabel}</span>, credited from the day {self ? "you leave" : "they leave"}.
+                  </>
+                ) : (
+                  <>
+                    Your bill stays at <span className="tabular text-foreground">{drop.currentLabel}</span>: the plan&apos;s minimum is 1 seat.
+                  </>
+                )}
+              </p>
+            )}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
