@@ -133,6 +133,8 @@ export interface TaskComposerProps {
   header?: React.ReactNode;
   /** Next to the general error line (e.g. a Sign in again link). */
   errorExtra?: React.ReactNode;
+  /** Page layout: a short line under the submit button (e.g. what happens after sending). */
+  submitNote?: React.ReactNode;
   /** A general error to start with (e.g. back from a no-JavaScript post); page layout shows it in the summary. */
   initialError?: string | null;
   /** Called whenever the general error changes (e.g. to clear a caller's extra state). */
@@ -732,6 +734,11 @@ export function TaskComposer(p: TaskComposerProps) {
       <Button type="submit" size="lg" disabled={submitBusy || p.submitDisabled} className="-mt-2 h-9">
         {submitText}
       </Button>
+      {p.submitNote && (
+        <p data-composer-submit-note className="-mt-2 text-[12.5px] text-muted-foreground">
+          {p.submitNote}
+        </p>
+      )}
     </form>
   );
 }

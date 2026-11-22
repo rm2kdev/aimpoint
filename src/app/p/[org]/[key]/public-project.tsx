@@ -24,7 +24,8 @@ type Mode = "all" | "mine" | "task" | "submit";
 export interface PublicProjectScreenProps {
   view: PublicProjectView;
   /** The signed-in account (any Aimpoint account), or null when signed out. */
-  me: { name: string } | null;
+  /** The signed-in viewer. `email` (their own address, submit view only) says where the completion email goes; `emailable` = the account has one. */
+  me: { name: string; email: string | null; emailable: boolean } | null;
   /** In-app link for members of the org; null for everyone else. */
   appHref: string | null;
   mode: Mode;
@@ -124,7 +125,7 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
             <Link className="font-medium underline underline-offset-4" href={publicPageHref(slug, key, { task: p.created })}>
               {p.created}
             </Link>
-            . The team will take it from here.
+            . The team will take it from here{p.me?.emailable ? ", and we'll email you when it's done" : ""}.
           </div>
         )}
 
@@ -140,7 +141,7 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
           />
         )}
         {p.mode === "submit" && (
-          <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} />
+          <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} email={p.me?.email ?? null} />
         )}
         {p.mode === "all" && (
           <TaskList
@@ -470,7 +471,20 @@ function TaskDetail({
 /* ---------------- submit ---------------- */
 
 /** The ticket form, on the shared TaskComposer (VEC-358): images go through this project's pending uploads. */
-function SubmitForm({ slug, projectKey, submitStatuses, statuses }: { slug: string; projectKey: string; submitStatuses: PublicStatus[]; statuses: Status[] }) {
+function SubmitForm({
+  slug,
+  projectKey,
+  submitStatuses,
+  statuses,
+  email,
+}: {
+  slug: string;
+  projectKey: string;
+  submitStatuses: PublicStatus[];
+  statuses: Status[];
+  /** The signed-in submitter's own address (VEC-423 mails it when the ticket reaches a done status). */
+  email: string | null;
+}) {
   const router = useRouter();
   const [type, setType] = useState<TaskType>("issue");
   const [statusId, setStatusId] = useState(submitStatuses[0]?.id ?? "");
@@ -498,6 +512,13 @@ function SubmitForm({ slug, projectKey, submitStatuses, statuses }: { slug: stri
           status={{ value: statusId, onChange: setStatusId, options: submitStatuses, statuses }}
           submitLabel="Submit ticket"
           pendingLabel="Submitting…"
+          submitNote={
+            email ? (
+              <>
+                We&apos;ll email you at <span className="break-all font-medium text-foreground">{email}</span> when this is done.
+              </>
+            ) : null
+          }
           errorExtra={
             signedOut && (
               <>

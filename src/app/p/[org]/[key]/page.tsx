@@ -75,7 +75,8 @@ export default async function PublicProjectPage({ params, searchParams }: PagePr
   return (
     <PublicProjectScreen
       view={view}
-      me={user ? { name: user.name || user.email.split("@")[0] } : null}
+      // The viewer's own address goes only into their own submit form render (VEC-424); no other view carries it.
+      me={user ? { name: user.name || user.email.split("@")[0], email: submitting ? user.email || null : null, emailable: !!user.email } : null}
       appHref={appHref}
       mode={detail?.available ? "task" : submitting && view.submitStatuses.length ? "submit" : mineView ? "mine" : "all"}
       detail={detail?.available ? { task: detail.task, comments: detail.comments, parent: detail.parent, subtasks: detail.subtasks } : null}
