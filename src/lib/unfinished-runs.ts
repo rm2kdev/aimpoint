@@ -10,6 +10,7 @@ import { publishWorking } from "@/lib/claims";
 import { isParked, loadTaskFlow } from "@/lib/flow-engine";
 import { decideRun, type HermesRunState, type RunCheck } from "@/lib/run-watch-core";
 import { isClosedCategory, type AgentClaimDoc, type BotDoc, type OrgDoc } from "@/lib/types";
+import { PARENT_PROGRESS_NOTES } from "@/lib/parent-progress-core";
 
 /**
  * VEC-316 sweep: bot runs that ended without finishing their work (rules in lib/run-watch-core.ts). For every
@@ -57,12 +58,12 @@ export async function hermesRunState(bot: BotDoc, runId: string): Promise<Hermes
 }
 
 /** The bot's latest comment or activity on the task. Moves Aimpoint made in the bot's name on hand-over (pickup to
- * In Progress, a mention resuming it) aren't the bot doing anything, so they don't count. */
+ * In Progress, a mention resuming it, a parent started by its sub-task, VEC-419) aren't the bot doing anything, so they don't count. */
 async function lastActivity(botId: ObjectId, taskId: ObjectId): Promise<Date | null> {
   const c = await cols();
   const [cm, act] = await Promise.all([
     c.comments.find({ taskId, authorId: botId }, { projection: { createdAt: 1 } }).sort({ createdAt: -1 }).limit(1).next(),
-    c.activity.find({ taskId, actorId: botId, note: { $nin: ["started_work", "resumed_work"] } }, { projection: { createdAt: 1 } }).sort({ createdAt: -1 }).limit(1).next(),
+    c.activity.find({ taskId, actorId: botId, note: { $nin: ["started_work", "resumed_work", ...PARENT_PROGRESS_NOTES] } }, { projection: { createdAt: 1 } }).sort({ createdAt: -1 }).limit(1).next(),
   ]);
   const t = Math.max(cm?.createdAt.getTime() ?? 0, act?.createdAt.getTime() ?? 0);
   return t ? new Date(t) : null;

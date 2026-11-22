@@ -12,6 +12,7 @@ import { ENABLED_BOT_FILTER, isBotEnabled } from "@/lib/bot-enabled";
 // Starts the wait-step reminder sweeper (VEC-182) alongside this one: every server path that writes tasks loads this module.
 import "@/lib/wait-reminders";
 import { isClosedCategory, type BotDoc, type BotWakeDoc, type OrgDoc, type QueuedWakeKind } from "@/lib/types";
+import { PARENT_PROGRESS_NOTES } from "@/lib/parent-progress-core";
 
 /**
  * Push wake-ups that must reach their bot (VEC-101). A push bot never polls check_for_work, so a task wake-up that
@@ -355,7 +356,8 @@ async function actedSince(botId: ObjectId, taskId: ObjectId, since: Date, except
   const c = await cols();
   const [comment, act] = await Promise.all([
     c.comments.findOne({ taskId, authorId: botId, createdAt: { $gt: since } }, { projection: { _id: 1 } }),
-    c.activity.findOne({ taskId, actorId: botId, createdAt: { $gt: since }, ...(except ? { _id: { $ne: except } } : {}) }, { projection: { _id: 1 } }),
+    // A parent moved because this bot worked a sub-task (VEC-419) isn't the bot acting on the parent.
+    c.activity.findOne({ taskId, actorId: botId, createdAt: { $gt: since }, note: { $nin: [...PARENT_PROGRESS_NOTES] }, ...(except ? { _id: { $ne: except } } : {}) }, { projection: { _id: 1 } }),
   ]);
   return !!(comment || act);
 }

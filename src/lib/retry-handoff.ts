@@ -10,6 +10,7 @@ import { wakeBots } from "@/lib/bot-dispatch";
 import { disabledRetryWhy, isBotEnabled } from "@/lib/bot-enabled";
 import { isClosedCategory, type ActivityDoc, type RetryOutcome, type TaskDoc } from "@/lib/types";
 import type { Actor } from "@/lib/task-service";
+import { PARENT_PROGRESS_NOTES } from "@/lib/parent-progress-core";
 
 /**
  * Retry / unstall (VEC-159). A hand-off can land and still go nowhere: the bot's run dies part way (agent restarted,
@@ -155,7 +156,7 @@ async function chainFront(orgId: ObjectId, task: TaskDoc): Promise<TaskDoc[]> {
 async function lastBotActivity(botId: ObjectId, taskId: ObjectId): Promise<Date | null> {
   const c = await cols();
   const [comment] = await c.comments.find({ taskId, authorId: botId }, { projection: { createdAt: 1 } }).sort({ createdAt: -1 }).limit(1).toArray();
-  const [act] = await c.activity.find({ taskId, actorId: botId }, { projection: { createdAt: 1 } }).sort({ createdAt: -1 }).limit(1).toArray();
+  const [act] = await c.activity.find({ taskId, actorId: botId, note: { $nin: [...PARENT_PROGRESS_NOTES] } }, { projection: { createdAt: 1 } }).sort({ createdAt: -1 }).limit(1).toArray();
   const times = [comment?.createdAt, act?.createdAt].filter((d): d is Date => !!d);
   return times.length ? new Date(Math.max(...times.map((d) => d.getTime()))) : null;
 }

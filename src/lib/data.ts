@@ -474,6 +474,7 @@ export function toFeed(doc: CommentDoc | ActivityDoc): FeedItem {
     to: doc.to ?? null,
     ...(doc.note ? { note: doc.note } : {}),
     ...(doc.waiter ? { waiter: doc.waiter } : {}),
+    ...(doc.subtask ? { subtask: doc.subtask } : {}),
     ...(doc.kind === "flow_step" ? { flowStatus: doc.flowStatus ?? null, flowOwner: doc.flowOwner ?? null } : {}),
     createdAt: doc.createdAt.toISOString(),
   };

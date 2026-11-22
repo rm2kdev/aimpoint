@@ -57,6 +57,7 @@ import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 import { TASK_TITLE_MAX } from "@/lib/task-intake-core";
 import { PartOfLink, ProgressChip } from "@/components/subtasks";
+import { parentProgressText } from "@/lib/parent-progress-core";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -897,7 +898,9 @@ function Feed({
                 ? " (back to work after a mention)"
                 : f.note === "stopped_work"
                   ? " (stopped the bot's work)"
-                  : null}
+                  : f.note === "subtask_started" || f.note === "subtask_done"
+                    ? parentProgressText(f.note === "subtask_done" ? "done" : "started", f.subtask)
+                    : null}
           </>
         );
       case "assignee":

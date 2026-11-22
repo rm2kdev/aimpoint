@@ -624,7 +624,10 @@ export type ActivityNote =
   /** created (VEC-255): submitted on the public project page; `to` holds the submitter's display name. */
   | "public"
   /** status (VEC-215): a person stopped the bot's work, so it moved back to the first not-started status. */
-  | "stopped_work";
+  | "stopped_work"
+  /** status (VEC-419): a sub-task (`subtask` = its key) started / is done, so its not-started parent moved to started. */
+  | "subtask_started"
+  | "subtask_done";
 
 export interface ActivityDoc {
   _id: ObjectId;
@@ -673,6 +676,8 @@ export interface ActivityDoc {
   note?: ActivityNote;
   /** With note "auto_owner": key of the task that was waiting on this one. */
   waiter?: string | null;
+  /** With note "subtask_started" / "subtask_done" (VEC-419): key of the sub-task whose move started this parent. */
+  subtask?: string | null;
   /** flow_step: name of the status the new step sits in. */
   flowStatus?: string | null;
   /** flow_step: who the step handed it to (id hex), null = nobody. */
@@ -1195,6 +1200,7 @@ export interface FeedItem {
   to?: string | null;
   note?: ActivityNote;
   waiter?: string | null;
+  subtask?: string | null;
   flowStatus?: string | null;
   flowOwner?: string | null;
   createdAt: string;

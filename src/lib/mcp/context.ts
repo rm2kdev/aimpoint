@@ -13,6 +13,7 @@ import { isBotEnabled } from "@/lib/bot-enabled";
 import { decodeEntities as decode, htmlToMarkdown, markdownToHtml } from "@/lib/markdown-core";
 import { commentImages } from "@/lib/comment-images";
 import { isClosedCategory, type ActivityDoc, type BotDoc, type OrgDoc, type ProjectDoc, type StatusDoc, type TaskDoc, type TaskRef } from "@/lib/types";
+import { parentProgressText } from "@/lib/parent-progress-core";
 
 /* ---------------- people directory ---------------- */
 
@@ -197,7 +198,7 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const pr = (v?: string | null) => PRIORITY_LABEL[Number(v)] ?? v;
     switch (a.kind) {
       case "created": return a.note === "form" ? `submitted it via the external form "${a.to ?? (task.source?.kind === "form" ? task.source.formName : "?")}"` : a.note === "public" ? "submitted it on the project's public page" : "created the task";
-      case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : a.note === "stopped_work" ? " (stopped the bot's work)" : ""}`;
+      case "status": return `moved it from ${st(a.from)} to ${st(a.to)}${a.note === "started_work" ? " (started work)" : a.note === "resumed_work" ? " (back to work after a mention)" : a.note === "stopped_work" ? " (stopped the bot's work)" : a.note === "subtask_started" || a.note === "subtask_done" ? parentProgressText(a.note === "subtask_done" ? "done" : "started", a.subtask) : ""}`;
       case "assignee": return a.to ? `assigned it to ${name(a.to)}${a.note === "auto_owner" ? ` (nobody owned it and ${a.waiter ?? "a task it assigned to itself"} was waiting on it)` : ""}` : `unassigned ${name(a.from)}`;
       case "priority": return `changed priority from ${pr(a.from)} to ${pr(a.to)}`;
       case "type": return `changed type from ${a.from} to ${a.to}`;

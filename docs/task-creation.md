@@ -188,6 +188,24 @@ bot's sub-tasks under the request they came from instead of listing them beside 
 - Archive and delete. Archiving a parent keeps the link: its sub-tasks stay where they are, pointing at an archived
   task (restoring it regroups them). Deleting a parent (task delete, or a project delete that cascades it) clears
   `parentId` on its sub-tasks, which become top-level tasks; nothing else about them changes.
+- Parent auto-start (VEC-419, rules in `lib/parent-progress-core.ts`, hook `startParentOnActivity` in
+  `lib/parent-progress.ts`). When a sub-task enters a started or done stage status by any path (pane, board drag,
+  MCP `set_status` / `complete_task`, REST, a bot's pickup or mention resume, or created straight into one), a parent in
+  a not-started (unstarted-stage) status moves to the first started status of its own project (the sub-task may be in
+  another project). The hook is called from the three status write primitives only: `updateTaskAs` (which `moveTask`
+  and every tool/route use), `markStartedByBot` and `createTaskAs`.
+  - Never moved: a parent in Backlog (parked), Triage, a started, done or cancelled status, an archived parent, or one a
+    person stopped (VEC-215). A parent is never moved backwards: sub-tasks going back to Todo change nothing.
+    Cancelled sub-tasks alone don't count as activity. The parent is not auto-closed when every sub-task is done.
+  - Activity: a `status` entry on the parent attributed to whoever moved the sub-task, `note` `subtask_started` /
+    `subtask_done`, `subtask` = its key, read as "moved from Todo to In Progress (sub-task VEC-12 started)". No
+    notification is sent (status moves notify nobody); the parent's own `task.upsert` updates rows and panes live.
+  - Flows and dependencies: the parent's write is a conditional status update like a bot pickup, not `updateTaskAs`,
+    so it re-plans no flow, reassigns nobody and wakes nobody. With an active flow the target is the parent's current
+    step's working status (`pickupTarget`), so no required step is skipped; a step that keeps its status, or a wait
+    step, leaves the parent where it is. Triage umbrellas (paused flow) use the first started status. A not-started ->
+    started move changes no done-ness, so dependents and the umbrella's ready hand-off and its triager's close-out
+    still happen when its sub-tasks close.
 - Backfill: migration `2026-11-task-parent` (`src/lib/parent-link-migration.ts`, run once from `ensureIndexes`; for a
   database whose dev server already ran init, `node scripts/migrate-task-parents.mjs [--dry-run]`). A task gets a
   parent when it was created by a bot and is listed in the `dependsOn` of a task whose `triagedBy` is that same bot.

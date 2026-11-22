@@ -28,6 +28,7 @@ import {
 } from "@/lib/task-intake-core";
 import { assertNotStopped } from "@/lib/stop-guard";
 import { detachChildren, parentForCreate } from "@/lib/parent-link";
+import { startParentOnActivity } from "@/lib/parent-progress";
 import { disabledAssigneeMessage, heldMentionsOf, isBotEnabled } from "@/lib/bot-enabled";
 
 /**
@@ -146,6 +147,8 @@ export async function markStartedByBot(orgId: ObjectId, botId: ObjectId, taskId:
     const actorId = botId.toHexString();
     await publish(orgHex, { type: "task.upsert", actorId, task: toTask(after, project?.key ?? "?") });
     await publish(orgHex, { type: "feed.add", actorId, taskId: taskId.toHexString(), item: toFeed(act) });
+    // A sub-task's pickup starts its not-started parent (VEC-419); otherwise the parent's `children` counts are unchanged.
+    await startParentOnActivity({ orgId, id: botId }, after, target.category);
     return true;
   } catch (err) {
     // The pickup itself already happened; a failed status follow-up shouldn't fail it.
@@ -516,8 +519,10 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
   // Only after taking ownership above, or this broadcast shows a blocker the bot is about to own as unassigned
   // Stalled and syncStalledNotice sends a false "nobody is assigned" notice (VEC-111).
   if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
-  // Its parent gained a sub-task: its `children` counts changed (VEC-407).
-  if (parentId && !dependsOn.some((d) => d.equals(parentId))) await publishWorking(actor.orgId, actor.id, [parentId]);
+  // Its parent gained a sub-task: its `children` counts changed (VEC-407). A sub-task created straight into a started or
+  // done status starts a not-started parent (VEC-419), whose own upsert then carries the new counts.
+  const parentMoved = !!parentId && (await startParentOnActivity(actor, doc, status.category));
+  if (parentId && !parentMoved && !dependsOn.some((d) => d.equals(parentId))) await publishWorking(actor.orgId, actor.id, [parentId]);
   return task;
 }
 
@@ -865,8 +870,12 @@ export async function updateTaskAs(
   const prevDeps = before.dependsOn ?? [];
   const addedDeps = set.dependsOn ? set.dependsOn.filter((id) => !prevDeps.some((p) => p.equals(id))) : [];
   const upstream = doneChanged || set.archivedAt !== undefined ? [...(after.dependsOn ?? []), ...removedDeps] : [...addedDeps, ...removedDeps];
-  // A sub-task's status or archive change moves its parent's `children` counts (VEC-407).
-  if (after.parentId && (set.statusId !== undefined || set.archivedAt !== undefined) && !upstream.some((u) => u.equals(after.parentId!))) upstream.push(after.parentId);
+  // A sub-task entering a started or done status starts its not-started parent (VEC-419). Every status path lands here
+  // (pane, board drag via moveTask, MCP set_status / complete_task, REST); bot pickup goes through markStartedByBot.
+  const parentMoved = !!set.statusId && !!after.parentId && (await startParentOnActivity(actor, after, finalStatus?.category));
+  // A sub-task's status or archive change moves its parent's `children` counts (VEC-407); a moved parent's own upsert
+  // already carried them.
+  if (after.parentId && !parentMoved && (set.statusId !== undefined || set.archivedAt !== undefined) && !upstream.some((u) => u.equals(after.parentId!))) upstream.push(after.parentId);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   // A bot leaving its own task parked behind open dependencies (moved to an open status, or deps added) takes
   // the ones nobody owns, so someone is woken for them (VEC-107).
