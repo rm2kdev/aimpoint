@@ -23,6 +23,16 @@ export function parentBlockedReason(task: Pick<Task, "children">): string | null
   return task.children && task.children.total > 0 ? "It has sub-tasks of its own" : null;
 }
 
+/**
+ * VEC-431: the reason a disabled "Make sub-task of" can't be picked, as a muted line under the item. Shared by the
+ * pane actions menu and the row context menu. Not a `title`: disabled Radix items get pointer-events-none, so a
+ * tooltip on one never shows.
+ */
+export function ParentBlockedNote({ reason }: { reason: string | null }) {
+  if (!reason) return null;
+  return <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">{reason}, so it can&rsquo;t go under another task.</p>;
+}
+
 /** Sets or clears a task's parent, toasts the result, and echoes it to open lists. Resolves to the saved task, or null. */
 export function useSetParent() {
   const { org } = useOrgBase();

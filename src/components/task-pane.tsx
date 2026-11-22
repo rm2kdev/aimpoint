@@ -57,7 +57,7 @@ import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 import { TASK_TITLE_MAX } from "@/lib/task-intake-core";
 import { PartOfLink, ProgressChip } from "@/components/subtasks";
-import { AddExistingSubtaskDialog, parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
+import { AddExistingSubtaskDialog, ParentBlockedNote, parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
 import { parentProgressText } from "@/lib/parent-progress-core";
 
 const propBtn =
@@ -367,9 +367,12 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                     </DropdownMenuItem>
                   </>
                 ) : (
-                  <DropdownMenuItem className="gap-2.5" disabled={!!parentBlocked} title={parentBlocked ?? undefined} onSelect={later(setPickParent)}>
-                    <CornerLeftUpIcon className="size-4" /> Make sub-task of…
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuItem className="gap-2.5" disabled={!!parentBlocked} onSelect={later(setPickParent)}>
+                      <CornerLeftUpIcon className="size-4" /> Make sub-task of…
+                    </DropdownMenuItem>
+                    <ParentBlockedNote reason={parentBlocked} />
+                  </>
                 )}
                 <DropdownMenuSeparator />
               </>

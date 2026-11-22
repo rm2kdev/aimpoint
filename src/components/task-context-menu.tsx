@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/context-menu";
 import { isDragActive } from "@/components/ui/drag-provider";
 import { taskAccess } from "@/lib/access";
-import { parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
+import { ParentBlockedNote, parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
 import type { TaskPatch } from "@/app/actions/tasks";
 import type { Priority, Task, TaskType } from "@/lib/types";
 
@@ -264,12 +264,12 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove, onPickParen
                 </ContextMenuItem>
               </>
             ) : (
-              <ContextMenuItem onSelect={onPickParent} disabled={!!parentBlocked} title={parentBlocked ?? undefined}>
+              <ContextMenuItem onSelect={onPickParent} disabled={!!parentBlocked}>
                 <CornerLeftUpIcon />
                 Make sub-task of…
               </ContextMenuItem>
             )}
-            {!task.parentKey && parentBlocked && <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">{parentBlocked}, so it can&rsquo;t go under another task.</p>}
+            {!task.parentKey && <ParentBlockedNote reason={parentBlocked} />}
           </>
         )}
         {!canWork && (
