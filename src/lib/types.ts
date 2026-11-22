@@ -282,6 +282,10 @@ export interface PublicSubtask {
   title: string;
   status: PublicStatus | null;
 }
+/** VEC-411: a sub-task in the public list's search index: its public shape plus the key of the request it's part of. */
+export interface PublicSubtaskEntry extends PublicSubtask {
+  parentKey: string;
+}
 /** A comment in the public view (only when the project shows comments). Mentions read as @Name. */
 export interface PublicComment {
   author: string;
@@ -299,6 +303,11 @@ export interface PublicProjectView {
   tasks: PublicTask[];
   /** More non-archived top-level tasks exist than were returned. */
   truncated: boolean;
+  /**
+   * VEC-411: the sub-tasks folded under visible requests (key, title, public status, parent key only), so search can
+   * find a sub-task whose request doesn't match. Never listed without a query. At most PUBLIC_SUBTASK_INDEX_MAX.
+   */
+  subtasks: PublicSubtaskEntry[];
   /** Top-level task counts by stage (VEC-364/409) when the project shows statistics (`publicAccess.showStats`), else null. */
   stats: { open: number; inProgress: number; done: number; total: number } | null;
 }

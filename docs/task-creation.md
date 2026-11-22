@@ -173,6 +173,10 @@ bot's sub-tasks under the request they came from instead of listing them beside 
   cancelled, sub-tasks in the same project only) shown as a `3/5` chip. A request's public view lists its sub-tasks
   as key, title and status only (`shapePublicSubtask`); a sub-task still opens by its key and links back to its parent.
   `parentId` is read but never sent to the public.
+  Search (VEC-411): the list also carries `subtasks`, an index of the folded sub-tasks (key, title, public status,
+  parent key; newest `PUBLIC_SUBTASK_INDEX_MAX`). With a query, a request that doesn't match is replaced by its
+  matching sub-tasks, each with a "Part of KEY" link (`publicListRows` in `lib/project-public-core.ts`); without one
+  the list is unchanged. My submissions searches the sub-tasks of the account's own requests.
 - App task lists (VEC-408, `task-workspace.tsx`, rules in `lib/subtask-groups-core.ts`): view option "Group sub-tasks
   under their parent" (Sort menu > Display, on by default, saved per view as `ViewState.groupSubtasks`). A task whose
   parent passes the view's filters sits under it behind a chevron (collapsed by default, open parents remembered in

@@ -15,6 +15,9 @@ import {
   publicCommentBody,
   shapePublicTask,
   shapePublicSubtask,
+  shapePublicSubtaskEntry,
+  publicListRows,
+  passesPublicStatusFilter,
   publicProgress,
   shapePublicComment,
   parsePublicRef,
@@ -349,4 +352,72 @@ test("stats over top-level rows: an umbrella with 5 sub-tasks counts once", () =
   assert.equal(s.total, 1);
   assert.equal(s.inProgress, 1);
   assert.equal(s.byType.feature.open, 1);
+});
+
+/* ---------------- public search reaches sub-tasks (VEC-411) ---------------- */
+
+const st = (id, stage) => ({ id, name: id === D ? "Done" : "Status", color: "#888", stage });
+const SS = st(S, "started");
+const SD = st(D, "done");
+const task = (n, title, status = SS) => ({ key: `TPA-${n}`, title, type: "feature", status, priority: 0, description: "", createdAt: "", updatedAt: "", progress: null });
+const sub = (n, title, parent, status = SS) => ({ key: `TPA-${n}`, title, status, parentKey: `TPA-${parent}` });
+const keys = (rows) => rows.map((r) => `${r.kind}:${r.kind === "task" ? r.task.key : r.subtask.key}`);
+
+test("shapePublicSubtaskEntry adds the parent key and nothing else", () => {
+  const status = { id: S, name: "In Progress", color: "#f5a524", stage: "started" };
+  const doc = { number: 455, title: "Fold sub-tasks", statusId: S, parentId: ORG, assigneeId: OTHER, description: "<p>x</p>", parentNumber: 451 };
+  const e = shapePublicSubtaskEntry(doc, 451, "TPA", new Map([[S, status]]));
+  assert.deepEqual(e, { key: "TPA-455", title: "Fold sub-tasks", status, parentKey: "TPA-451" });
+  assert.ok(!JSON.stringify(e).includes(ORG) && !JSON.stringify(e).includes(OTHER));
+});
+
+test("publicListRows: no query lists top-level tasks only, one row per request", () => {
+  const tasks = [task(451, "Bot vs human tasks"), task(460, "Other")];
+  const subs = [sub(455, "Fold sub-tasks", 451), sub(452, "Add parentId", 451)];
+  assert.deepEqual(keys(publicListRows(tasks, subs, "", "")), ["task:TPA-451", "task:TPA-460"]);
+  assert.deepEqual(keys(publicListRows(tasks, subs, "   ", "")), ["task:TPA-451", "task:TPA-460"]);
+});
+
+test("publicListRows: a sub-task matching by title or key shows in its request's place when the request doesn't match", () => {
+  const tasks = [task(460, "Other"), task(451, "Bot vs human tasks"), task(470, "Last")];
+  const subs = [sub(455, "Fold sub-tasks", 451), sub(452, "Fold parent links", 451), sub(453, "Unrelated", 451)];
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold SUB", "")), ["subtask:TPA-455"]);
+  // Several matches of one request, by number, where the request sat in the list.
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold", "")), ["subtask:TPA-452", "subtask:TPA-455"]);
+  assert.deepEqual(keys(publicListRows(tasks, subs, "tpa-453", "")), ["subtask:TPA-453"]);
+  const row = publicListRows(tasks, subs, "Fold sub-tasks", "")[0];
+  assert.equal(row.subtask.parentKey, "TPA-451");
+});
+
+test("publicListRows: a matching request is shown once, its matching sub-tasks aren't repeated", () => {
+  const tasks = [task(451, "Fold everything"), task(460, "Other")];
+  const subs = [sub(455, "Fold sub-tasks", 451)];
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold", "")), ["task:TPA-451"]);
+  // TPA-45 matches the request's key as well as the sub-task's: the request alone.
+  assert.deepEqual(keys(publicListRows(tasks, subs, "tpa-45", "")), ["task:TPA-451"]);
+});
+
+test("publicListRows: status filter applies to sub-task rows too; filtered-out request lets its sub-tasks through", () => {
+  const tasks = [task(451, "Fold all", SD), task(460, "Other")];
+  const subs = [sub(455, "Fold sub-tasks", 451, SS), sub(456, "Fold done", 451, SD)];
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold", "open")), ["subtask:TPA-455"]);
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold", D)), ["task:TPA-451"]);
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold", S)), ["subtask:TPA-455"]);
+});
+
+test("publicListRows: sub-tasks of requests beyond the list come last; no match is empty", () => {
+  const tasks = [task(460, "Other")];
+  const subs = [sub(455, "Fold sub-tasks", 451), sub(461, "Fold child", 460)];
+  assert.deepEqual(keys(publicListRows(tasks, subs, "fold", "")), ["subtask:TPA-461", "subtask:TPA-455"]);
+  assert.deepEqual(publicListRows(tasks, subs, "zzz", ""), []);
+});
+
+test("passesPublicStatusFilter: all, open (not done or cancelled), one status id", () => {
+  assert.equal(passesPublicStatusFilter(SS, ""), true);
+  assert.equal(passesPublicStatusFilter(null, ""), true);
+  assert.equal(passesPublicStatusFilter(SD, "open"), false);
+  assert.equal(passesPublicStatusFilter(st(C, "cancelled"), "open"), false);
+  assert.equal(passesPublicStatusFilter(null, "open"), true);
+  assert.equal(passesPublicStatusFilter(SS, S), true);
+  assert.equal(passesPublicStatusFilter(SS, D), false);
 });

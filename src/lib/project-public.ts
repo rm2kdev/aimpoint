@@ -16,6 +16,7 @@ import {
   PUBLIC_RATE_LIMITS,
   PUBLIC_STATS_RATE_LIMIT,
   PUBLIC_SUBTASKS_MAX,
+  PUBLIC_SUBTASK_INDEX_MAX,
   PUBLIC_TASKS_MAX,
   PUBLIC_UNAVAILABLE,
   PUBLIC_UPLOAD_FILE,
@@ -27,6 +28,7 @@ import {
   rewritePublicImages,
   shapePublicComment,
   shapePublicSubtask,
+  shapePublicSubtaskEntry,
   shapePublicTask,
   computeStats,
   publicProgress,
@@ -252,6 +254,32 @@ async function childProgress(project: ProjectRef, parentIds: ObjectId[], statuse
   return publicProgress(groups.map((g) => ({ parentId: g._id.parentId, stage: stageOf.get(String(g._id.statusId)) ?? null, count: g.count })));
 }
 
+/**
+ * The public list's sub-task search index (VEC-411): unarchived tasks of this project whose parent is visible here
+ * (same project, unarchived), i.e. exactly the tasks topLevelStages folds away. Only number, title, status and the
+ * parent's number are read; newest PUBLIC_SUBTASK_INDEX_MAX when there are more.
+ */
+async function subtaskIndex(project: ProjectRef): Promise<{ number: number; title: string; statusId: ObjectId; parentNumber: number }[]> {
+  const c = await cols();
+  return c.tasks
+    .aggregate<{ number: number; title: string; statusId: ObjectId; parentNumber: number }>([
+      { $match: { orgId: project.orgId, projectId: project._id, archivedAt: null, parentId: { $type: "objectId" } } },
+      {
+        $lookup: {
+          from: "tasks",
+          let: { pid: "$parentId" },
+          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$pid"] } } }, { $match: { orgId: project.orgId, projectId: project._id, archivedAt: null } }, { $project: { _id: 0, number: 1 } }],
+          as: "_parent",
+        },
+      },
+      { $match: { "_parent.0": { $exists: true } } },
+      { $sort: { number: -1 } },
+      { $limit: PUBLIC_SUBTASK_INDEX_MAX },
+      { $project: { _id: 0, number: 1, title: 1, statusId: 1, parentNumber: { $first: "$_parent.number" } } },
+    ])
+    .toArray();
+}
+
 async function viewParts(f: Found) {
   const statuses = await loadStatuses(f.project.orgId, f.project._id);
   const byId = new Map(statuses.map((s) => [s._id.toHexString(), toPublicStatus(s)]));
@@ -271,7 +299,8 @@ async function viewParts(f: Found) {
  * The public view of a project: null unless it's public; `{available: false}` (and nothing else) while the plan lacks
  * the feature. Otherwise its name/key/colour, statuses, the statuses open to submissions, and its non-archived
  * top-level tasks (VEC-409: sub-tasks fold under their request, see topLevelStages; newest activity first, at most
- * PUBLIC_TASKS_MAX) in the allow-listed public shape with their sub-task progress. No member, bot, activity, flow,
+ * PUBLIC_TASKS_MAX) in the allow-listed public shape with their sub-task progress, plus the folded sub-tasks as a
+ * search index (VEC-411: key, title, public status, parent key; see subtaskIndex). No member, bot, activity, flow,
  * claim, parent id, project metadata or other project data is ever read into it.
  */
 export async function loadPublicProject(slug: unknown, key: unknown): Promise<PublicProjectResult | null> {
@@ -279,7 +308,7 @@ export async function loadPublicProject(slug: unknown, key: unknown): Promise<Pu
   if (!f) return null;
   if (!f.available) return { available: false };
   const c = await cols();
-  const [{ statuses, byId, allowed, shapeAll }, docs, stats] = await Promise.all([
+  const [{ statuses, byId, allowed, shapeAll }, docs, subDocs, stats] = await Promise.all([
     viewParts(f),
     c.tasks
       .aggregate<PublicTaskDoc>([
@@ -290,6 +319,7 @@ export async function loadPublicProject(slug: unknown, key: unknown): Promise<Pu
         { $project: TASK_FIELDS },
       ])
       .toArray(),
+    subtaskIndex(f.project),
     // Header counts (VEC-364) only when the admin opted into public statistics.
     f.project.publicAccess?.showStats ? projectStats(f.project) : null,
   ]);
@@ -301,6 +331,7 @@ export async function loadPublicProject(slug: unknown, key: unknown): Promise<Pu
     showComments: !!f.project.publicAccess?.showComments,
     tasks: await shapeAll(docs.slice(0, PUBLIC_TASKS_MAX)),
     truncated: docs.length > PUBLIC_TASKS_MAX,
+    subtasks: subDocs.map((d) => shapePublicSubtaskEntry(d, d.parentNumber, f.project.key, byId)),
     stats: stats && { open: stats.open, inProgress: stats.inProgress, done: stats.done, total: stats.total },
   };
   return { available: true, view };

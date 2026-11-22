@@ -1,4 +1,4 @@
-import type { FORM_DESTINATION_STAGES, Priority, PublicComment, PublicProgress, PublicStatus, PublicSubtask, PublicTask, StatusCategory, TaskType } from "./types";
+import type { FORM_DESTINATION_STAGES, Priority, PublicComment, PublicProgress, PublicStatus, PublicSubtask, PublicSubtaskEntry, PublicTask, StatusCategory, TaskType } from "./types";
 
 /**
  * Public projects (VEC-255): the pure rules, free of server-only imports so `project-public-core.test.mjs` runs them
@@ -25,6 +25,8 @@ export const PUBLIC_RATE_LIMITS = {
 export const PUBLIC_TASKS_MAX = 500;
 /** Sub-tasks listed on one public task view (VEC-409). */
 export const PUBLIC_SUBTASKS_MAX = 200;
+/** Sub-tasks carried in one public list for search (VEC-411), newest first when there are more. */
+export const PUBLIC_SUBTASK_INDEX_MAX = 2000;
 /** Comments returned per task in the public view. */
 export const PUBLIC_COMMENTS_MAX = 200;
 
@@ -183,6 +185,63 @@ export function shapePublicTask(t: TaskLike, projectKey: string, statuses: Reado
 export function shapePublicSubtask(t: Pick<TaskLike, "number" | "title" | "statusId">, projectKey: string, statuses: ReadonlyMap<string, PublicStatus>): PublicSubtask {
   const status = statuses.get(String(t.statusId)) ?? null;
   return { key: `${projectKey}-${t.number}`, title: t.title, status: status ? { ...status } : null };
+}
+
+/**
+ * One entry of the public list's sub-task search index (VEC-411): shapePublicSubtask plus the parent's key, built
+ * from the parent's number. No parent id or any other field leaves the server.
+ */
+export function shapePublicSubtaskEntry(
+  t: Pick<TaskLike, "number" | "title" | "statusId">,
+  parentNumber: number,
+  projectKey: string,
+  statuses: ReadonlyMap<string, PublicStatus>,
+): PublicSubtaskEntry {
+  return { ...shapePublicSubtask(t, projectKey, statuses), parentKey: `${projectKey}-${parentNumber}` };
+}
+
+/** A row of the public list: a top-level task, or (only while searching) a sub-task whose request doesn't match. */
+export type PublicListRow = { kind: "task"; task: PublicTask } | { kind: "subtask"; subtask: PublicSubtaskEntry };
+
+/** "" = every status, "open" = not done or cancelled, otherwise one status id. */
+export function passesPublicStatusFilter(status: PublicStatus | null, filter: string): boolean {
+  if (!filter) return true;
+  const closed = status?.stage === "done" || status?.stage === "cancelled";
+  if (filter === "open") return !closed;
+  return status?.id === filter;
+}
+
+const keyNumber = (key: string) => Number(key.slice(key.lastIndexOf("-") + 1)) || 0;
+
+/**
+ * The public list's rows for a search box query and status filter (VEC-411). Without a query: the top-level tasks
+ * passing the filter, nothing else (one row per request). With one: top-level tasks whose title or key contains it
+ * (case-insensitive), and in place of each request that doesn't match, its sub-tasks that do (and pass the filter),
+ * by number; matching sub-tasks of requests not in `tasks` (beyond the list limit) come last. A sub-task whose request
+ * is shown is reached through that request, so it isn't repeated.
+ */
+export function publicListRows(tasks: readonly PublicTask[], subtasks: readonly PublicSubtaskEntry[], query: string, filter: string): PublicListRow[] {
+  const q = query.trim().toLowerCase();
+  const hit = (t: { title: string; key: string }) => !q || t.title.toLowerCase().includes(q) || t.key.toLowerCase().includes(q);
+  const rows: PublicListRow[] = [];
+  const byParent = new Map<string, PublicSubtaskEntry[]>();
+  if (q) {
+    for (const s of subtasks) {
+      if (!hit(s) || !passesPublicStatusFilter(s.status, filter)) continue;
+      const list = byParent.get(s.parentKey) ?? [];
+      list.push(s);
+      byParent.set(s.parentKey, list);
+    }
+    for (const list of byParent.values()) list.sort((a, b) => keyNumber(a.key) - keyNumber(b.key));
+  }
+  const listed = new Set<string>();
+  for (const t of tasks) {
+    listed.add(t.key);
+    if (hit(t) && passesPublicStatusFilter(t.status, filter)) rows.push({ kind: "task", task: t });
+    else for (const s of byParent.get(t.key) ?? []) rows.push({ kind: "subtask", subtask: s });
+  }
+  for (const [parentKey, list] of byParent) if (!listed.has(parentKey)) for (const s of list) rows.push({ kind: "subtask", subtask: s });
+  return rows;
 }
 
 /** One row of the sub-task count aggregation: how many visible sub-tasks of one parent sit in one status. */

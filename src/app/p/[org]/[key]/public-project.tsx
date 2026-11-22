@@ -13,10 +13,11 @@ import { Input } from "@/components/ui/input";
 import { submitPublicTicket } from "@/app/actions/project-public";
 import { PRIORITY_LABELS, timeAgo } from "@/lib/format";
 import { statusTrack } from "@/lib/status-track";
-import { type PublicComment, type PublicProgress, type PublicProjectView, type PublicStatus, type PublicSubtask, type PublicTask, type Status, type TaskType } from "@/lib/types";
+import { type PublicComment, type PublicProgress, type PublicProjectView, type PublicStatus, type PublicSubtask, type PublicSubtaskEntry, type PublicTask, type Status, type TaskType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { loginHref, publicPageHref, signupHref } from "./href";
 import { TASK_DESCRIPTION_MAX } from "@/lib/task-intake-core";
+import { publicListRows } from "@/lib/project-public-core";
 
 type Mode = "all" | "mine" | "task" | "submit";
 
@@ -46,6 +47,11 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
   const statuses = useMemo(() => view.statuses.map(asStatus), [view.statuses]);
   const canSubmit = view.submitStatuses.length > 0;
   const here = publicPageHref(slug, key, { view: p.mode === "mine" ? "mine" : null, task: p.detail?.task.key });
+  // VEC-411: in My submissions, search reaches the sub-tasks of the account's own requests only.
+  const mineSubtasks = useMemo(() => {
+    const keys = new Set((p.mine ?? []).map((t) => t.key));
+    return view.subtasks.filter((s) => keys.has(s.parentKey));
+  }, [p.mine, view.subtasks]);
   const submitHref = p.me ? publicPageHref(slug, key, { submit: true }) : loginHref(publicPageHref(slug, key, { submit: true }));
 
   return (
@@ -137,13 +143,23 @@ export function PublicProjectScreen(p: PublicProjectScreenProps) {
           <SubmitForm slug={slug} projectKey={key} submitStatuses={view.submitStatuses} statuses={statuses} />
         )}
         {p.mode === "all" && (
-          <TaskList slug={slug} projectKey={key} tasks={view.tasks} statuses={statuses} created={p.created} truncated={view.truncated} empty="No tickets yet." />
+          <TaskList
+            slug={slug}
+            projectKey={key}
+            tasks={view.tasks}
+            subtasks={view.subtasks}
+            statuses={statuses}
+            created={p.created}
+            truncated={view.truncated}
+            empty="No tickets yet."
+          />
         )}
         {p.mode === "mine" && (
           <TaskList
             slug={slug}
             projectKey={key}
             tasks={p.mine ?? []}
+            subtasks={mineSubtasks}
             statuses={statuses}
             created={p.created}
             truncated={false}
@@ -192,6 +208,7 @@ function TaskList({
   slug,
   projectKey,
   tasks,
+  subtasks,
   statuses,
   created,
   truncated,
@@ -200,6 +217,8 @@ function TaskList({
   slug: string;
   projectKey: string;
   tasks: PublicTask[];
+  /** VEC-411: folded sub-tasks, listed only when the query matches one and not its request. */
+  subtasks: PublicSubtaskEntry[];
   statuses: Status[];
   created: string | null;
   truncated: boolean;
@@ -214,13 +233,8 @@ function TaskList({
     return m;
   }, [tasks]);
   const openCount = tasks.filter((t) => !CLOSED.has(t.status?.stage ?? "")).length;
-  const q = query.trim().toLowerCase();
-  const shown = tasks.filter((t) => {
-    if (filter === "open" && CLOSED.has(t.status?.stage ?? "")) return false;
-    if (filter && filter !== "open" && t.status?.id !== filter) return false;
-    if (q && !t.title.toLowerCase().includes(q) && !t.key.toLowerCase().includes(q)) return false;
-    return true;
-  });
+  const shown = useMemo(() => publicListRows(tasks, subtasks, query, filter), [tasks, subtasks, query, filter]);
+  const titleByKey = useMemo(() => new Map(tasks.map((t) => [t.key, t.title])), [tasks]);
   const statusById = new Map(statuses.map((s) => [s.id, s]));
 
   if (!tasks.length) return <p className="mt-10 text-center text-[13.5px] text-muted-foreground">{empty}</p>;
@@ -248,20 +262,47 @@ function TaskList({
         </div>
       </div>
       <ul className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border bg-background" data-public-list>
-        {shown.map((t) => (
-          <li key={t.key} data-task-key={t.key} className={cn(created === t.key && "bg-chip")}>
-            <Link href={publicPageHref(slug, projectKey, { task: t.key })} className="flex min-h-11 items-center gap-2.5 px-3.5 py-2.5 hover:bg-chip/60">
-              <StatusRing status={t.status ? statusById.get(t.status.id) : undefined} statuses={statuses} size={16} />
-              <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{t.key}</span>
-              <span className="min-w-0 flex-1 truncate text-[13.5px]">{t.title}</span>
-              {t.progress && <ProgressChip progress={t.progress} />}
-              <TypeTag type={t.type} className="hidden sm:inline-flex" />
-              <span className="hidden w-14 shrink-0 text-right text-[12px] text-faint sm:block" suppressHydrationWarning>
-                {timeAgo(t.updatedAt)}
-              </span>
-            </Link>
-          </li>
-        ))}
+        {shown.map((row) => {
+          if (row.kind === "subtask") {
+            const s = row.subtask;
+            const parentTitle = titleByKey.get(s.parentKey);
+            return (
+              <li key={s.key} data-task-key={s.key} data-public-subtask-match className="relative flex min-h-11 items-center gap-2.5 px-3.5 py-2 hover:bg-chip/60">
+                <StatusRing status={s.status ? statusById.get(s.status.id) : undefined} statuses={statuses} size={16} />
+                <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{s.key}</span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  {/* Stretched link: the whole row opens the sub-task; the Part of link sits above it. */}
+                  <Link href={publicPageHref(slug, projectKey, { task: s.key })} className="truncate text-[13.5px] after:absolute after:inset-0">
+                    {s.title}
+                  </Link>
+                  <span data-public-parent className="relative z-10 flex min-w-0 max-w-full items-center gap-1 self-start text-[12px] text-muted-foreground">
+                    <span className="shrink-0">Part of</span>
+                    <Link href={publicPageHref(slug, projectKey, { task: s.parentKey })} title={parentTitle} className="shrink-0 font-mono text-[11.5px] hover:text-foreground hover:underline">
+                      {s.parentKey}
+                    </Link>
+                    {parentTitle && <span className="truncate text-faint">{parentTitle}</span>}
+                  </span>
+                </span>
+                <span className="hidden shrink-0 text-[12px] text-faint sm:block">{s.status?.name ?? ""}</span>
+              </li>
+            );
+          }
+          const t = row.task;
+          return (
+            <li key={t.key} data-task-key={t.key} className={cn(created === t.key && "bg-chip")}>
+              <Link href={publicPageHref(slug, projectKey, { task: t.key })} className="flex min-h-11 items-center gap-2.5 px-3.5 py-2.5 hover:bg-chip/60">
+                <StatusRing status={t.status ? statusById.get(t.status.id) : undefined} statuses={statuses} size={16} />
+                <span className="w-[68px] shrink-0 font-mono text-[12px] text-faint">{t.key}</span>
+                <span className="min-w-0 flex-1 truncate text-[13.5px]">{t.title}</span>
+                {t.progress && <ProgressChip progress={t.progress} />}
+                <TypeTag type={t.type} className="hidden sm:inline-flex" />
+                <span className="hidden w-14 shrink-0 text-right text-[12px] text-faint sm:block" suppressHydrationWarning>
+                  {timeAgo(t.updatedAt)}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
         {!shown.length && <li className="px-3.5 py-6 text-center text-[13px] text-muted-foreground">No tickets match.</li>}
       </ul>
       {truncated && <p className="mt-2 text-[12px] text-faint">Showing the {tasks.length} most recently updated tickets.</p>}
