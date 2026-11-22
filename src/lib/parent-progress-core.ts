@@ -84,3 +84,13 @@ export function parentProgressText(reason: ParentProgressReason | null | undefin
   const which = subtaskKey ? `sub-task ${subtaskKey}` : "a sub-task";
   return reason === "done" ? ` (${which} is done)` : ` (${which} started)`;
 }
+
+/**
+ * VEC-446: the set_status reply when the write went into `requested` (a not-started status) but VEC-444's
+ * startParentOnOwnStatus moved the task straight on to `final`: "VEC-12 is now In Progress: moved to Todo, then
+ * straight on to In Progress because sub-task VEC-13 already started."
+ */
+export function movedOnReply(key: string, requested: string, final: string, reason: ParentProgressReason | null | undefined, subtaskKey: string | null | undefined): string {
+  const which = subtaskKey ? `sub-task ${subtaskKey}` : "a sub-task";
+  return `${key} is now ${final}: moved to ${requested}, then straight on to ${final} because ${which} ${reason === "done" ? "is already done" : "already started"}.`;
+}

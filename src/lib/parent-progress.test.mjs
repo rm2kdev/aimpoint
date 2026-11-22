@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parentProgress, parentTarget, parentProgressText, pickActiveSubtask } from "./parent-progress-core.ts";
+import { movedOnReply, parentProgress, parentTarget, parentProgressText, pickActiveSubtask } from "./parent-progress-core.ts";
 
 const move = (parentStage, subtaskTo, extra = {}) => parentProgress({ parentStage, subtaskTo, ...extra });
 
@@ -132,4 +132,14 @@ test("complete_task, set_status and flow advances write a task's status only thr
     const src = readFileSync(new URL(file, import.meta.url), "utf8");
     assert.doesNotMatch(src, /\$set:\s*\{[^}]*\bstatusId\b/, file);
   }
+});
+
+test("VEC-446: set_status reply names the final status and why it moved on", () => {
+  assert.equal(movedOnReply("DEF-21", "Todo", "In Progress", "started", "DEF-22"), "DEF-21 is now In Progress: moved to Todo, then straight on to In Progress because sub-task DEF-22 already started.");
+  assert.equal(movedOnReply("DEF-21", "Todo", "In Progress", "done", "DEF-23"), "DEF-21 is now In Progress: moved to Todo, then straight on to In Progress because sub-task DEF-23 is already done.");
+  assert.equal(movedOnReply("DEF-21", "Todo", "Doing", "started", null), "DEF-21 is now Doing: moved to Todo, then straight on to Doing because a sub-task already started.");
+  // set_status only uses it when the task ended somewhere other than the requested status.
+  const src = readFileSync(new URL("./mcp/server.ts", import.meta.url), "utf8");
+  assert.match(src, /t\.statusId !== st\._id\.toHexString\(\) \? await movedOnNote\(/);
+  assert.match(src, /\$\{movedOn \?\? `\$\{t\.key\} is now \$\{st\.name\}\.`\}/);
 });

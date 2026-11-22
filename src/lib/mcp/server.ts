@@ -18,6 +18,7 @@ import { botOrgFlows } from "@/lib/flow-bot-view";
 import { botNewTaskViews, NEW_TASKS_NOTE } from "@/lib/project-defaults";
 import { notify } from "@/lib/notifications";
 import { MCP_TOOLS, type ToolInfo } from "@/lib/mcp/catalog";
+import { PARENT_PROGRESS_NOTES, movedOnReply } from "@/lib/parent-progress-core";
 import { stopRefusal } from "@/lib/stop-guard";
 import { billingOn, orgLockMessage } from "@/lib/billing";
 import { computeAnalytics } from "@/lib/analytics";
@@ -410,6 +411,23 @@ async function whereNow(ctx: McpCtx, taskId: ObjectId): Promise<string> {
   const step = flow?.current && flow.status ? ` (the ${flow.current.name} step of its flow)` : "";
   const who = t.assigneeId ? (t.assigneeId.equals(ctx.bot._id) ? "assigned to you" : `assigned to ${personName(dir, t.assigneeId)}`) : "with nobody assigned";
   return ` It's in ${st?.name ?? "its status"}${step}, ${who}.`;
+}
+
+/**
+ * VEC-446: set_status wrote `requested` but the task ended in `finalStatusId`. When the parent-progress move did it
+ * (its subtask_started / subtask_done activity from `requested`), the reply line naming both and the sub-task; else null.
+ */
+async function movedOnNote(taskId: ObjectId, key: string, requested: Pick<StatusDoc, "_id" | "name">, finalStatusId: string): Promise<string | null> {
+  const c = await cols();
+  const [act, final] = await Promise.all([
+    c.activity.findOne(
+      { taskId, kind: "status", from: requested._id.toHexString(), to: finalStatusId, note: { $in: [...PARENT_PROGRESS_NOTES] } },
+      { sort: { createdAt: -1 }, projection: { note: 1, subtask: 1 } },
+    ),
+    ObjectId.isValid(finalStatusId) ? c.statuses.findOne({ _id: new ObjectId(finalStatusId) }, { projection: { name: 1 } }) : null,
+  ]);
+  if (!act || !final) return null;
+  return movedOnReply(key, requested.name, final.name, act.note === "subtask_done" ? "done" : "started", act.subtask);
 }
 
 /** The task sits on a flow step that someone other than `botId` now owns (VEC-175). */
@@ -1004,7 +1022,9 @@ const TOOLS: Record<string, ToolImpl> = {
       const where = stepMoved ? await whereNow(ctx, task._id) : "";
       const working = mine && !!(await (await cols()).agentClaims.findOne({ taskId: task._id, botId: ctx.bot._id, kind: { $ne: "triage" }, state: "in_progress" }, { projection: { _id: 1 } }));
       const carryOn = !mine ? "" : working ? " You own that step too: carry on with it here, and finish with complete_task (without a status to hand it on)." : " You own that step too: you'll be handed it for that step.";
-      return { content: [text(`${t.key} is now ${st.name}.${where}${carryOn}${pausedNote}${blockersNote(assignedBlockersOf(t))}`)] };
+      // A not-started status a started or done sub-task moved straight on (VEC-444): name where it ended and why (VEC-446).
+      const movedOn = t.statusId !== st._id.toHexString() ? await movedOnNote(task._id, t.key, st, t.statusId) : null;
+      return { content: [text(`${movedOn ?? `${t.key} is now ${st.name}.`}${where}${carryOn}${pausedNote}${blockersNote(assignedBlockersOf(t))}`)] };
     },
   },
 
