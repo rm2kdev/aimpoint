@@ -498,6 +498,15 @@ export interface TaskDoc {
    * close-out / triage wake-up goes out for it and the bot's claim sits in state "stopped". Resume clears it.
    */
   stopped?: TaskStopDoc | null;
+  /**
+   * VEC-407: the task this one was spawned from (lib/parent-link-core.ts): same org, one level only (a parent never has
+   * a parent). Set when a bot creates a task while it works on another (its in-progress claim), or from an explicit
+   * `parent` on create; backfilled by the `2026-11-task-parent` migration. Archiving the parent keeps the link (it
+   * points to an archived task, and restoring it regroups); deleting it clears the link on its sub-tasks.
+   */
+  parentId?: ObjectId | null;
+  /** VEC-407: created by a bot (stamped at create, backfilled by the same migration). Missing = a person or form. */
+  createdByBot?: boolean;
   createdBy: ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -1049,9 +1058,23 @@ export interface Task {
   source?: TaskSource | null;
   /** VEC-215: a person stopped the bot's work on it; Resume hands it back. Null / absent = not stopped. */
   stopped?: TaskStop | null;
+  /** VEC-407: the task this one was spawned from (one level), its key, or null for a top-level task. */
+  parentId: string | null;
+  parentKey: string | null;
+  /** VEC-407: who created it: a person (members and public-page submitters), a bot, or an external form. */
+  createdByKind: TaskCreatorKind;
+  /** VEC-407: on a parent, its unarchived sub-tasks and how many are closed; null when it has none. */
+  children: TaskChildren | null;
   createdBy: string;
   createdAt: string;
   updatedAt: string;
+}
+export type TaskCreatorKind = "user" | "bot" | "form";
+/** VEC-407: a parent's sub-task counts (archived sub-tasks are left out). */
+export interface TaskChildren {
+  total: number;
+  done: number;
+  cancelled: number;
 }
 /** Client-safe TaskSourceDoc. */
 export type TaskSource = FormTaskSource | PublicTaskSource;

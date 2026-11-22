@@ -259,12 +259,13 @@ async function taskResult(ctx: McpCtx, task: TaskDoc, project: ProjectDoc, headl
 /** Rows for list views. */
 async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
   const c = await cols();
-  const [dir, statuses, projects, claims, waitingKeys] = await Promise.all([
+  const [dir, statuses, projects, claims, waitingKeys, parentKeys] = await Promise.all([
     loadDirectory(ctx.org._id),
     c.statuses.find({ orgId: ctx.org._id }).toArray(),
     c.projects.find({ orgId: ctx.org._id }).toArray(),
     c.agentClaims.find({ botId: ctx.bot._id, taskId: { $in: tasks.map((t) => t._id) } }).toArray(),
     taskKeys(ctx.org._id, tasks.flatMap((t) => t.waitingOn ?? [])),
+    taskKeys(ctx.org._id, tasks.flatMap((t) => (t.parentId ? [t.parentId] : []))),
   ]);
   const st = new Map(statuses.map((s) => [s._id.toHexString(), s.name]));
   const pk = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
@@ -288,6 +289,8 @@ async function summarise(ctx: McpCtx, tasks: TaskDoc[]) {
       /** Parked in a backlog-stage status (VEC-274): not work yet, check_for_work won't hand it out. */
       ...(isParkedTask ? { parked: true, notReadyReason: parkedReason(st.get(t.statusId.toHexString()) ?? "Backlog") } : {}),
       yourState: cl.get(t._id.toHexString()) ?? null,
+      /** VEC-407: the task it was spawned from (null = top-level). */
+      parent: t.parentId ? (parentKeys.get(t.parentId.toHexString()) ?? null) : null,
       updatedAt: t.updatedAt.toISOString(),
       url: taskUrl(ctx.origin, ctx.org, key),
     };
@@ -597,7 +600,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   check_for_triage: {
     description:
-      "\"Is there anything to triage?\" Returns ONE task waiting in a Triage status (oldest first) that no other bot is triaging, with its full context and the workspace (projects with their own statuses, people and bots), and marks it as being triaged by you so no other bot is handed it. Your job is to break it into the concrete tasks needed to deliver it, created with create_task and chained with `depends_on` so the work happens in a logical order, then make the original task depend on them (update_task `depends_on`), write your plan on it with update_task `plan` (leave its description as the reporter wrote it), and move it out of Triage with complete_task. You stay its triager: when the tasks it depends on are all done, you're called back (a push wake-up, or `kind: \"closeout\"` on check_for_work) to summarise what was delivered and close it out. While you triage it you can edit it like its creator, except its description (that's the reporter's; your write-up goes in `plan`) and archiving. release_task hands it back. Returns `kind: \"idle\"` when nothing is waiting.",
+      "\"Is there anything to triage?\" Returns ONE task waiting in a Triage status (oldest first) that no other bot is triaging, with its full context and the workspace (projects with their own statuses, people and bots), and marks it as being triaged by you so no other bot is handed it. Your job is to break it into the concrete tasks needed to deliver it, created with create_task (with `parent` set to its key, so they're grouped under it) and chained with `depends_on` so the work happens in a logical order, then make the original task depend on them (update_task `depends_on`), write your plan on it with update_task `plan` (leave its description as the reporter wrote it), and move it out of Triage with complete_task. You stay its triager: when the tasks it depends on are all done, you're called back (a push wake-up, or `kind: \"closeout\"` on check_for_work) to summarise what was delivered and close it out. While you triage it you can edit it like its creator, except its description (that's the reporter's; your write-up goes in `plan`) and archiving. release_task hands it back. Returns `kind: \"idle\"` when nothing is waiting.",
     inputSchema: { type: "object", properties: { include_images: IMAGES_ARG }, additionalProperties: false },
     run: async (args, ctx) => {
       const c = await cols();
@@ -859,7 +862,7 @@ const TOOLS: Record<string, ToolImpl> = {
   get_task: {
     readOnly: true,
     description:
-      "Everything about one task: project, status, priority, assignee, due date, description (Markdown, the reporter's original), `plan` (the triager's plan, Markdown, null when none), images (attached inline), every comment and the activity history, and its place in its project's flow (`flow`: the current step with its owner and instructions, the next step and who gets it, who has it now, and `howToFinish`). Doesn't change any state.",
+      "Everything about one task: project, status, priority, assignee, due date, description (Markdown, the reporter's original), `plan` (the triager's plan, Markdown, null when none), images (attached inline), every comment and the activity history, its place in its project's flow (`flow`: the current step with its owner and instructions, the next step and who gets it, who has it now, and `howToFinish`), `parent` (the task it was spawned from, key/title/status, null when top-level) and `children` (the sub-tasks spawned from it, key/title/status). Doesn't change any state.",
     inputSchema: { type: "object", properties: { task: TASK_ARG, include_images: IMAGES_ARG }, required: ["task"], additionalProperties: false },
     run: async (args, ctx) => {
       const { task, project } = await findTask(ctx, str(args, "task", true)!);
@@ -869,7 +872,8 @@ const TOOLS: Record<string, ToolImpl> = {
 
   list_tasks: {
     readOnly: true,
-    description: "Find tasks. Filters combine. Archived tasks are left out unless include_archived is true. Most recently updated first.",
+    description:
+      "Find tasks. Filters combine. Archived tasks are left out unless include_archived is true. Most recently updated first. Each entry's `parent` is the key of the task it was spawned from (null = top-level); `top_level: true` leaves sub-tasks out, `parent: \"WEB-12\"` lists WEB-12's sub-tasks.",
     inputSchema: {
       type: "object",
       properties: {
@@ -877,6 +881,8 @@ const TOOLS: Record<string, ToolImpl> = {
         status: { type: "string", description: "Status name or id. With `project`, a status of that project; without, every project's status of that name." },
         assignee: { type: "string", description: '"me", "none", a person\'s name or email, a bot\'s name, or an id.' },
         query: { type: "string", description: "Text to find in titles." },
+        top_level: { type: "boolean", default: false, description: "Only tasks with no parent: people's requests and umbrellas, without the sub-tasks bots spawned from them." },
+        parent: { type: "string", description: "Only the sub-tasks of this task (key like WEB-12, or id)." },
         include_archived: { type: "boolean", default: false },
         limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
       },
@@ -893,6 +899,11 @@ const TOOLS: Record<string, ToolImpl> = {
       if (assignee) filter.assigneeId = assignee.toLowerCase() === "none" ? null : new ObjectId(resolvePerson(await loadDirectory(ctx.org._id), ctx.bot._id, assignee));
       const query = str(args, "query");
       if (query) filter.title = { $regex: query.slice(0, 100).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" };
+      const parent = str(args, "parent");
+      const topLevel = bool(args, "top_level", false);
+      if (parent && topLevel) throw new ToolInputError("Pass `top_level` or `parent`, not both: sub-tasks of a parent aren't top-level.");
+      if (parent) filter.parentId = (await lookupTask(ctx, parent)).task._id;
+      else if (topLevel) filter.parentId = null;
       const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200);
       const docs = await (await cols()).tasks.find(filter, { projection: { description: 0 } }).sort({ updatedAt: -1 }).limit(limit).toArray();
       return { content: [json({ tasks: await summarise(ctx, docs as TaskDoc[]) })] };
@@ -1082,7 +1093,7 @@ const TOOLS: Record<string, ToolImpl> = {
 
   create_task: {
     description:
-      "Create a task in a project. You become its creator, so you can edit it fully later. Description accepts Markdown. Use `depends_on` to chain work: e.g. create \"Log in\", then \"Create sandbox data\" depending on it, then \"Export report\" depending on that. Each assignee is handed their task only when everything it depends on is done. A task you file that blocks your own work (a bug found while verifying, a missing piece) needs an owner: pass `assignee` (\"me\" by default, or the person or bot who should do it). Leaving `assignee` out is only for triage sub-tasks whose owner is genuinely unclear; a blocker nobody owns wakes nobody, so if a task assigned to you waits on one, Aimpoint assigns it to you.",
+      "Create a task in a project. You become its creator, so you can edit it fully later. Description accepts Markdown. Use `depends_on` to chain work: e.g. create \"Log in\", then \"Create sandbox data\" depending on it, then \"Export report\" depending on that. Each assignee is handed their task only when everything it depends on is done. A task you file that blocks your own work (a bug found while verifying, a missing piece) needs an owner: pass `assignee` (\"me\" by default, or the person or bot who should do it). Leaving `assignee` out is only for triage sub-tasks whose owner is genuinely unclear; a blocker nobody owns wakes nobody, so if a task assigned to you waits on one, Aimpoint assigns it to you. Sub-tasks are grouped under the task they're filed from (`parent`), so people's lists show the request with its sub-tasks beneath it instead of beside it: when you're working on (or triaging) exactly one task, what you create goes under it automatically; working on several, pass `parent` with the task's key. Pass `parent` \"none\" for a task that stands on its own.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1099,6 +1110,11 @@ const TOOLS: Record<string, ToolImpl> = {
         priority: { type: "string", enum: ["none", "low", "medium", "high"] },
         due_date: { type: "string", description: "YYYY-MM-DD" },
         depends_on: DEPENDS_ARG,
+        parent: {
+          type: "string",
+          description:
+            'Key of the task this one is a sub-task of (e.g. the task you\'re triaging or working on), so it\'s grouped under it. One level only: a sub-task can\'t be a parent, so pass the top task. Omit to use the one task you\'re working on (none if you\'re on several); "none" = top-level.',
+        },
       },
       required: ["project", "title"],
       additionalProperties: false,
@@ -1117,19 +1133,30 @@ const TOOLS: Record<string, ToolImpl> = {
         description: args.description === undefined ? undefined : markdownToHtml(String(args.description)),
         dueDate: str(args, "due_date") ?? null,
         dependsOn: args.depends_on === undefined ? undefined : await resolveTaskIds(ctx, args.depends_on, "depends_on"),
+        parentId: await parentArg(ctx, args.parent),
       });
       const waiting = t.waitingOn.length ? await taskKeys(ctx.org._id, t.waitingOn.map((id) => new ObjectId(id))) : null;
       const note = waiting ? ` It waits on ${[...waiting.values()].join(", ")} and is handed to its assignee once ${waiting.size === 1 ? "that is" : "those are"} done.` : "";
       const owned = assignedBlockersOf(t);
+      const parentKey = t.parentId ? (await taskKeys(ctx.org._id, [new ObjectId(t.parentId)])).get(t.parentId) ?? null : null;
       return {
         content: [
-          text(`Created ${t.key} "${t.title}".${note}${blockersNote(owned)}`),
-          json({ key: t.key, id: t.id, url: taskUrl(ctx.origin, ctx.org, t.key), ready: !waiting, waitingOn: waiting ? [...waiting.values()] : [], ...(owned.length ? { assignedToYou: owned } : {}) }),
+          text(`Created ${t.key} "${t.title}"${parentKey ? ` under ${parentKey}` : ""}.${note}${blockersNote(owned)}`),
+          json({ key: t.key, id: t.id, url: taskUrl(ctx.origin, ctx.org, t.key), parent: parentKey, ready: !waiting, waitingOn: waiting ? [...waiting.values()] : [], ...(owned.length ? { assignedToYou: owned } : {}) }),
         ],
       };
     },
   },
 };
+
+/** create_task's `parent` (VEC-407): undefined = automatic, "none"/"" = top-level, else a task key or id of this org. */
+async function parentArg(ctx: McpCtx, v: unknown): Promise<string | null | undefined> {
+  if (v === undefined || v === null) return v === null ? null : undefined;
+  if (typeof v !== "string") throw new ToolInputError("`parent` is a task key like WEB-12, or \"none\".");
+  const s = v.trim();
+  if (!s || s.toLowerCase() === "none") return null;
+  return (await lookupTask(ctx, s)).task._id.toHexString();
+}
 
 /** Reply note for blockers Aimpoint assigned to the calling bot because its own task now waits on them (VEC-107). */
 function blockersNote(keys: string[]) {
@@ -1173,7 +1200,7 @@ export async function callTool(name: string, args: Args, ctx: McpCtx): Promise<T
     // tool runs, so complete_task / release_task / advance_task never touch the stopped claim either.
     if (!impl.readOnly) {
       const a = args ?? {};
-      const refs = [a.task, a.before, a.after, ...(Array.isArray(a.depends_on) ? a.depends_on : [])].filter((r): r is string | number => typeof r === "string" || typeof r === "number");
+      const refs = [a.task, a.before, a.after, a.parent, ...(Array.isArray(a.depends_on) ? a.depends_on : [])].filter((r): r is string | number => typeof r === "string" || typeof r === "number");
       const ids: ObjectId[] = [];
       for (const ref of refs) {
         try {
@@ -1201,6 +1228,6 @@ While you work an assigned task (or one a mention handed back to you), keep its 
 A person can stop your work on a task (Stop in the task's menu). If a tool call is refused with "<name> stopped your work on KEY; don't continue", stop working on that task: don't retry the call or work around it, leave it as it is and end your turn. The task's \`stopped\` field says who stopped it and when; while it's stopped you're only allowed to answer a comment that @mentions you on it. If they resume it, you're handed it again with a fresh wake-up.
 Call check_for_work again until it says idle. Use get_workspace for project keys, each project's statuses and people's ids.
 Statuses are per project: every project has its own list, a task only takes a status of its own project (by that project's names; a task's context lists them under \`project.statuses\`), and Aimpoint acts on each status's stage (backlog, triage, unstarted, started, done, cancelled), not its name. The names used here (Backlog, Todo, In Progress, In Review, Done, Cancelled) are the defaults; a project may have renamed them.\nA task in a backlog-stage status (Backlog) is parked, not work: being assigned to it records you as its assignee only. It's held (no wake-up, check_for_work doesn't offer it, pickup never moves it out of Backlog; list_my_tasks shows it with \`parked: true\`) until someone moves it to a not-started or started status such as Todo, which hands it to you as an assignment. Leave parked tasks alone unless a flow step in that status names you as its owner.
-If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task, chain them with \`depends_on\` so they run in a logical order, make the original depend on them and put your plan in its \`plan\` (update_task; never rewrite its description, which is the reporter's original report), then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
+If your role allows check_for_triage, you're also a triage bot: call it on your schedule. Each call hands you one task waiting in the Triage status (no other bot gets it); break it into concrete tasks with create_task (\`parent\` = its key: sub-tasks are grouped under the task they're filed from), chain them with \`depends_on\` so they run in a logical order, make the original depend on them and put your plan in its \`plan\` (update_task; never rewrite its description, which is the reporter's original report), then complete_task it with a status that moves it out of Triage. When those tasks are all done, check_for_work hands you the original back as kind "closeout": summarise what was delivered with add_comment, then complete_task it with Done (or In Review if something was cancelled or left open).
 Projects can have a flow: an ordered list of steps, each with an owner (a bot, a person, any triage bot, whoever has it, or nobody), a status and instructions (\`flow\` per project in get_workspace, and in each task's context: the step it's at, what comes next, who has it, \`howToFinish\`). On a task whose flow is active, finish your step with complete_task WITHOUT a status: Aimpoint moves it to the next step's status and hands it to that step's owner, and the reply says where it went. Saying you're done in chat or in your run's last message doesn't move the task: only complete_task does. Pass an earlier step's status to send it back (say why in the comment); bots can't skip a required step, Done included. A wait step (\`flow.step.advance\` "wait") moves on with advance_task once what it waits for has happened. Where the flow isn't active (\`flow.active\` false or \`flow\` null), finish with a status as described above.
 Tasks can depend on other tasks (\`depends_on\` on create_task / update_task). A task isn't offered or pushed to its assignee until everything it depends on is closed (a done or cancelled status; the ready message says which were cancelled); moving your task to a done or cancelled status (set_status or complete_task with a status) releases the tasks waiting on it. A task you file that blocks your own work needs an owner: create it with \`assignee\` ("me" by default, or whoever should do it). If you send your task back to wait on new blockers, every blocker must be assigned; Aimpoint assigns any that nobody owns to you and hands them to you.\nComments are plain text: write add_comment and complete_task comments without Markdown (no **bold**, headings or tables); plain "- " lists are fine. Task descriptions do accept Markdown.`;

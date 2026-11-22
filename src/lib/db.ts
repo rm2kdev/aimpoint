@@ -25,6 +25,7 @@ import type {
   FormUploadDoc,
 } from "./types";
 import { seedDefaultFlows, DEFAULT_FLOW_MIGRATION } from "./flows-migration";
+import { backfillTaskParents, TASK_PARENT_MIGRATION } from "./parent-link-migration";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
 const dbName = process.env.MONGODB_DB ?? "aimpoint";
@@ -105,6 +106,9 @@ async function ensureIndexes(db: Db) {
     db.collection("tasks").createIndex({ orgId: 1, title: "text" }),
     db.collection("tasks").createIndex({ orgId: 1, dependsOn: 1 }),
     db.collection("tasks").createIndex({ orgId: 1, rank: 1 }),
+    // Sub-task links (VEC-407): a parent's children, and the top_level filter.
+    db.collection("tasks").createIndex({ orgId: 1, parentId: 1 }),
+    db.collection("tasks").createIndex({ parentId: 1, archivedAt: 1 }),
     db.collection("comments").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("activity").createIndex({ taskId: 1, createdAt: 1 }),
     db.collection("invites").createIndex({ token: 1 }, { unique: true }),
@@ -223,5 +227,11 @@ async function migrate(db: Db) {
   await once(DEFAULT_FLOW_MIGRATION, async () => {
     const inserted = await seedDefaultFlows(db);
     console.log("[migrate] default flows", { inserted });
+  });
+
+  // Sub-task links (VEC-407): bot-created tasks an umbrella its creator triaged depends on get that umbrella as parent,
+  // and bot-created tasks get createdByBot. Live DBs whose dev server already ran init: scripts/migrate-task-parents.mjs.
+  await once(TASK_PARENT_MIGRATION, async () => {
+    console.log("[migrate] task parents", await backfillTaskParents(db));
   });
 }

@@ -262,6 +262,11 @@ The status changes made by pickup are "within the step" and don't re-position it
   and admins can still edit both. get_task / the wake-up context carry `plan` (null when unset) next to the untouched
   `description`, and every description or plan change writes an activity entry (kinds `description` / `plan`) that
   keeps the replaced text. TRIAGE_STEPS step 4, check_for_triage and the server instructions all say to set `plan`.
+- Sub-tasks point back at the umbrella (VEC-407, `TaskDoc.parentId`, see `docs/task-creation.md` "Sub-tasks"). The
+  triager passes `parent` = the umbrella's key on each create_task (TRIAGE_STEPS step 3, check_for_triage and the
+  server instructions say sub-tasks are grouped under the task they're filed from); a bot holding only that one
+  triage claim gets it automatically. The link is separate from `dependsOn`: the umbrella still depends on its
+  sub-tasks for readiness and close-out, `parentId` only says where each one came from so views can group them.
 
 ### 5.6 Manual edits by people (the flow must not fight them)
 

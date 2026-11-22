@@ -12,6 +12,8 @@ import { requireOrg, requireUser } from "@/lib/session";
 import { guard, UserError, deriveKey, type Result } from "@/lib/result";
 import { publish } from "@/lib/realtime/server";
 import { detachDeleted, recomputeForStatuses } from "@/lib/dependencies";
+import { detachChildren } from "@/lib/parent-link";
+import { publishWorking } from "@/lib/claims";
 import { isClosedCategory, isDefaultStage, type ProjectDoc, type ProjectMetaEntry, type MembershipDoc, type Role, type StatusCategory, type StatusDoc } from "@/lib/types";
 import { orgPath } from "@/lib/paths";
 import { removeMembership } from "@/lib/membership";
@@ -214,9 +216,12 @@ export async function deleteProject(slug: string, projectId: string, confirmKey:
       throw new UserError("An organisation needs at least one active project. Create or restore another one first.");
     }
     const taskIds = (await c.tasks.find({ orgId: org._id, projectId: pid }, { projection: { _id: 1 } }).toArray()).map((t) => t._id);
+    let orphans: ObjectId[] = [];
     if (taskIds.length) {
       // Tasks in other projects that waited on these stop waiting.
       await detachDeleted(org._id, { id: user._id, name: async () => user.name }, taskIds);
+      // Sub-tasks in other projects stay, as top-level tasks (VEC-407).
+      orphans = await detachChildren(org._id, taskIds);
       await Promise.all([
         c.notifications.deleteMany({ taskId: { $in: taskIds } }),
         c.comments.deleteMany({ taskId: { $in: taskIds } }),
@@ -236,6 +241,7 @@ export async function deleteProject(slug: string, projectId: string, confirmKey:
     // Open task lists drop the tasks live; anything else catches up on the org refresh.
     if (taskIds.length <= 200) for (const id of taskIds) await publish(orgHex, { type: "task.delete", actorId, taskId: id.toHexString() });
     await publish(orgHex, { type: "org.changed", actorId });
+    if (orphans.length) await publishWorking(org._id, user._id, orphans, { workingOnly: false });
     revalidatePath(orgPath(slug), "layout");
   });
 }

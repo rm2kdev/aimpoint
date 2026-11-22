@@ -34,6 +34,7 @@ import { botMaxTasks } from "@/lib/types";
 import { isBotEnabled } from "@/lib/bot-enabled";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
 import { atWaitStep } from "@/lib/flow-engine";
+import { summariseChildren } from "@/lib/parent-link-core";
 
 /** The status set every new project starts with (VEC-114: statuses belong to a project). */
 export const DEFAULT_STATUSES: Omit<StatusDoc, "_id" | "orgId" | "projectId">[] = [
@@ -145,6 +146,11 @@ export function toTask(t: TaskDoc, projectKey: string, workingBotIds: string[] =
     flow: t.flow ? { stepId: t.flow.stepId ?? null, paused: !!t.flow.paused, enteredAt: new Date(t.flow.enteredAt).toISOString() } : null,
     source: t.source ? toTaskSource(t.source) : null,
     stopped: t.stopped ? { by: t.stopped.by.toHexString(), at: t.stopped.at.toISOString(), botId: t.stopped.botId.toHexString(), kind: t.stopped.kind } : null,
+    // VEC-407: parentKey and children are filled by withWorkingBots (one batched lookup for a whole list).
+    parentId: t.parentId?.toHexString() ?? null,
+    parentKey: null,
+    createdByKind: t.source?.kind === "form" ? "form" : t.createdByBot ? "bot" : "user",
+    children: null,
     createdBy: t.createdBy.toHexString(),
     createdAt: t.createdAt.toISOString(),
     updatedAt: t.updatedAt.toISOString(),
@@ -222,7 +228,7 @@ async function loadClaimBots(taskIds: ObjectId[]): Promise<Map<string, string[]>
 /** Fills `workingBotIds` and `stalled` on these tasks (in place): one claims query and one run-marks query, plus a few more only when some are stalled candidates. */
 export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> {
   const ids = tasks.map((t) => new ObjectId(t.id));
-  const [working, marks] = await Promise.all([loadClaimBots(ids), loadMarkBots(ids)]);
+  const [working, marks] = await Promise.all([loadClaimBots(ids), loadMarkBots(ids), withTaskLinks(tasks)]);
   // Nobody works on a closed task: a claim left over on one (closed elsewhere, or a status turned into a
   // done stage) never shows the ring.
   const busy = tasks.filter((t) => working.has(t.id));
@@ -233,6 +239,44 @@ export async function withWorkingBots<T extends Task>(tasks: T[]): Promise<T[]> 
   for (const t of tasks) t.stalled = stalled.get(t.id) ?? null;
   // VEC-380: then the runs with no claim. Shown on closed tasks too (a reply to a mention on a Done task).
   if (marks.size) for (const t of tasks) if (marks.has(t.id)) t.workingBotIds = mergeWorking(new Map([[t.id, t.workingBotIds]]), marks).get(t.id)!;
+  return tasks;
+}
+
+/**
+ * VEC-407: fills `parentKey` and `children` on these tasks (in place). One aggregation counts every listed task's
+ * unarchived sub-tasks by status stage, and one query reads the keys of the parents that aren't in the list itself.
+ */
+export async function withTaskLinks<T extends Task>(tasks: T[]): Promise<T[]> {
+  if (!tasks.length) return tasks;
+  const c = await cols();
+  const ids = tasks.map((t) => new ObjectId(t.id));
+  const known = new Map(tasks.map((t) => [t.id, t.key]));
+  const missing = [...new Set(tasks.flatMap((t) => (t.parentId && !known.has(t.parentId) ? [t.parentId] : [])))].map((id) => new ObjectId(id));
+  const [rows, parents] = await Promise.all([
+    c.tasks
+      .aggregate<{ _id: { parentId: ObjectId; category: string | null }; n: number }>([
+        { $match: { parentId: { $in: ids }, archivedAt: null } },
+        { $lookup: { from: "statuses", localField: "statusId", foreignField: "_id", as: "s", pipeline: [{ $project: { category: 1 } }] } },
+        { $group: { _id: { parentId: "$parentId", category: { $first: "$s.category" } }, n: { $sum: 1 } } },
+      ])
+      .toArray(),
+    missing.length ? c.tasks.find({ _id: { $in: missing } }, { projection: { projectId: 1, number: 1 } }).toArray() : [],
+  ]);
+  if (parents.length) {
+    const projects = await c.projects.find({ _id: { $in: [...new Set(parents.map((p) => p.projectId.toHexString()))].map((id) => new ObjectId(id)) } }, { projection: { key: 1 } }).toArray();
+    const pk = new Map(projects.map((p) => [p._id.toHexString(), p.key]));
+    for (const p of parents) known.set(p._id.toHexString(), `${pk.get(p.projectId.toHexString()) ?? "?"}-${p.number}`);
+  }
+  const byParent = new Map<string, { category: string | null; n: number }[]>();
+  for (const r of rows) {
+    const k = r._id.parentId.toHexString();
+    byParent.set(k, [...(byParent.get(k) ?? []), { category: r._id.category, n: r.n }]);
+  }
+  for (const t of tasks) {
+    t.parentKey = t.parentId ? (known.get(t.parentId) ?? null) : null;
+    const counts = byParent.get(t.id);
+    t.children = counts ? summariseChildren(counts) : null;
+  }
   return tasks;
 }
 

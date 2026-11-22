@@ -154,6 +154,11 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     c.projects.find({ orgId: org._id }, { projection: { key: 1, name: 1 } }).toArray(),
     loadTaskRefs(org._id, task),
   ]);
+  // VEC-407: the task it was spawned from, and its own sub-tasks (unarchived, oldest first).
+  const [parentDoc, childDocs] = await Promise.all([
+    task.parentId ? c.tasks.findOne({ _id: task.parentId, orgId: org._id }, { projection: { projectId: 1, number: 1, title: 1, statusId: 1, archivedAt: 1 } }) : null,
+    c.tasks.find({ orgId: org._id, parentId: task._id, archivedAt: null }, { projection: { projectId: 1, number: 1, title: 1, statusId: 1, assigneeId: 1 } }).sort({ createdAt: 1, number: 1 }).limit(200).toArray(),
+  ]);
   const statusById = new Map(statuses.map((s) => [s._id.toHexString(), s]));
   const ownStatuses = statuses.filter((s) => s.projectId.equals(project._id));
   const newTasks = (await botNewTaskViews(org._id, [project], new Map([[project._id.toHexString(), ownStatuses]]))).get(project._id.toHexString()) ?? null;
@@ -218,6 +223,13 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
     const s = statusById.get(t.statusId);
     return { key: t.key, title: t.title, status: s?.name ?? null, done: s?.category === "done", assignee: t.assigneeId ? personRef(dir, t.assigneeId)?.name ?? null : null, url: taskUrl(opts.origin, org, t.key) };
   };
+  const linkOut = (t: { projectId: ObjectId; number: number; title: string; statusId: ObjectId }) => {
+    const k = `${projectKey.get(t.projectId.toHexString()) ?? "?"}-${t.number}`;
+    const s = statusById.get(t.statusId.toHexString());
+    return { key: k, title: t.title, status: s?.name ?? null, stage: s?.category ?? null, url: taskUrl(opts.origin, org, k) };
+  };
+  const parent = parentDoc ? { ...linkOut(parentDoc), archived: !!parentDoc.archivedAt } : null;
+  const children = childDocs.map((t) => ({ ...linkOut(t), assignee: t.assigneeId ? personRef(dir, t.assigneeId)?.name ?? null : null }));
   const waiting = refs.dependencies.filter((d) => !isClosedCategory(statusById.get(d.statusId)?.category));
   const [{ stalled }] = await withWorkingBots([toTask(task, project.key)]);
   const stalledOut = stalled
@@ -290,6 +302,13 @@ export async function buildTaskContext(task: TaskDoc, project: ProjectDoc, opts:
         }
       : null,
     dependencies,
+    /**
+     * VEC-407: the task this one was spawned from (a bot filed it while working on that one, or it was created with
+     * `parent`), shown grouped under it; null = top-level. Sub-tasks go one level deep only.
+     */
+    parent,
+    /** VEC-407: the tasks spawned from this one (unarchived), with their status. Empty when it has none. */
+    children,
     /**
      * The task's place in its project's flow (null = the project has no flow). `step` = the step it's at (owner,
      * instructions, how it moves on), `next` = where complete_task without a status sends it and who gets it,

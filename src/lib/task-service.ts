@@ -27,6 +27,7 @@ import {
   resolveType,
 } from "@/lib/task-intake-core";
 import { assertNotStopped } from "@/lib/stop-guard";
+import { detachChildren, parentForCreate } from "@/lib/parent-link";
 import { disabledAssigneeMessage, heldMentionsOf, isBotEnabled } from "@/lib/bot-enabled";
 
 /**
@@ -404,6 +405,11 @@ export interface NewTaskInput {
   dueDate?: string | null;
   /** Ids of tasks this one waits for. */
   dependsOn?: string[];
+  /**
+   * VEC-407: id of the task it's a sub-task of (lib/parent-link.ts). undefined = automatic (a bot's task goes under the
+   * one task its in-progress claims lead to), null = top-level on purpose.
+   */
+  parentId?: string | null;
 }
 
 /** "YYYY-MM-DD" -> UTC-midnight Date; null clears; throws on anything else. */
@@ -439,7 +445,7 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
   if (!typed.ok) throw new UserError(typed.error);
   if (input.description !== undefined && input.description !== null && typeof input.description !== "string") throw new UserError(INTAKE_ERRORS.descriptionNotText);
   // A bot whose work a person stopped can't link new tasks to that task (VEC-216).
-  await assertNotStopped(actor, input.dependsOn ?? []);
+  await assertNotStopped(actor, [...(input.dependsOn ?? []), ...(input.parentId ? [input.parentId] : [])]);
   const c = await cols();
   const projectId = oid(input.projectId, "project");
   const project = await c.projects.findOneAndUpdate(
@@ -465,6 +471,7 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
   }
   const dependsOn = input.dependsOn?.length ? await checkDependencies(actor.orgId, null, parseIds(input.dependsOn, "`dependsOn`")) : [];
   const waitingOn = await openDependencies(actor.orgId, dependsOn);
+  const parentId = await parentForCreate(actor, input.parentId);
   // It enters its project's flow at the step of its status; that step's owner applies unless an assignee was given (VEC-175).
   const flowPlan = await planFlowForCreate(actor.orgId, projectId, status, !!assigneeId);
   if (flowPlan.assigneeId) assigneeId = flowPlan.assigneeId;
@@ -490,6 +497,8 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
     rank,
     ...(flowPlan.flow !== undefined ? { flow: flowPlan.flow } : {}),
     ...(internal.source ? { source: internal.source } : {}),
+    parentId,
+    ...(actor.isBot ? { createdByBot: true } : {}),
     createdBy: actor.id,
     createdAt: now,
     updatedAt: now,
@@ -507,6 +516,8 @@ export async function createTaskAs(actor: Actor, input: NewTaskInput, internal: 
   // Only after taking ownership above, or this broadcast shows a blocker the bot is about to own as unassigned
   // Stalled and syncStalledNotice sends a false "nobody is assigned" notice (VEC-111).
   if (dependsOn.length) await publishWorking(actor.orgId, actor.id, dependsOn);
+  // Its parent gained a sub-task: its `children` counts changed (VEC-407).
+  if (parentId && !dependsOn.some((d) => d.equals(parentId))) await publishWorking(actor.orgId, actor.id, [parentId]);
   return task;
 }
 
@@ -854,6 +865,8 @@ export async function updateTaskAs(
   const prevDeps = before.dependsOn ?? [];
   const addedDeps = set.dependsOn ? set.dependsOn.filter((id) => !prevDeps.some((p) => p.equals(id))) : [];
   const upstream = doneChanged || set.archivedAt !== undefined ? [...(after.dependsOn ?? []), ...removedDeps] : [...addedDeps, ...removedDeps];
+  // A sub-task's status or archive change moves its parent's `children` counts (VEC-407).
+  if (after.parentId && (set.statusId !== undefined || set.archivedAt !== undefined) && !upstream.some((u) => u.equals(after.parentId!))) upstream.push(after.parentId);
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   // A bot leaving its own task parked behind open dependencies (moved to an open status, or deps added) takes
   // the ones nobody owns, so someone is woken for them (VEC-107).
@@ -1034,6 +1047,8 @@ export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {
   if (!canEditTask(t, actor.id, actor.isAdmin)) throw new UserError("Only the task's creator or an admin can delete it.");
   // Tasks waiting on this one stop waiting (and are handed over if it was the last thing they waited for).
   await detachDeleted(actor.orgId, byOf(actor), [taskId]);
+  // Its sub-tasks stay, as top-level tasks (VEC-407).
+  const orphans = await detachChildren(actor.orgId, [taskId]);
   await c.tasks.deleteOne({ _id: taskId });
   await Promise.all([
     c.comments.deleteMany({ taskId }),
@@ -1046,6 +1061,9 @@ export async function deleteTaskAs(actor: Actor, taskId: ObjectId) {
   await publish(actor.orgId.toHexString(), { type: "task.delete", actorId: actor.id.toHexString(), taskId: taskId.toHexString() });
   // The tasks it depended on lost a waiter: their derived Stalled state may have cleared.
   if (t.dependsOn?.length) await publishWorking(actor.orgId, actor.id, t.dependsOn);
+  if (orphans.length) await publishWorking(actor.orgId, actor.id, orphans, { workingOnly: false });
+  // Its parent lost a sub-task.
+  if (t.parentId) await publishWorking(actor.orgId, actor.id, [t.parentId]);
 }
 
 export async function addCommentAs(actor: Actor, taskId: ObjectId, body: string): Promise<CommentResult> {

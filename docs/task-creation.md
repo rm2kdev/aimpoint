@@ -140,3 +140,39 @@ bot writes its breakdown into the separate plan field (`TaskDoc.triagePlan`, MCP
 `plan`), which get_task returns as `plan` (Markdown, null when unset) beside the untouched `description`. A triaging
 bot that sends `description` is refused with guidance to use `plan`; the creator and admins can still edit the
 description, and each change keeps the previous text in a `description` activity entry (see `docs/flows.md` 5.5).
+
+## Sub-tasks: the parent link (VEC-407)
+
+A task can name the task it was spawned from: `TaskDoc.parentId` (same org, any project). Views use it to group a
+bot's sub-tasks under the request they came from instead of listing them beside people's requests. Rules live in
+`src/lib/parent-link-core.ts` (pure, node-tested in `parent-link.test.mjs`), the server side in `src/lib/parent-link.ts`.
+
+- One level only. A parent never has a parent, and a task with sub-tasks never becomes one. A task can't be its own
+  parent, and an archived task can't take new sub-tasks. An explicit `parent` that breaks a rule is refused with a
+  message naming the task to use instead (for a sub-task, its own parent).
+- How it gets set, on create only:
+  - Explicit: MCP `create_task` `parent` (task key or id), REST `POST /api/v1/tasks` `parent`. It wins over the
+    automatic one. `"none"` (MCP/REST) or `null` (REST) creates a top-level task on purpose.
+  - Automatic, bots only (MCP and REST share `createTaskAs`): the open, unarchived tasks the bot holds an in-progress
+    claim on (triage or work), each mapped to its own parent if it is a sub-task. Exactly one resulting task = the
+    parent. Several different ones = unset, since the call doesn't say which run it belongs to (a Hermes bot with
+    parallel runs usually holds several claims, which is why the triage steps and the blocker note tell bots to pass
+    `parent` explicitly). People's, forms' and public submissions never get one automatically.
+- `TaskDoc.createdByBot` is stamped on every bot-created task. The client `Task` carries `parentId`, `parentKey`,
+  `createdByKind` (`"user"` for members and public-page submitters, `"bot"`, `"form"`) and, on parents, `children`
+  `{ total, done, cancelled }` (unarchived sub-tasks; null when there are none). `withWorkingBots` fills `parentKey`
+  and `children` with one aggregation for the whole list (`withTaskLinks` in data.ts), so lists, publish and REST all
+  get them. Creating, deleting, archiving or changing the status of a sub-task republishes its parent so open lists
+  see the new counts.
+- Agents: MCP `get_task` returns `parent` (key, title, status, stage, archived) and `children` (key, title, status,
+  stage, assignee). `list_tasks` entries carry `parent` (key or null) and take `top_level: true` (only tasks with no
+  parent) or `parent: "VEC-12"` (that task's sub-tasks). REST `GET /api/v1/tasks` takes `topLevel=true` / `parent=`.
+- Archive and delete. Archiving a parent keeps the link: its sub-tasks stay where they are, pointing at an archived
+  task (restoring it regroups them). Deleting a parent (task delete, or a project delete that cascades it) clears
+  `parentId` on its sub-tasks, which become top-level tasks; nothing else about them changes.
+- Backfill: migration `2026-11-task-parent` (`src/lib/parent-link-migration.ts`, run once from `ensureIndexes`; for a
+  database whose dev server already ran init, `node scripts/migrate-task-parents.mjs [--dry-run]`). A task gets a
+  parent when it was created by a bot and is listed in the `dependsOn` of a task whose `triagedBy` is that same bot.
+  Several such umbrellas: the oldest. Nested triages flatten to the top task, and a task that already has sub-tasks
+  stays top-level. It also stamps `createdByBot` where the creator is a bot of the org or any task's triager.
+  Idempotent: only tasks with no parent are written.
