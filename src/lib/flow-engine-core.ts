@@ -75,6 +75,43 @@ export function locateStep(flow: ResolvedFlow, status: FlowStatusLike, recorded?
   return before[before.length - 1] ?? null;
 }
 
+/** A task's loaded flow position (lib/flow-engine loadTaskFlow's TaskFlowContext, minus the directory). */
+export interface FlowPosition {
+  flow: ResolvedFlow;
+  statuses: readonly FlowStatusLike[];
+  status: FlowStatusLike | null;
+  current: ResolvedStep | null;
+}
+
+/**
+ * Is the task at a wait step (VEC-181) that someone else resolves? lib/flow-engine atWaitStep's rule on a loaded
+ * position, pure so the VEC-420 backfill (parent-started-migration.ts) shares it. Null position = no flow.
+ */
+export function waitStepAt(pos: FlowPosition | null | undefined, state?: { paused?: boolean } | null): boolean {
+  if (state?.paused || !pos?.current || !pos.status) return false;
+  if (pos.status.category === "done" || pos.status.category === "cancelled" || pos.status.category === "triage") return false;
+  return pos.current.advance === "wait";
+}
+
+/**
+ * Where a bot's pickup moves a flow task (design 5.4), on a loaded position: lib/flow-engine pickupTarget's rule, pure
+ * so the VEC-420 backfill shares it. `legacy`: no flow / not on a step (old rule: first started status). `stay`: leave
+ * the status alone. `move`: go to this status (hex id).
+ */
+export function pickupDecision(
+  pos: FlowPosition | null | undefined,
+  state?: { paused?: boolean; ownerOverride?: boolean } | null,
+): { kind: "legacy" } | { kind: "stay" } | { kind: "move"; statusId: string } {
+  if (state?.paused || !pos?.current || !pos.status) return { kind: "legacy" };
+  // Parked in Backlog (VEC-274): pickup never moves it out unless the flow's own step there names its owner.
+  if (isParkedStatus(pos.status, pos.current, { ownerOverride: !!state?.ownerOverride })) return { kind: "stay" };
+  const target = workingStatus(pos.flow, pos.current, pos.statuses);
+  if (!target) return { kind: "stay" };
+  // Only from the step's own (not started) status, or another not-started one; never back from a started status.
+  if (pos.status.category !== "backlog" && pos.status.category !== "unstarted") return { kind: "stay" };
+  return target.id === pos.status.id ? { kind: "stay" } : { kind: "move", statusId: target.id };
+}
+
 /** The step after `step`: its jump target, else the next in order. Null after the last step. */
 export function nextStepOf(flow: ResolvedFlow, step: ResolvedStep): ResolvedStep | null {
   if (step.next) {

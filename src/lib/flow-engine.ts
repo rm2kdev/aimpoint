@@ -16,11 +16,13 @@ import {
   ownerPlan,
   pausedAsUmbrella,
   pausedWhy,
+  pickupDecision,
   requiredBetween,
   stepById,
   stepDriven,
   stepIndex,
   syncByStatus,
+  waitStepAt,
   workingStatus,
   type FlowMoveNote,
 } from "@/lib/flow-engine-core";
@@ -306,10 +308,7 @@ export async function advanceTarget(task: TaskDoc, requested?: StatusDoc | null)
  */
 export async function atWaitStep(task: FlowTask, loaded?: TaskFlowContext | null): Promise<boolean> {
   if (task.flow?.paused) return false;
-  const ctx = loaded !== undefined ? loaded : await loadTaskFlow(task);
-  if (!ctx?.current || !ctx.status) return false;
-  if (ctx.status.category === "done" || ctx.status.category === "cancelled" || ctx.status.category === "triage") return false;
-  return ctx.current.advance === "wait";
+  return waitStepAt(loaded !== undefined ? loaded : await loadTaskFlow(task), task.flow);
 }
 
 /**
@@ -318,15 +317,8 @@ export async function atWaitStep(task: FlowTask, loaded?: TaskFlowContext | null
  */
 export async function pickupTarget(task: FlowTask): Promise<{ kind: "legacy" } | { kind: "stay" } | { kind: "move"; statusId: ObjectId }> {
   if (task.flow?.paused) return { kind: "legacy" };
-  const ctx = await loadTaskFlow(task);
-  if (!ctx?.current || !ctx.status) return { kind: "legacy" };
-  // Parked in Backlog (VEC-274): pickup never moves it out unless the flow's own step there names its owner.
-  if (isParkedStatus(ctx.status, ctx.current, { ownerOverride: !!task.flow?.ownerOverride })) return { kind: "stay" };
-  const target = workingStatus(ctx.flow, ctx.current, ctx.statuses);
-  if (!target) return { kind: "stay" };
-  // Only from the step's own (not started) status, or another not-started one; never back from a started status.
-  if (ctx.status.category !== "backlog" && ctx.status.category !== "unstarted") return { kind: "stay" };
-  return target.id === ctx.status.id ? { kind: "stay" } : { kind: "move", statusId: new ObjectId(target.id) };
+  const d = pickupDecision(await loadTaskFlow(task), task.flow);
+  return d.kind === "move" ? { kind: "move", statusId: new ObjectId(d.statusId) } : d;
 }
 
 /** Why a parked task isn't offered (list_my_tasks, task context, idle check_for_work). `status` = its status name. */

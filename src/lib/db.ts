@@ -26,6 +26,7 @@ import type {
 } from "./types";
 import { seedDefaultFlows, DEFAULT_FLOW_MIGRATION } from "./flows-migration";
 import { backfillTaskParents, TASK_PARENT_MIGRATION } from "./parent-link-migration";
+import { backfillParentStarted, PARENT_STARTED_MIGRATION } from "./parent-started-migration";
 
 const uri = process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017";
 const dbName = process.env.MONGODB_DB ?? "aimpoint";
@@ -233,5 +234,12 @@ async function migrate(db: Db) {
   // and bot-created tasks get createdByBot. Live DBs whose dev server already ran init: scripts/migrate-task-parents.mjs.
   await once(TASK_PARENT_MIGRATION, async () => {
     console.log("[migrate] task parents", await backfillTaskParents(db));
+  });
+
+  // Parents stuck in a not-started status while sub-tasks are worked on (VEC-420, rule VEC-419) move to the status the
+  // live hook would pick. Live DBs whose dev server already ran init: scripts/migrate-parent-started.mjs.
+  await once(PARENT_STARTED_MIGRATION, async () => {
+    const { found, moved } = await backfillParentStarted(db);
+    console.log("[migrate] parents started", { found, moved });
   });
 }
