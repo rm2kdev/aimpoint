@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { parentProgress, parentTarget, parentProgressText } from "./parent-progress-core.ts";
+import { parentProgress, parentTarget, parentProgressText, pickActiveSubtask } from "./parent-progress-core.ts";
 
 const move = (parentStage, subtaskTo, extra = {}) => parentProgress({ parentStage, subtaskTo, ...extra });
 
@@ -68,6 +68,37 @@ test("activity wording names the sub-task", () => {
   assert.equal(parentProgressText("started", null), " (a sub-task started)");
 });
 
+// VEC-444: a parent's own status written into a not-started status re-checks its current sub-tasks.
+const sub = (key, stage, at) => ({ key, stage, updatedAt: new Date(`2026-11-22T04:${at}:00Z`) });
+
+test("own status into Todo: the newest started sub-task counts, started beats a newer done one", () => {
+  const subs = [sub("A", "done", "50"), sub("B", "started", "10"), sub("C", "started", "20"), sub("D", "unstarted", "59")];
+  assert.equal(pickActiveSubtask(subs)?.key, "C");
+  assert.equal(move("unstarted", pickActiveSubtask(subs)?.stage), "started");
+});
+
+test("own status into Todo: only done sub-tasks still count (the newest one is named)", () => {
+  const subs = [sub("A", "done", "10"), sub("B", "done", "30"), sub("C", "cancelled", "40")];
+  assert.equal(pickActiveSubtask(subs)?.key, "B");
+  assert.equal(move("unstarted", pickActiveSubtask(subs)?.stage), "done");
+});
+
+test("own status into Todo: no started or done sub-task (or none at all) leaves it put", () => {
+  assert.equal(pickActiveSubtask([]), null);
+  assert.equal(pickActiveSubtask([sub("A", "unstarted", "10"), sub("B", "cancelled", "11"), sub("C", "triage", "12"), sub("D", "backlog", "13"), sub("E", null, "14")]), null);
+});
+
+test("own status written into Triage, Backlog or a started status never moves it, even with started sub-tasks", () => {
+  const active = pickActiveSubtask([sub("A", "started", "10")]);
+  for (const stage of ["triage", "backlog", "started", "done", "cancelled"]) assert.equal(move(stage, active.stage), null, stage);
+  assert.equal(move("unstarted", active.stage, { parentStopped: true }), null);
+  assert.equal(move("unstarted", active.stage, { parentArchived: true }), null);
+});
+
+test("pickActiveSubtask accepts ISO strings and epoch numbers as updatedAt", () => {
+  assert.equal(pickActiveSubtask([{ k: 1, stage: "started", updatedAt: "2026-11-22T01:00:00Z" }, { k: 2, stage: "started", updatedAt: Date.parse("2026-11-22T02:00:00Z") }])?.k, 2);
+});
+
 test("every status write primitive calls the one hook", () => {
   const src = readFileSync(new URL("./task-service.ts", import.meta.url), "utf8");
   const fn = (name) => {
@@ -81,4 +112,24 @@ test("every status write primitive calls the one hook", () => {
   assert.match(fn("moveTask"), /return updateTaskAs\(/);
   // No other module writes the hook's logic again.
   assert.equal((src.match(/startParentOnActivity\(/g) ?? []).length, 3);
+  // VEC-444: the parent side, once, in updateTaskAs: every own-status write (pane, moveTask, set_status, complete_task
+  // incl. triage close-out, flow advances, REST) goes through it, gated on a not-started status just written.
+  assert.equal((src.match(/startParentOnOwnStatus\(/g) ?? []).length, 1);
+  assert.match(fn("updateTaskAs"), /set\.statusId && finalStatus\?\.category === "unstarted"[^\n]*\n\s*const moved = await startParentOnOwnStatus\(actor, after\)/);
+});
+
+test("both triggers share one move, and the backfill picks the sub-task the same way", () => {
+  const hook = readFileSync(new URL("./parent-progress.ts", import.meta.url), "utf8");
+  assert.equal((hook.match(/findOneAndUpdate\(/g) ?? []).length, 1);
+  assert.equal((hook.match(/await moveParent\(/g) ?? []).length, 2);
+  assert.match(hook, /pickActiveSubtask\(/);
+  const backfill = readFileSync(new URL("./parent-started-migration.ts", import.meta.url), "utf8");
+  assert.match(backfill, /pickActiveSubtask\(/);
+});
+
+test("complete_task, set_status and flow advances write a task's status only through updateTaskAs", () => {
+  for (const file of ["./mcp/server.ts", "./flow-actions.ts"]) {
+    const src = readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(src, /\$set:\s*\{[^}]*\bstatusId\b/, file);
+  }
 });

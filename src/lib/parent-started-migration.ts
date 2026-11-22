@@ -10,7 +10,7 @@
 // with no flow re-plan, no reassign, no wake-up and no notification. Nothing is published either: open pages show it
 // on their next load.
 import { ObjectId, type Db } from "mongodb";
-import { parentProgress, parentTarget, type ParentProgressReason, type Stage } from "./parent-progress-core";
+import { parentProgress, parentTarget, pickActiveSubtask, type ParentProgressReason, type Stage } from "./parent-progress-core";
 import { locateStep, pickupDecision, waitStepAt, type FlowPosition } from "./flow-engine-core";
 import { resolveFlowSteps, type FlowDirectory, type FlowStatusLike, type ResolvedFlow } from "./flow-model";
 import { flowStepsFromDoc } from "./flow-convert";
@@ -113,7 +113,6 @@ export async function planParentStarted(db: Db): Promise<ParentStartedMove[]> {
   }
   const keyOf = (t: { projectId: ObjectId; number: number }) => `${projectById.get(hex(t.projectId))?.key ?? "?"}-${t.number}`;
   const stageOf = (statusId: ObjectId) => (statusById.get(hex(statusId))?.category ?? null) as Stage | null;
-  const newest = (list: Sub[]) => [...list].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
 
   const moves: ParentStartedMove[] = [];
   for (const parent of parents) {
@@ -121,10 +120,8 @@ export async function planParentStarted(db: Db): Promise<ParentStartedMove[]> {
     const project = projectById.get(hex(parent.projectId));
     if (!current || !project || !current.projectId.equals(parent.projectId)) continue;
     const mine = (subsByParent.get(hex(parent._id)) ?? []).filter((s) => s.orgId.equals(parent.orgId));
-    const started = mine.filter((s) => stageOf(s.statusId) === "started");
-    const done = mine.filter((s) => stageOf(s.statusId) === "done");
     // As if the sub-task that last did something had just entered its status (started wins: work is under way).
-    const sub = started.length ? newest(started) : done.length ? newest(done) : null;
+    const sub = pickActiveSubtask(mine.map((s) => ({ ...s, stage: stageOf(s.statusId) })));
     if (!sub) continue;
     const reason = parentProgress({
       parentStage: current.category as Stage,

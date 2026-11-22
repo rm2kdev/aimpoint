@@ -61,6 +61,19 @@ export function parentTarget<S extends { id: string; stage: Stage; order: number
 }
 
 /**
+ * VEC-444: a parent's own status was just written into a not-started status (triage close-out Triage -> Todo, a
+ * manual move, a flow step). Which of its current non-archived sub-tasks counts as the activity that starts it, as if
+ * that sub-task had just entered its status: the most recently changed started one (work is under way), else the most
+ * recently changed done one, else none (nothing to do). The VEC-420 backfill asks the same question per stuck parent.
+ * Feed the result's stage to parentProgress as `subtaskTo`.
+ */
+export function pickActiveSubtask<T extends { stage: Stage | null | undefined; updatedAt: Date | string | number }>(subs: readonly T[]): T | null {
+  const at = (t: T) => new Date(t.updatedAt).getTime();
+  const newest = (list: T[]) => (list.length ? list.reduce((a, b) => (at(b) > at(a) ? b : a)) : null);
+  return newest(subs.filter((s) => s.stage === "started")) ?? newest(subs.filter((s) => s.stage === "done"));
+}
+
+/**
  * Activity notes of the parent's move. Written in the actor's name on the PARENT, though the actor worked on the
  * sub-task: checks for "has this bot acted on this task" (wake landed, run quiet, retry busy) must skip them.
  */

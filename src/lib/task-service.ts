@@ -29,7 +29,7 @@ import {
 } from "@/lib/task-intake-core";
 import { assertNotStopped } from "@/lib/stop-guard";
 import { detachChildren, parentForCreate, parentForUpdate, type ParentUpdate } from "@/lib/parent-link";
-import { startParentOnActivity } from "@/lib/parent-progress";
+import { startParentOnActivity, startParentOnOwnStatus } from "@/lib/parent-progress";
 import { disabledAssigneeMessage, heldMentionsOf, isBotEnabled } from "@/lib/bot-enabled";
 
 /**
@@ -900,6 +900,14 @@ export async function updateTaskAs(
   // already carried them. A parent change moves both the old parent's and the new one's (VEC-426).
   if (after.parentId && !parentMoved && (set.statusId !== undefined || set.archivedAt !== undefined || parentChange) && !upstream.some((u) => u.equals(after.parentId!))) upstream.push(after.parentId);
   if (parentChange?.fromId && !upstream.some((u) => u.equals(parentChange.fromId!))) upstream.push(parentChange.fromId);
+  // Its own status just went into a not-started one (a triage close-out Triage -> Todo, a manual move, a flow step):
+  // a sub-task already started or done moves it straight on, as that sub-task's own move would have (VEC-444). After
+  // this write's activity and hand-off, so the feed reads Triage -> Todo -> In Progress and nobody is woken twice.
+  if (set.statusId && finalStatus?.category === "unstarted" && !after.archivedAt) {
+    const moved = await startParentOnOwnStatus(actor, after);
+    // The caller's reply (MCP, REST, pane) shows where it ended up.
+    if (moved) Object.assign(task, { statusId: moved.statusId.toHexString(), updatedAt: moved.updatedAt.toISOString() });
+  }
   if (enteredTriage && !after.archivedAt) await enterTriage(actor, after, task.key);
   // A bot leaving its own task parked behind open dependencies (moved to an open status, or deps added) takes
   // the ones nobody owns, so someone is woken for them (VEC-107).
