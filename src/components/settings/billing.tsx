@@ -122,7 +122,7 @@ function UsageRow({ kind, b, label }: { kind: CountKind; b: BillingSummary; labe
  * bills (Pro, or locked while overdue/paused) already follows joins and leaves; the "now" wording is for an org
  * that hasn't subscribed (VEC-270).
  */
-function SeatsNote({ b, pro, billedSeats, tz }: { b: BillingSummary; pro: boolean; billedSeats: number; tz: string }) {
+function SeatsNote({ b, pro, billedSeats, tz, admin }: { b: BillingSummary; pro: boolean; billedSeats: number; tz: string; admin: boolean }) {
   const people = `${b.seats} ${b.seats === 1 ? "person" : "people"}`;
   const updatingTo = seatsUpdatingTo({ pro, liveSubscription: b.liveSubscription, seats: b.seats, subscribedSeats: b.subscribedSeats });
   return (
@@ -137,7 +137,8 @@ function SeatsNote({ b, pro, billedSeats, tz }: { b: BillingSummary; pro: boolea
         )}
         {b.discount && <DiscountLine b={b} billedSeats={billedSeats} tz={tz} />}
       </p>
-      <SeatRules b={b} live={pro || b.liveSubscription} billedSeats={billedSeats} />
+      {/* Admins only (VEC-430): a member can't invite or remove anyone, so the seat rules and invite costs are noise to them. */}
+      {admin && <SeatRules b={b} live={pro || b.liveSubscription} billedSeats={billedSeats} />}
     </>
   );
 }
@@ -162,9 +163,12 @@ function SeatRules({ b, live, billedSeats }: { b: BillingSummary; live: boolean;
           : "Once subscribed, the total follows the member count: adding a member raises the bill with a prorated charge for the rest of the billing period, and removing one lowers it."}
       </p>
       {pending.label && <p data-pending-invites-cost={pending.pending}>{pending.label}.</p>}
-      <Link href={orgPath(org.slug, "settings", "members")} className="w-fit underline underline-offset-2 hover:text-foreground" data-seat-rules-members>
-        Manage members
-      </Link>
+      {/* A locked org's Members page is behind the subscribe gate (VEC-430), so the link would be a dead end. */}
+      {!b.locked && (
+        <Link href={orgPath(org.slug, "settings", "members")} className="w-fit underline underline-offset-2 hover:text-foreground" data-seat-rules-members>
+          Manage members
+        </Link>
+      )}
     </div>
   );
 }
@@ -278,7 +282,7 @@ export function BillingSettings({ checkout, tz }: { checkout: Checkout; tz: stri
                 {state.warn && <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />}
                 {state.text}
               </p>
-              <SeatsNote b={b} pro={pro} billedSeats={billedSeats} tz={tz} />
+              <SeatsNote b={b} pro={pro} billedSeats={billedSeats} tz={tz} admin={isAdmin} />
               {isAdmin ? (
                 <div className="mt-3.5 flex flex-wrap gap-2">
                   {/* Hidden while a finished Checkout waits for its webhook, so nobody pays twice. */}
