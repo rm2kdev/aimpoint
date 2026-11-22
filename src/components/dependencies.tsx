@@ -20,6 +20,23 @@ export const toRef = (t: Task | TaskRef): TaskRef => ({
   workingBotIds: t.workingBotIds ?? [],
 });
 
+/** Debounced task search for pickers while `open`: an empty query lists recently updated unarchived tasks. */
+export function useTaskSearch(open: boolean, q: string) {
+  const { org } = useOrgBase();
+  const [results, setResults] = useState<Task[]>([]);
+  const seq = useRef(0);
+  useEffect(() => {
+    if (!open) return;
+    const id = ++seq.current;
+    const t = setTimeout(async () => {
+      const r = await searchTasks(org.slug, q, { recentWhenEmpty: true });
+      if (id === seq.current && r.ok) setResults(r.data ?? []);
+    }, q ? 140 : 0);
+    return () => clearTimeout(t);
+  }, [q, open, org.slug]);
+  return results;
+}
+
 /** Search the organisation's tasks and pick one (for dependencies). Empty search lists recently updated tasks. */
 export function TaskSearchPicker({
   exclude,
@@ -33,21 +50,9 @@ export function TaskSearchPicker({
   children: React.ReactNode;
   label?: string;
 }) {
-  const { org } = useOrgBase();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<Task[]>([]);
-  const seq = useRef(0);
-
-  useEffect(() => {
-    if (!open) return;
-    const id = ++seq.current;
-    const t = setTimeout(async () => {
-      const r = await searchTasks(org.slug, q, { recentWhenEmpty: true });
-      if (id === seq.current && r.ok) setResults(r.data ?? []);
-    }, q ? 140 : 0);
-    return () => clearTimeout(t);
-  }, [q, open, org.slug]);
+  const results = useTaskSearch(open, q);
 
   const shown = results.filter((t) => !exclude.includes(t.id));
   return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, LinkIcon, PanelRightOpenIcon, PowerOffIcon, RotateCcwIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowDownToLineIcon, ArrowUpToLineIcon, CircleDashedIcon, CopyIcon, CornerLeftUpIcon, CornerUpRightIcon, UnlinkIcon, LinkIcon, PanelRightOpenIcon, PowerOffIcon, RotateCcwIcon, SignalHighIcon, TagIcon, UserIcon, UserPlusIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useOrgBase } from "@/components/org-provider";
@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/context-menu";
 import { isDragActive } from "@/components/ui/drag-provider";
 import { taskAccess } from "@/lib/access";
+import { parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
 import type { TaskPatch } from "@/app/actions/tasks";
 import type { Priority, Task, TaskType } from "@/lib/types";
 
@@ -146,6 +147,8 @@ function LazyMenu({
   anchor: React.RefObject<HTMLSpanElement | null>;
   onOpenChange: (open: boolean) => void;
 }) {
+  // VEC-428: the parent picker outlives the menu (it opens as the menu closes), so its state lives here.
+  const [picking, setPicking] = useState(false);
   // Hand the request to Radix's trigger as the contextmenu event it expects; it opens at clientX/clientY.
   useEffect(() => {
     anchor.current?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: at.x, clientY: at.y }));
@@ -155,12 +158,13 @@ function LazyMenu({
       <ContextMenuTrigger asChild>
         <span ref={anchor} hidden />
       </ContextMenuTrigger>
-      <TaskMenuContent {...props} />
+      <TaskMenuContent {...props} onPickParent={() => window.setTimeout(() => setPicking(true), 0)} />
+      {picking && <ParentPickerDialog task={props.task} open={picking} onOpenChange={setPicking} />}
     </ContextMenu>
   );
 }
 
-function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuProps) {
+function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove, onPickParent }: TaskMenuProps & { onPickParent: () => void }) {
   const { me, isAdmin, memberById } = useOrgBase();
   const access = taskAccess(task, me.id, isAdmin);
   const canWork = access !== "comment";
@@ -170,6 +174,8 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
   const canRetry = useCanRetry(task);
   const retryOff = useRetryDisabledBot(task);
   const retry = useRetryTask();
+  const setParent = useSetParent();
+  const parentBlocked = parentBlockedReason(task);
 
   const copy = (text: string, what: string) => {
     navigator.clipboard.writeText(text).then(
@@ -239,6 +245,31 @@ function TaskMenuContent({ task, onOpen, onPatch, onArchive, onMove }: TaskMenuP
               <ArrowDownToLineIcon />
               Move to bottom
             </ContextMenuItem>
+          </>
+        )}
+        {access === "full" && !task.archivedAt && (
+          <>
+            <ContextMenuSeparator />
+            {task.parentKey ? (
+              <>
+                <ContextMenuItem onSelect={onPickParent}>
+                  <CornerUpRightIcon />
+                  Move to another task…
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => void setParent(task, null)}>
+                  <UnlinkIcon />
+                  <span className="truncate">
+                    Remove from <span className="font-mono">{task.parentKey}</span>
+                  </span>
+                </ContextMenuItem>
+              </>
+            ) : (
+              <ContextMenuItem onSelect={onPickParent} disabled={!!parentBlocked} title={parentBlocked ?? undefined}>
+                <CornerLeftUpIcon />
+                Make sub-task of…
+              </ContextMenuItem>
+            )}
+            {!task.parentKey && parentBlocked && <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">{parentBlocked}, so it can&rsquo;t go under another task.</p>}
           </>
         )}
         {!canWork && (

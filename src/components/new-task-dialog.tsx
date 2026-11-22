@@ -8,7 +8,7 @@ import { useOrg } from "@/components/org-provider";
 import { MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } from "@/components/bits";
 import { Picker, PRIORITY_OPTIONS, useAssigneeOptions, useProjectOptions, useStatusOptions } from "@/components/pickers";
 import { DueBadge, DuePicker } from "@/components/due-date";
-import { CalendarIcon, HourglassIcon, XIcon } from "lucide-react";
+import { CalendarIcon, CornerLeftUpIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask } from "@/app/actions/tasks";
 import { PRIORITY_LABELS } from "@/lib/format";
 import { matchStatus, newTaskStatusIn, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
@@ -26,6 +26,8 @@ export interface NewTaskDefaults {
   type?: TaskType;
   /** Start with these dependencies (e.g. "Next task" from a task's pane). */
   dependsOn?: TaskRef[];
+  /** VEC-428: create it as a sub-task of this task (the pane's "New sub-task"). Shown as a removable chip. */
+  parent?: TaskRef;
 }
 
 /** Local echo so the creator's list updates even before the real-time event lands. */
@@ -47,6 +49,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
   const [type, setType] = useState<TaskType>("issue");
   const [dueDate, setDueDate] = useState<string | null>(null);
   const [deps, setDeps] = useState<TaskRef[]>([]);
+  const [parent, setParent] = useState<TaskRef | null>(null);
   // Remounts the composer on every open: empty title, fresh editor, no errors (VEC-357).
   const [composerKey, setComposerKey] = useState(0);
 
@@ -61,6 +64,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
     setType(defaults.type ?? "issue");
     setDueDate(null);
     setDeps(defaults.dependsOn ?? []);
+    setParent(defaults.parent ?? null);
     setComposerKey((k) => k + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaults]);
@@ -98,7 +102,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
           key={composerKey}
           layout="dialog"
           orgSlug={org.slug}
-          header={<span>New task</span>}
+          header={<span>{parent ? "New sub-task" : "New task"}</span>}
           onCancel={onClose}
           submitDisabled={!projectId}
           type={{ value: type, onChange: setType }}
@@ -113,6 +117,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
               type,
               dueDate,
               dependsOn: deps.map((d) => d.id),
+              ...(parent ? { parentId: parent.id } : {}),
             });
             if (!r.ok) return { ok: false, error: r.error ?? "That didn't go through. Try again." };
             const t = r.data!;
@@ -161,6 +166,22 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
                   )}
                 </button>
               </DuePicker>
+              {parent && (
+                <span className={`${chip} gap-1 pr-1 text-foreground`} title={`Sub-task of ${parent.key}: ${parent.title}`} data-new-subtask-of={parent.key}>
+                  <CornerLeftUpIcon className="size-3.5 text-faint" />
+                  <span className="max-w-[180px] truncate">
+                    Sub-task of <span className="tabular font-mono text-[11.5px]">{parent.key}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setParent(null)}
+                    aria-label={`Don't make it a sub-task of ${parent.key}`}
+                    className="grid size-5 place-items-center rounded text-faint hover:bg-accent hover:text-foreground"
+                  >
+                    <XIcon className="size-3" />
+                  </button>
+                </span>
+              )}
               {deps.map((d) => (
                 <span key={d.id} className={`${chip} gap-1 pr-1 text-foreground`} title={`Depends on ${d.key}: ${d.title}`}>
                   <HourglassIcon className="size-3.5 text-faint" />

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowRightIcon, CalendarIcon, CircleAlertIcon, HourglassIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, PowerOffIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowRightIcon, CalendarIcon, ChevronDownIcon, CircleAlertIcon, CornerLeftUpIcon, CornerUpRightIcon, FilePlusIcon, HourglassIcon, ListPlusIcon, UnlinkIcon, LinkIcon, LockIcon, MoreHorizontalIcon, OctagonXIcon, PauseIcon, PlayIcon, PlusIcon, PowerOffIcon, RotateCcwIcon, Trash2Icon, UserRoundIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { taskAccess } from "@/lib/access";
@@ -57,6 +57,7 @@ import { orgPath } from "@/lib/paths";
 import { isClosedCategory, isStalledReason, type FeedItem, type Priority, type Stalled, type Task, type TaskDetail, type TaskRef, type TaskSource, type TaskType } from "@/lib/types";
 import { TASK_TITLE_MAX } from "@/lib/task-intake-core";
 import { PartOfLink, ProgressChip } from "@/components/subtasks";
+import { AddExistingSubtaskDialog, parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
 import { parentProgressText } from "@/lib/parent-progress-core";
 
 const propBtn =
@@ -87,6 +88,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const flowPause = useFlowPause(task, onFlowTask);
   // VEC-317: a flow task left at its step after its bot finished gets "Move to <next step>" in the Stalled banner.
   const moveOn = useStalledMoveOn(task, onFlowTask);
+  // VEC-428: sub-task actions. Pickers open after the menu that launched them has closed.
+  const setParent = useSetParent();
+  const [pickParent, setPickParent] = useState(false);
+  const [addExisting, setAddExisting] = useState(false);
+  const later = (open: (v: boolean) => void) => () => window.setTimeout(() => open(true), 0);
   // VEC-217: Stop / Resume the bot's work (lib/stop-work.ts).
   const stopWork = useStopWork(task, onFlowTask);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -304,6 +310,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const owner = task.source ? null : (creator?.name ?? "the creator");
   const closed = status?.category === "done" || status?.category === "cancelled";
   const waiting = task.dependencies.filter((d) => !isClosedCategory(statusById.get(d.statusId)?.category));
+  const parentBlocked = parentBlockedReason(task);
+  // One level only: a sub-task can't have sub-tasks, so only a top-level task offers "Add sub-task".
+  const canAddSubtask = canEdit && !task.parentId && !task.archivedAt;
 
   return shell(
     <>
@@ -342,6 +351,29 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 {flowPause.paused ? <PlayIcon className="size-4" /> : <PauseIcon className="size-4" />} {flowPause.paused ? "Resume flow" : "Pause flow"}
               </DropdownMenuItem>
             )}
+            {canEdit && !task.archivedAt && (
+              <>
+                <DropdownMenuSeparator />
+                {task.parentKey ? (
+                  <>
+                    <DropdownMenuItem className="gap-2.5" onSelect={later(setPickParent)}>
+                      <CornerUpRightIcon className="size-4" /> Move to another task…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-2.5" onSelect={() => void setParent(task, null).then((t) => t && onFlowTask(t))}>
+                      <UnlinkIcon className="size-4" />
+                      <span>
+                        Remove from <span className="font-mono">{task.parentKey}</span>
+                      </span>
+                    </DropdownMenuItem>
+                  </>
+                ) : (
+                  <DropdownMenuItem className="gap-2.5" disabled={!!parentBlocked} title={parentBlocked ?? undefined} onSelect={later(setPickParent)}>
+                    <CornerLeftUpIcon className="size-4" /> Make sub-task of…
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+              </>
+            )}
             {canEdit && (
               <>
                 <DropdownMenuItem className="gap-2.5" onSelect={() => setArchived(!task.archivedAt)}>
@@ -373,6 +405,28 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
           {task.parentKey && (
             <div className="mt-1 ml-8 flex items-center">
               <PartOfLink parentKey={task.parentKey} href={`${pathname}?task=${encodeURIComponent(task.parentKey)}`} className="-ml-1 h-6 text-[12.5px]" />
+              {canEdit && !task.archivedAt && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label={`Change where ${task.key} belongs`}
+                    data-part-of-menu=""
+                    className="grid size-6 place-items-center rounded-[5px] text-faint outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
+                  >
+                    <ChevronDownIcon className="size-3.5" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56">
+                    <DropdownMenuItem className="gap-2.5" onSelect={later(setPickParent)}>
+                      <CornerUpRightIcon className="size-4" /> Move to another task…
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="gap-2.5" onSelect={() => void setParent(task, null).then((t) => t && onFlowTask(t))}>
+                      <UnlinkIcon className="size-4" />
+                      <span>
+                        Remove from <span className="font-mono">{task.parentKey}</span>
+                      </span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
           )}
           {task.archivedAt && (
@@ -566,7 +620,14 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
           </dl>
 
-          <Subtasks task={task} />
+          <Subtasks
+            task={task}
+            canAdd={canAddSubtask}
+            onNew={() => newTask({ projectId: task.projectId, parent: toRef(task) })}
+            onAddExisting={later(setAddExisting)}
+          />
+          {pickParent && <ParentPickerDialog task={task} open={pickParent} onOpenChange={setPickParent} onSaved={onFlowTask} />}
+          {addExisting && <AddExistingSubtaskDialog parent={task} open={addExisting} onOpenChange={setAddExisting} />}
 
           <Dependencies
             task={task}
@@ -657,20 +718,43 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
 }
 
 /** VEC-408: a parent's sub-tasks (the tasks filed from it), with the same rows as the dependencies. */
-function Subtasks({ task }: { task: TaskDetail }) {
+function Subtasks({ task, canAdd, onNew, onAddExisting }: { task: TaskDetail; canAdd: boolean; onNew: () => void; onAddExisting: () => void }) {
   const list = task.subtasks ?? [];
-  if (!list.length) return null;
+  if (!list.length && !canAdd) return null;
   return (
     <section className="mt-5 border-t border-border pt-4" aria-label="Sub-tasks">
       <div className="flex h-7 items-center gap-2">
         <h3 className="text-[12.5px] font-semibold">Sub-tasks</h3>
         {task.children && task.children.total > 0 && <ProgressChip summary={task.children} />}
+        {canAdd && (
+          // VEC-428: a new task filed under this one, or an existing task moved here.
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              data-add-subtask=""
+              className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-accent"
+            >
+              <PlusIcon className="size-3.5" /> Add sub-task
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuItem className="gap-2.5" onSelect={() => window.setTimeout(onNew, 0)}>
+                <FilePlusIcon className="size-4" /> New sub-task
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-2.5" onSelect={onAddExisting}>
+                <ListPlusIcon className="size-4" /> Add existing task…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
-      <ul className="mt-1 flex flex-col">
-        {list.map((d) => (
-          <RefRow key={d.id} refTask={d} />
-        ))}
-      </ul>
+      {list.length ? (
+        <ul className="mt-1 flex flex-col">
+          {list.map((d) => (
+            <RefRow key={d.id} refTask={d} />
+          ))}
+        </ul>
+      ) : (
+        <p className="py-1 text-[12.5px] text-faint">No sub-tasks yet. Break it down with a new task, or move an existing one here.</p>
+      )}
     </section>
   );
 }
