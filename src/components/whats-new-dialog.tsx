@@ -482,7 +482,8 @@ function Tour({
                     aria-label={`Change ${i + 1}: ${e.title}`}
                     aria-current={i === index ? "step" : undefined}
                     onClick={() => go(i)}
-                    className="group grid h-7 w-5 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    // 16 px a dot on phones (VEC-437): ten at 20 px plus Back and Next overflow a 390 px footer.
+                    className="group grid h-7 w-5 place-items-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring max-sm:w-4"
                   >
                     <span
                       className={cn(
@@ -494,7 +495,11 @@ function Tour({
                 ))}
               </div>
             )}
-            <span className="font-mono text-[12px] text-faint tabular-nums" aria-hidden>
+            {/* On phones the dots already show the position, so the counter only shows there past the dot limit. */}
+            <span
+              className={cn("shrink-0 font-mono text-[12px] whitespace-nowrap text-faint tabular-nums", n <= 10 && "max-sm:hidden")}
+              aria-hidden
+            >
               {index + 1} / {n}
             </span>
           </div>
