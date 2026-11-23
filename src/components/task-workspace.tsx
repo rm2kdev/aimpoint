@@ -22,12 +22,14 @@ import { FormSourceChip } from "@/components/task-source";
 import { applyFilters, comparator, FilterChips, FilterMenu, filterCount, SortMenu, useViewState, type SortKey } from "@/components/view-options";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { SortableList, useDragSelector, useDropTarget, type DragItem, type SortableHandleProps } from "@/components/ui/sortable-list";
+import { SortableList, useDragSelector, useDropTarget, useNestState, type DragItem, type NestOptions, type SortableHandleProps } from "@/components/ui/sortable-list";
 import { useDragStore } from "@/components/ui/drag-provider";
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { compareRank, rankBetween } from "@/lib/rank";
-import { TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
+import { NEST_DWELL_MS, NEST_ZONE_BAND, TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
+import { canNestOnto, type NestCheck, type NestTarget } from "@/lib/parent-link-core";
+import { useSetParent } from "@/components/subtask-actions";
 import { projectSettingsPath } from "@/lib/paths";
 import { isClosedCategory, matchStatus, STATUS_STAGES, type Status, type StatusCategory, type Task, type TaskType } from "@/lib/types";
 import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
@@ -532,12 +534,54 @@ export function TaskWorkspace({
     if (where === "bottom" && i >= 0 && i < g.tasks.length - 1) void moveTask(task, { afterKey: last.key });
   };
 
+  /**
+   * Dwell-to-nest (VEC-447/449): may the dragged item go under the row `rowId`? Mirrors the server's parent rules
+   * (canNestOnto); a refused row has no nest zone, so it never blinks and a drop there is a plain move.
+   */
+  const setParent = useSetParent();
+  const nestTarget = (t: Task): NestTarget => ({ id: t.id, key: t.key, parentId: t.parentId, parentKey: t.parentKey, archived: !!t.archivedAt });
+  const nestCheck = (item: DragItem, rowId: string): NestCheck | null => {
+    const dragged = tasks.get(item.id) ?? (item.data as Task | undefined);
+    const target = tasks.get(rowId);
+    if (!dragged || !target) return null;
+    const root = target.parentId ? (tasks.get(target.parentId) ?? latest.current.get(target.parentId)) : undefined;
+    return canNestOnto(
+      { ...nestTarget(dragged), hasChildren: (dragged.children?.total ?? 0) > 0, createdBy: dragged.createdBy },
+      nestTarget(target),
+      { id: me.id, isAdmin },
+      root ? nestTarget(root) : null,
+    );
+  };
+  /** Released on an armed row: the dragged task goes under it (or under its parent, the server flattens). Status, project and rank stay. */
+  const nestDrop = async (item: DragItem, rowId: string) => {
+    const t = tasks.get(item.id) ?? (item.data as Task | undefined);
+    const target = tasks.get(rowId);
+    const check = nestCheck(item, rowId);
+    if (!t || !target || !check) return;
+    if (!check.ok) return void toast.error(check.error);
+    // Local echo: it shows under its new parent at once (opened, so the row doesn't vanish into a folded group).
+    upsert({ ...t, parentId: check.parentId, parentKey: check.parentKey });
+    if (grouping) expandedStore.set(check.parentId, true);
+    const saved = await setParent(t, target, { drop: true });
+    if (!saved) upsert(t);
+  };
+
   // Rows are memoised (VEC-73): give them callbacks with one identity for the view's lifetime, which call
   // the latest version of each action through a ref.
-  const actions = useRef({ patchTask, setArchived, moveToEdge, open, seen, dragHint });
+  const actions = useRef({ patchTask, setArchived, moveToEdge, open, seen, dragHint, nestCheck, nestDrop });
   useLayoutEffect(() => {
-    actions.current = { patchTask, setArchived, moveToEdge, open, seen, dragHint };
+    actions.current = { patchTask, setArchived, moveToEdge, open, seen, dragHint, nestCheck, nestDrop };
   });
+  // One identity for the view's lifetime, so the status lists don't re-register per render.
+  const nest = useMemo<NestOptions>(
+    () => ({
+      dwellMs: NEST_DWELL_MS,
+      band: NEST_ZONE_BAND,
+      accepts: (item, rowId) => !!actions.current.nestCheck(item, rowId)?.ok,
+      onNest: (item, rowId) => void actions.current.nestDrop(item, rowId),
+    }),
+    [],
+  );
   const detachedSig = useMemo(() => [...layout.detached].join(","), [layout.detached]);
   const detached = useMemo(() => new Set(detachedSig ? detachedSig.split(",") : []), [detachedSig]);
   const rowActions = useMemo<RowActions>(
@@ -748,6 +792,8 @@ export function TaskWorkspace({
                     getData={(t) => t}
                     handle
                     disabled={!manual}
+                    // Hold a dragged task on the middle of a row until it blinks, then release: a sub-task of it (VEC-449).
+                    nest={nest}
                     onReorder={(ids, { movedId, toIndex }) => {
                       const t = g.tasks.find((x) => x.id === movedId);
                       if (!t) return;
@@ -940,6 +986,8 @@ const TaskRow = memo(function TaskRow({
   const onPatch = (patch: TaskPatch) => actions.patch(task, patch);
   const onDragHint = dragHints ? (canEdit: boolean) => actions.dragHint(task, canEdit) : undefined;
   const { rowRef } = actions;
+  // VEC-449: a dragged task is held over this row's middle ("over"), or has dwelt there and will nest on release ("armed").
+  const nest = useNestState(task.id);
   const refCb = useCallback((el: HTMLDivElement | null) => rowRef(task.id, el), [rowRef, task.id]);
   const statusOptions = useStatusOptions(task.projectId);
   const access = taskAccess(task, me.id, isAdmin);
@@ -970,6 +1018,9 @@ const TaskRow = memo(function TaskRow({
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
       // The teammate highlight is keyed on data-live so the drag card can drop it (VEC-105).
       data-live={fresh ? "" : undefined}
+      data-nest={nest ?? undefined}
+      // The nest zone is this row's middle, not its group's (an expanded parent's sub-tasks render below it).
+      data-nest-zone=""
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
         // VEC-412: a row with a progress chip or Part of link keeps at least 11rem for the title cell (the chip and
@@ -982,6 +1033,10 @@ const TaskRow = memo(function TaskRow({
         "pointer-coarse:select-none",
         dragging && "cursor-grabbing",
         selected ? "bg-selected" : fresh ? "data-live:bg-live data-live:shadow-[inset_0_0_0_1px_var(--live-border)]" : "hover:bg-accent data-[state=open]:bg-accent",
+        // Nest target (VEC-449), like a spring-loaded sidebar project: a faint ring while held, then two quick
+        // flashes and a steady highlight once releasing would make the dragged task a sub-task of this one.
+        nest === "over" && "shadow-[inset_0_0_0_1px_color-mix(in_oklab,var(--color-brand)_45%,transparent)]",
+        nest === "armed" && "spring-blink bg-brand/10 shadow-[inset_0_0_0_1px_var(--color-brand)] hover:bg-brand/10",
       )}
     >
       <LazyPicker

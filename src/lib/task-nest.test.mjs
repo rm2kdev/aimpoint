@@ -16,6 +16,22 @@ const rows = [
   { start: 84, end: 124 },
 ];
 
+test("nestZoneAt with zone(i): the band applies to the row's zone part, asked only for the row under pos (VEC-449)", () => {
+  // Row 0 is an expanded parent: 40 px parent row + two 36 px sub-task rows in one 120 px item.
+  const group = [{ start: 0, end: 120 }, { start: 122, end: 162 }];
+  const asked = [];
+  const zone = (i) => (asked.push(i), i === 0 ? { start: 0, end: 40 } : group[i]);
+  assert.equal(nestZoneAt(group, 20, 0.5, -1, zone), 0); // middle of the parent row
+  assert.equal(nestZoneAt(group, 60, 0.5, -1, zone), -1); // the whole item's middle is a sub-task row: no zone
+  assert.equal(nestZoneAt(group, 5, 0.5, -1, zone), -1); // parent row's top edge
+  assert.equal(nestZoneAt(group, 142, 0.5, -1, zone), 1); // plain row: its own span
+  assert.equal(nestZoneAt(group, 142, 0.5, 1, zone), -1); // skipped (lifted)
+  assert.deepEqual([...new Set(asked)].sort(), [0, 1]); // never asked for rows away from pos
+  asked.length = 0;
+  nestZoneAt(group, 20, 0.5, -1, zone);
+  assert.deepEqual(asked, [0]);
+});
+
 test("nestZoneAt: the middle half of a row is its nest zone, the edges are not", () => {
   assert.equal(nestZoneAt(rows, 20), 0);
   assert.equal(nestZoneAt(rows, 10), 0); // inset 10: zone is [10, 30]
@@ -198,7 +214,7 @@ test("provider: the nest dwell is the generic hover keyed per row, so leaving th
 });
 
 test("provider: the zone is hit-tested on shifted rows with the lifted row skipped, and sticks the gap", () => {
-  assert.match(provider, /nestZoneAt\(shown, pos, opts\.band, from\)/);
+  assert.match(provider, /nestZoneAt\(shown, pos, opts\.band, from, zone\)/);
   assert.match(provider, /nestGap\(prev, nest\.index\)/);
 });
 

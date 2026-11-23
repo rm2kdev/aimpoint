@@ -33,10 +33,13 @@ export function ParentBlockedNote({ reason }: { reason: string | null }) {
   return <p className="px-1.5 pt-0.5 pb-1 text-[11.5px] leading-snug text-muted-foreground">{reason}, so it can&rsquo;t go under another task.</p>;
 }
 
-/** Sets or clears a task's parent, toasts the result, and echoes it to open lists. Resolves to the saved task, or null. */
+/**
+ * Sets or clears a task's parent, toasts the result, and echoes it to open lists. Resolves to the saved task, or null.
+ * `drop`: it was dragged onto the parent's row in a list (VEC-449), so the toast says "Moved X under Y".
+ */
 export function useSetParent() {
   const { org } = useOrgBase();
-  return async (task: Pick<Task, "id" | "key" | "parentKey">, parent: Pick<Task, "id" | "key"> | null): Promise<Task | null> => {
+  return async (task: Pick<Task, "id" | "key" | "parentKey">, parent: Pick<Task, "id" | "key"> | null, opts?: { drop?: boolean }): Promise<Task | null> => {
     const r = await updateTask(org.slug, task.id, { parentId: parent?.id ?? null });
     if (!r.ok) {
       toast.error(r.error ?? "That didn't go through. Try again.");
@@ -44,10 +47,11 @@ export function useSetParent() {
     }
     const saved = r.data!;
     emitLocalTask(saved);
+    const made = (key: string) => (opts?.drop ? `Moved ${task.key} under ${key}` : `Made ${task.key} a sub-task of ${key}`);
     if (!parent) toast.success(`Removed ${task.key} from ${task.parentKey ?? "its parent task"}`);
     else if (saved.parentKey && saved.parentKey !== parent.key)
-      toast.success(`Made ${task.key} a sub-task of ${saved.parentKey}`, { description: `${parent.key} is a sub-task of ${saved.parentKey}, so it went there.` });
-    else toast.success(`Made ${task.key} a sub-task of ${saved.parentKey ?? parent.key}`);
+      toast.success(made(saved.parentKey), { description: `${parent.key} is a sub-task of ${saved.parentKey}, so it went there.` });
+    else toast.success(made(saved.parentKey ?? parent.key));
     return saved;
   };
 }

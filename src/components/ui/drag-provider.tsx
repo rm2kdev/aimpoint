@@ -188,7 +188,24 @@ function measure(list: HTMLUListElement) {
   const originY = box.top + list.clientTop - list.scrollTop
   const rows = Array.from(list.querySelectorAll<HTMLElement>(":scope > li[data-sortable-id]"))
   const spans: Span[] = rows.map((row) => ({ start: row.offsetTop, end: row.offsetTop + row.offsetHeight }))
-  return { box, originY, rows, spans }
+  return { box, originY, rows, spans, zones: [] as (Span | undefined)[] }
+}
+
+/**
+ * Row `i`'s nest-zone extent (VEC-449), in the same coordinates as its span. A row may mark the part of itself that
+ * stands for it as a target with `data-nest-zone` (a parent row whose sub-tasks render below it in the same item),
+ * so the zone is the middle of that part, not of the whole item. Read on first use and kept with the measurement
+ * (only rows the pointer reaches pay for it); a screen-rect difference inside one row, so its transform cancels out.
+ */
+function zoneOf(m: ReturnType<typeof measure>, i: number): Span {
+  const hit = m.zones[i]
+  if (hit) return hit
+  const row = m.rows[i]
+  const z = row.querySelector<HTMLElement>("[data-nest-zone]")
+  const top = z ? z.getBoundingClientRect().top - row.getBoundingClientRect().top : 0
+  const zone = z ? { start: m.spans[i].start + top, end: m.spans[i].start + top + z.offsetHeight } : m.spans[i]
+  m.zones[i] = zone
+  return zone
 }
 
 /** How long rows take to slide aside and a list's extra room to open (VEC-96); sortable-list.tsx matches it. */
@@ -730,13 +747,16 @@ export function createDragStore() {
   const nestOver = (reg: ListRegistration, item: DragItem, m: ReturnType<typeof measure>, pos: number, from: number) => {
     const opts = reg.nest!
     const shift = gapped.get(reg.listId)?.offsets
+    const dy = (i: number) => shift?.get(m.rows[i]) ?? 0
     const shown = shift?.size
-      ? m.spans.map((s, i) => {
-          const dy = shift.get(m.rows[i]) ?? 0
-          return dy ? { start: s.start + dy, end: s.end + dy } : s
-        })
+      ? m.spans.map((s, i) => (dy(i) ? { start: s.start + dy(i), end: s.end + dy(i) } : s))
       : m.spans
-    const index = nestZoneAt(shown, pos, opts.band, from)
+    // The zone inside the row under the pointer, where it shows now (VEC-449: a row's [data-nest-zone] part).
+    const zone = (i: number) => {
+      const z = zoneOf(m, i)
+      return dy(i) ? { start: z.start + dy(i), end: z.end + dy(i) } : z
+    }
+    const index = nestZoneAt(shown, pos, opts.band, from, zone)
     const id = index >= 0 ? m.rows[index].dataset.sortableId : undefined
     if (!id || id === item.id) return null
     return !opts.accepts || opts.accepts(item, id) ? { id, index } : null

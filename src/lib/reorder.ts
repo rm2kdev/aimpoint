@@ -150,14 +150,17 @@ export const NEST_BAND = 0.5;
 /**
  * Index of the row whose nest zone (its central `band` share of height, 0..1) holds `pos`, or -1 when `pos` is on
  * a row's edge band, in a gap, or off the rows. `skip` is a row to ignore (the lifted one), -1 for none.
+ * `zone(i)` (VEC-449): the part of row `i` the band applies to, inside its span (a parent row whose sub-tasks
+ * render under it in the same item); asked only for the row whose span holds `pos`. Default: the whole span.
  *
  * nestZoneAt([{start: 0, end: 40}], 20) -> 0;  nestZoneAt([{start: 0, end: 40}], 5) -> -1 (top edge)
  */
-export function nestZoneAt(spans: readonly Span[], pos: number, band: number = NEST_BAND, skip = -1): number {
+export function nestZoneAt(spans: readonly Span[], pos: number, band: number = NEST_BAND, skip = -1, zone?: (i: number) => Span): number {
   const b = Math.min(Math.max(band, 0), 1);
   for (let i = 0; i < spans.length; i++) {
     if (i === skip) continue;
-    const { start, end } = spans[i];
+    if (zone && (pos < spans[i].start || pos > spans[i].end)) continue;
+    const { start, end } = zone ? zone(i) : spans[i];
     const h = end - start;
     if (h <= 0 || b === 0) continue;
     const inset = (h * (1 - b)) / 2;
