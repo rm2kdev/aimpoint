@@ -138,3 +138,43 @@ export function adjacentList(order: readonly string[], current: string, dir: -1 
   if (i < 0) return null;
   return order[i + dir] ?? null;
 }
+
+// ---- Nesting onto a row (VEC-448) ------------------------------------------------------------
+// A row in a list can also be a drop target of its own: the central band of its height is "onto the row" (the
+// nest zone), the edges above and below stay the insertion points between rows. Positions are in the same space
+// as `Span`s, measured where the rows show now (gap shifts included).
+
+/** Default share of a row's height, centred, that counts as onto the row. */
+export const NEST_BAND = 0.5;
+
+/**
+ * Index of the row whose nest zone (its central `band` share of height, 0..1) holds `pos`, or -1 when `pos` is on
+ * a row's edge band, in a gap, or off the rows. `skip` is a row to ignore (the lifted one), -1 for none.
+ *
+ * nestZoneAt([{start: 0, end: 40}], 20) -> 0;  nestZoneAt([{start: 0, end: 40}], 5) -> -1 (top edge)
+ */
+export function nestZoneAt(spans: readonly Span[], pos: number, band: number = NEST_BAND, skip = -1): number {
+  const b = Math.min(Math.max(band, 0), 1);
+  for (let i = 0; i < spans.length; i++) {
+    if (i === skip) continue;
+    const { start, end } = spans[i];
+    const h = end - start;
+    if (h <= 0 || b === 0) continue;
+    const inset = (h * (1 - b)) / 2;
+    if (pos >= start + inset && pos <= end - inset) return i;
+  }
+  return -1;
+}
+
+/**
+ * The gap to show while the pointer is over the nest zone of row `row` (its index). The gap must not move that row:
+ * rows only slide when the gap changes, and a row sliding away from a pointer that stays still leaves it over a
+ * hole while the drag still says it's on the row (no pointer move, no new hit test). So keep the gap of the last
+ * hit test on this list (`prev`): it's what put the row where the pointer found it, and it also stops the midpoint
+ * rule from flipping the gap as the pointer crosses the row's middle. Coming from elsewhere (`prev` null): the gap
+ * right after the row, which leaves the row itself where it shows (in its own list or another). Off every zone the
+ * caller uses the midpoint gap as usual.
+ */
+export function nestGap(prev: { gap: number } | null, row: number): number {
+  return prev ? prev.gap : row + 1;
+}

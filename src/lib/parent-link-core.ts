@@ -172,3 +172,68 @@ export function selectBackfill(tasks: BackfillTask[]): Map<string, string> {
   // Every value is a root (it has no parent, picked or existing), so no parent is also a child.
   return out;
 }
+
+/** The dragged task, for canNestOnto. */
+export interface NestDragged {
+  id: string;
+  key: string;
+  parentId: string | null;
+  parentKey?: string | null;
+  /** Whether it has sub-tasks (the client's `children.total > 0`). */
+  hasChildren: boolean;
+  archived: boolean;
+  createdBy: string;
+}
+
+/** The row it's held over. `parentKey` names the parent a sub-task target flattens to. */
+export interface NestTarget {
+  id: string;
+  key: string;
+  parentId: string | null;
+  parentKey?: string | null;
+  archived: boolean;
+}
+
+export type NestRefusal = "no-access" | "archived" | "self" | "cycle" | "current-parent" | "has-children" | "target-archived";
+
+export type NestCheck =
+  /** `parentId`/`parentKey`: where it would go. `flattenedFrom`: the target's key when that was a sub-task and it goes under the target's parent. */
+  | { ok: true; parentId: string; parentKey: string; flattenedFrom?: string }
+  | { ok: false; reason: NestRefusal; error: string };
+
+/**
+ * VEC-447/448: may the person drop `dragged` onto `target` to make it a sub-task? The client-side mirror of what the
+ * server does for a parent change (planParentChange / checkParentLink behind updateTaskAs), so a list can refuse the
+ * nest zone up front instead of arming a drop the server refuses:
+ * - only the dragged task's creator or an admin may set its parent (taskAccess "full", same as Make sub-task of);
+ * - not an archived task, not onto itself, not onto its own sub-task (a cycle);
+ * - a target that is itself a sub-task flattens to that sub-task's parent (one level only), returned as `parentId`
+ *   with `flattenedFrom` so the UI can say where it goes; `root` is that parent when the caller has it (for its
+ *   archived flag), otherwise it's taken from the target's `parentId`/`parentKey` and the server re-checks;
+ * - onto its current parent (or a sibling, which flattens there) is a no-op and refused as such;
+ * - a task with sub-tasks of its own can't become one; an archived (resolved) parent is refused.
+ */
+export function canNestOnto(
+  dragged: NestDragged,
+  target: NestTarget,
+  actor: { id: string; isAdmin: boolean },
+  root?: NestTarget | null,
+): NestCheck {
+  const no = (reason: NestRefusal, error: string): NestCheck => ({ ok: false, reason, error });
+  if (!actor.isAdmin && dragged.createdBy !== actor.id) return no("no-access", `Only ${dragged.key}'s creator or an admin can make it a sub-task.`);
+  if (dragged.archived) return no("archived", `${dragged.key} is archived.`);
+  if (target.id === dragged.id) return no("self", "A task can't be its own parent.");
+  if (target.parentId === dragged.id) return no("cycle", `${target.key} is a sub-task of ${dragged.key}, so it can't be its parent.`);
+  let parent: ParentCandidate = { id: target.id, key: target.key, parentId: target.parentId, parentKey: target.parentKey ?? null, archived: target.archived };
+  let flattenedFrom: string | undefined;
+  if (target.parentId) {
+    const r = root && root.id === target.parentId ? root : null;
+    parent = { id: target.parentId, key: r?.key ?? target.parentKey ?? "its parent", parentId: null, archived: r?.archived ?? false };
+    flattenedFrom = target.key;
+  }
+  if (parent.id === dragged.parentId) return no("current-parent", `${dragged.key} is already a sub-task of ${dragged.parentKey ?? parent.key}.`);
+  // The server's rules decide the rest, with its wording.
+  const check = checkParentLink({ id: dragged.id, key: dragged.key, hasChildren: dragged.hasChildren }, parent);
+  if (!check.ok) return no(dragged.hasChildren ? "has-children" : parent.archived ? "target-archived" : "cycle", check.error);
+  return { ok: true, parentId: parent.id, parentKey: parent.key, ...(flattenedFrom ? { flattenedFrom } : {}) };
+}

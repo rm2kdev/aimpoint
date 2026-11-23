@@ -4,12 +4,12 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 import {
   DragProvider, useDragSelector, useDragStore,
-  type DragItem, type ListRegistration, type MoveDetail, type ReorderDetail,
+  type DragItem, type ListRegistration, type MoveDetail, type NestOptions, type ReorderDetail,
 } from "@/components/ui/drag-provider"
 
 export {
-  DragProvider, useDropTarget, useDragState, useDragSelector,
-  type DragItem, type DragSnapshot, type DropTargetOptions, type MoveDetail, type ReorderDetail,
+  DragProvider, useDropTarget, useDragState, useDragSelector, useNestState,
+  type DragItem, type DragSnapshot, type DropTargetOptions, type MoveDetail, type NestOptions, type ReorderDetail,
 } from "@/components/ui/drag-provider"
 
 /**
@@ -44,6 +44,12 @@ export {
  *
  * External targets (e.g. sidebar project rows): `useDropTarget(id, { onHoverStart,
  * onHoverEnd, onDrop, accepts, dwellMs, onDwell })` returns `{ ref, isOver, canDrop, dwell }`.
+ *
+ * Rows as drop targets (dwell-to-nest, VEC-448): pass `nest={{ accepts, dwellMs, onNest }}`. The middle band of
+ * each row (`band`, default half its height) becomes a nest zone and its top/bottom edges stay reorder insertion
+ * points. Hovering a row's zone keeps the gap where it was (nothing slides under the pointer); after `dwellMs`
+ * the row arms, and a release then calls `onNest(item, rowId)` instead of moving the item. Leaving the zone first
+ * cancels the dwell. A row reads its state with `useNestState(rowId)` ("over" | "armed" | null).
  *
  * Behaviour:
  * - The session lives in `DragProvider` (mounted in the app shell), so a drag started in one
@@ -120,6 +126,8 @@ export type SortableListProps<T> = {
   onMove?: (id: string, detail: MoveDetail) => void
   /** Refuse some items from other lists. */
   accepts?: (item: DragItem) => boolean
+  /** Rows double as dwell-to-nest drop targets (VEC-448). Pointer drags only. */
+  nest?: NestOptions
   /** Text in the drop zone an empty linked list shows during a drag. */
   emptyLabel?: string
   /** Only start pointer drags from inside an element carrying `handleProps`. */
@@ -353,6 +361,7 @@ function registration<T>(p: SortableListProps<T>, listId: string, group: string,
     onReorder: p.onReorder,
     onMove: p.onMove,
     accepts: p.accepts,
+    nest: p.nest,
   }
 }
 

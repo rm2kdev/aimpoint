@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import {
-  adjacentList, dropIndex, gapOffset, indexToGap, isNoopDrop, moveItem, pickBox,
+  adjacentList, dropIndex, gapOffset, indexToGap, isNoopDrop, moveItem, nestGap, nestZoneAt, pickBox,
   type Span,
 } from "@/lib/reorder"
 
@@ -26,9 +26,13 @@ export type DragItem = {
   data?: unknown
 }
 
-/** Where a drop would land right now. `gap` is an insertion point (see `@/lib/reorder`). */
+/**
+ * Where a drop would land right now. `gap` is an insertion point (see `@/lib/reorder`). `nest` (VEC-448): the
+ * pointer is in the nest zone of that row of the list (a list with `nest` options); `nestArmed` once it has dwelt
+ * there for the list's `nest.dwellMs`. Only an armed nest drops onto the row; otherwise it's a move to `gap`.
+ */
 export type DropOver =
-  | { kind: "list"; listId: string; gap: number; lineTop: number | null }
+  | { kind: "list"; listId: string; gap: number; lineTop: number | null; nest?: string; nestArmed?: boolean }
   | { kind: "target"; id: string }
 
 export type DragSnapshot = {
@@ -63,6 +67,29 @@ export type ListRegistration = {
   onReorder: (ids: string[], detail: ReorderDetail) => void
   onMove?: (id: string, detail: MoveDetail) => void
   accepts?: (item: DragItem) => boolean
+  nest?: NestOptions
+}
+
+/**
+ * Dwell-to-nest (VEC-448): the list's rows double as drop targets. The central `band` of a row's height is its
+ * nest zone and the edges stay reorder insertion points, so a pointer drag can still slot an item between rows.
+ * Holding the pointer in one row's nest zone for `dwellMs` arms it (`DropOver.nestArmed`, read with
+ * `useNestState`); releasing while armed calls `onNest` instead of moving the item. Leaving the zone (onto an edge,
+ * another row, out of the list) before then cancels the dwell; a release there is an ordinary move. Pointer drags
+ * only; keyboard moves never nest.
+ */
+export type NestOptions = {
+  /** May `item` be dropped onto row `rowId`? Refused rows are plain sortable rows (no zone). */
+  accepts?: (item: DragItem, rowId: string) => boolean
+  dwellMs: number
+  /** Fires once per hover, when the row arms. */
+  onDwell?: (item: DragItem, rowId: string) => void
+  /** Released while armed. */
+  onNest: (item: DragItem, rowId: string) => void
+  /** Share of the row's height, centred, that is the nest zone (0..1). Defaults to `NEST_BAND` (half). */
+  band?: number
+  /** Name used in announcements ("dropped onto Fix login"). Defaults to the row's label. */
+  label?: (rowId: string) => string
 }
 
 export type DropTargetOptions = {
@@ -201,7 +228,17 @@ function sameOver(a: DropOver | null, b: DropOver | null) {
   if (!a || !b || a.kind !== b.kind) return false
   if (a.kind === "target") return a.id === (b as typeof a).id
   const c = b as typeof a
-  return a.listId === c.listId && a.gap === c.gap && a.lineTop === c.lineTop
+  return a.listId === c.listId && a.gap === c.gap && a.lineTop === c.lineTop && a.nest === c.nest && !!a.nestArmed === !!c.nestArmed
+}
+
+/** What a drag is hovering for dwell purposes: an external target, or a row's nest zone (VEC-448). */
+type HoverSpot = { key: string; target?: string; nest?: { listId: string; id: string } }
+
+function hoverSpot(over: DropOver | null | undefined): HoverSpot | null {
+  if (!over) return null
+  if (over.kind === "target") return { key: `target:${over.id}`, target: over.id }
+  if (over.nest) return { key: `nest:${over.listId}:${over.nest}`, nest: { listId: over.listId, id: over.nest } }
+  return null
 }
 
 /** Drags in progress across every store on the page (normally 0 or 1). */
@@ -226,7 +263,7 @@ export function createDragStore() {
   /** `rehitNow` hit-tests again at once (no frame wait), with the path-independent rule (VEC-104). */
   let pending: { cleanup: () => void; rehit: () => void; rehitNow: () => void } | null = null
   let pendingFocus: { listId: string; id: string } | null = null
-  let hover: { id: string; at: number; timer?: ReturnType<typeof setTimeout> } | null = null
+  let hover: (HoverSpot & { at: number; timer?: ReturnType<typeof setTimeout>; fired?: boolean }) | null = null
   const endListeners = new Set<(item: DragItem, dropped: boolean) => void>()
 
   // Layout reads during a pointer drag are cached until something can have moved: a scroll, a resize, a
@@ -592,15 +629,32 @@ export function createDragStore() {
     const h = hover
     hover = null
     if (h.timer) clearTimeout(h.timer)
-    target(h.id)?.opts.onHoverEnd?.(item, { dropped, dwellMs: performance.now() - h.at })
+    if (h.target) target(h.target)?.opts.onHoverEnd?.(item, { dropped, dwellMs: performance.now() - h.at })
   }
 
-  const startHover = (item: DragItem, id: string) => {
+  const startHover = (item: DragItem, spot: HoverSpot) => {
+    hover = { ...spot, at: performance.now() }
+    const h = hover
+    if (spot.nest) {
+      // A row's nest zone (VEC-448): the dwell arms it. Moving off the zone ends the hover first (set() below), so a
+      // timer that fires belongs to a pointer still resting on this row.
+      const { listId, id } = spot.nest
+      const opts = list(listId)?.nest
+      if (!opts) return
+      h.timer = setTimeout(() => {
+        if (hover !== h || !snap) return
+        const o = snap.over
+        if (o?.kind !== "list" || o.listId !== listId || o.nest !== id) return
+        h.fired = true
+        list(listId)?.nest?.onDwell?.(snap.item, id)
+        set({ ...snap, over: { ...o, nestArmed: true } })
+      }, Math.max(0, opts.dwellMs))
+      return
+    }
+    const id = spot.target!
     const opts = target(id)?.opts
-    hover = { id, at: performance.now() }
     opts?.onHoverStart?.(item)
     if (opts?.dwellMs !== undefined && opts.onDwell) {
-      const h = hover
       h.timer = setTimeout(() => {
         if (hover === h && snap) target(id)?.opts.onDwell?.(snap.item)
       }, opts.dwellMs)
@@ -610,8 +664,8 @@ export function createDragStore() {
   const set = (next: DragSnapshot | null) => {
     const prev = snap
     if (prev && next && prev.item === next.item && prev.mode === next.mode && sameOver(prev.over, next.over)) return
-    const prevTarget = prev?.over?.kind === "target" ? prev.over.id : null
-    const nextTarget = next?.over?.kind === "target" ? next.over.id : null
+    const prevSpot = hoverSpot(prev?.over)
+    const nextSpot = hoverSpot(next?.over)
     if (!prev && next) activeDrags++
     else if (prev && !next) {
       activeDrags--
@@ -621,9 +675,9 @@ export function createDragStore() {
     }
     snap = next
     if (next?.mode === "pointer") applyGaps()
-    if (prevTarget !== nextTarget && prev) {
+    if (prevSpot?.key !== nextSpot?.key && prev) {
       endHover(prev.item, false)
-      if (next && nextTarget) startHover(next.item, nextTarget)
+      if (next && nextSpot) startHover(next.item, nextSpot)
     }
     emit()
   }
@@ -663,7 +717,29 @@ export function createDragStore() {
     }
     const gap = from >= 0 ? indexToGap(from, to) : to
     // A pointer drag shows where it lands by opening a gap there (applyGaps), not with the line.
-    return { kind: "list", listId: reg.listId, gap, lineTop: null }
+    const nest = reg.nest ? nestOver(reg, item, m, pos, from) : null
+    if (!nest) return { kind: "list", listId: reg.listId, gap, lineTop: null }
+    // On a row's nest zone the gap never moves that row (nestGap): it keeps the last gap on this list, or opens
+    // right after the row when the pointer comes from elsewhere.
+    const prev = snap?.over?.kind === "list" && snap.over.listId === reg.listId && !freshHit ? snap.over : null
+    const armed = !!hover?.fired && hover.nest?.listId === reg.listId && hover.nest.id === nest.id
+    return { kind: "list", listId: reg.listId, gap: nestGap(prev, nest.index), lineTop: null, nest: nest.id, nestArmed: armed }
+  }
+
+  /** The row whose nest zone holds the pointer, where the rows show now (gap shifts included), or null (VEC-448). */
+  const nestOver = (reg: ListRegistration, item: DragItem, m: ReturnType<typeof measure>, pos: number, from: number) => {
+    const opts = reg.nest!
+    const shift = gapped.get(reg.listId)?.offsets
+    const shown = shift?.size
+      ? m.spans.map((s, i) => {
+          const dy = shift.get(m.rows[i]) ?? 0
+          return dy ? { start: s.start + dy, end: s.end + dy } : s
+        })
+      : m.spans
+    const index = nestZoneAt(shown, pos, opts.band, from)
+    const id = index >= 0 ? m.rows[index].dataset.sortableId : undefined
+    if (!id || id === item.id) return null
+    return !opts.accepts || opts.accepts(item, id) ? { id, index } : null
   }
 
   /** Set by the last hit test: the pointer is over an opaque target that refuses the item (VEC-78). */
@@ -724,6 +800,15 @@ export function createDragStore() {
     if (!reg) {
       announce(cancelled())
       ended(item, false)
+      return null
+    }
+    if (over.nest && over.nestArmed && reg.nest) {
+      // Released on an armed row (VEC-448): onto it, not into the list.
+      const onto = reg.nest.label?.(over.nest) ?? reg.itemLabel(over.nest) ?? over.nest
+      reg.nest.onNest(item, over.nest)
+      endHover(item, true)
+      announce(`${name} dropped onto ${onto}.`)
+      ended(item, true)
       return null
     }
     const ids = reg.ids()
@@ -948,7 +1033,9 @@ export function createDragStore() {
       update()
       const over = snap?.over ?? null
       const reg = over?.kind === "list" ? list(over.listId) : undefined
-      const stays = !over || (over.kind === "list" && !!reg && isNoopDrop(true, fromIndexIn(reg, item), over.gap))
+      // A nest drop leaves the item in its list too: the rows slide back and the card settles into its slot.
+      const stays =
+        !over || (over.kind === "list" && !!reg && (isNoopDrop(true, fromIndexIn(reg, item), over.gap) || (!!over.nestArmed && !!reg.nest)))
       // The card glides into the row wherever it renders next: the open gap, or its own slot after a cancel.
       if (ghost) settleGhost(item.id, ghost)
       ghost = null
@@ -1215,7 +1302,7 @@ export function createDragStore() {
       pending?.rehit()
       return () => {
         if (targets.get(id) !== ref) return
-        if (hover?.id === id) {
+        if (hover?.target === id) {
           if (hover.timer) clearTimeout(hover.timer)
           hover = null
         }
@@ -1230,7 +1317,7 @@ export function createDragStore() {
     blur,
     /** How long the current drag has hovered target `id` (ms), or null when it isn't over it. */
     dwell(id: string) {
-      return hover?.id === id ? performance.now() - hover.at : null
+      return hover?.target === id ? performance.now() - hover.at : null
     },
     /** After a keyboard drop, the receiving list focuses the moved row's handle once it renders. */
     takeFocus(listId: string, root: HTMLElement | null) {
@@ -1300,6 +1387,15 @@ export function useDragState(): DragSnapshot | null {
     store ? store.get : nullSnapshot,
     nullSnapshot,
   )
+}
+
+/**
+ * VEC-448: a row's nest state in the current drag, for the row to render: "over" while a pointer drag is in its
+ * nest zone (dwelling), "armed" once the dwell has passed (a release nests), null otherwise. A primitive, so only
+ * the row whose state changes re-renders.
+ */
+export function useNestState(rowId: string): "over" | "armed" | null {
+  return useDragSelector((d) => (d?.over?.kind === "list" && d.over.nest === rowId ? (d.over.nestArmed ? "armed" : "over") : null))
 }
 
 const noopSubscribe = () => () => {}
