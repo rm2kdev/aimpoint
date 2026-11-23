@@ -568,9 +568,13 @@ export function TaskWorkspace({
 
   // Rows are memoised (VEC-73): give them callbacks with one identity for the view's lifetime, which call
   // the latest version of each action through a ref.
-  const actions = useRef({ patchTask, setArchived, moveToEdge, open, seen, dragHint, nestCheck, nestDrop });
+  const rowLabel = (id: string) => {
+    const t = tasks.get(id);
+    return t ? `${t.key} ${t.title}` : id;
+  };
+  const actions = useRef({ patchTask, setArchived, moveToEdge, open, seen, dragHint, nestCheck, nestDrop, rowLabel });
   useLayoutEffect(() => {
-    actions.current = { patchTask, setArchived, moveToEdge, open, seen, dragHint, nestCheck, nestDrop };
+    actions.current = { patchTask, setArchived, moveToEdge, open, seen, dragHint, nestCheck, nestDrop, rowLabel };
   });
   // One identity for the view's lifetime, so the status lists don't re-register per render.
   const nest = useMemo<NestOptions>(
@@ -579,6 +583,8 @@ export function TaskWorkspace({
       band: NEST_ZONE_BAND,
       accepts: (item, rowId) => !!actions.current.nestCheck(item, rowId)?.ok,
       onNest: (item, rowId) => void actions.current.nestDrop(item, rowId),
+      // A nested sub-task row isn't a list item, so name it here for the announcement (VEC-451).
+      label: (rowId) => actions.current.rowLabel(rowId),
     }),
     [],
   );
@@ -1019,8 +1025,9 @@ const TaskRow = memo(function TaskRow({
       // The teammate highlight is keyed on data-live so the drag card can drop it (VEC-105).
       data-live={fresh ? "" : undefined}
       data-nest={nest ?? undefined}
-      // The nest zone is this row's middle, not its group's (an expanded parent's sub-tasks render below it).
-      data-nest-zone=""
+      // The nest zone is this row's middle, not its group's (an expanded parent's sub-tasks render below it). Each
+      // nested sub-task row is a zone of its own, named by its id (VEC-451): a drop there goes under its parent.
+      data-nest-zone={task.id}
       className={cn(
         "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
         // VEC-412: a row with a progress chip or Part of link keeps at least 11rem for the title cell (the chip and

@@ -46,8 +46,9 @@ export {
  * onHoverEnd, onDrop, accepts, dwellMs, onDwell })` returns `{ ref, isOver, canDrop, dwell }`.
  *
  * Rows as drop targets (dwell-to-nest, VEC-448): pass `nest={{ accepts, dwellMs, onNest }}`. The middle band of
- * each row (`band`, default half its height; of its first `[data-nest-zone]` element when it has one, e.g. a parent row
- * with its sub-tasks listed under it in the same item) becomes a nest zone and its top/bottom edges stay reorder insertion
+ * each row (`band`, default half its height; of its `[data-nest-zone]` parts when it has them, e.g. a parent row
+ * with its sub-tasks listed under it in the same item; a part with `data-nest-zone="<id>"` is a zone for row `id`,
+ * VEC-451) becomes a nest zone and its top/bottom edges stay reorder insertion
  * points. Hovering a row's zone keeps the gap where it was (nothing slides under the pointer); after `dwellMs`
  * the row arms, and a release then calls `onNest(item, rowId)` instead of moving the item. Leaving the zone first
  * cancels the dwell. A row reads its state with `useNestState(rowId)` ("over" | "armed" | null).

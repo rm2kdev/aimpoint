@@ -170,6 +170,18 @@ export function nestZoneAt(spans: readonly Span[], pos: number, band: number = N
 }
 
 /**
+ * VEC-451: which of a row's target parts holds `pos` (its own row first, then e.g. the sub-task rows listed under a
+ * parent in the same item), or -1 when `pos` falls between them. The caller then applies the band to that part, so
+ * each part is a nest zone of its own and the space between parts stays a reorder spot.
+ *
+ * zonePartAt([{start: 0, end: 40}, {start: 44, end: 80}], 60) -> 1;  ... 42 -> -1
+ */
+export function zonePartAt(parts: readonly Span[], pos: number): number {
+  for (let i = 0; i < parts.length; i++) if (pos >= parts[i].start && pos <= parts[i].end) return i;
+  return -1;
+}
+
+/**
  * The gap to show while the pointer is over the nest zone of row `row` (its index). The gap must not move that row:
  * rows only slide when the gap changes, and a row sliding away from a pointer that stays still leaves it over a
  * hole while the drag still says it's on the row (no pointer move, no new hit test). So keep the gap of the last

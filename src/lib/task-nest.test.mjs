@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { NEST_BAND, nestGap, nestZoneAt } from "./reorder.ts";
+import { NEST_BAND, nestGap, nestZoneAt, zonePartAt } from "./reorder.ts";
 import { NEST_BLINK_MS, NEST_DWELL_MS, NEST_ZONE_BAND, SPRING_BLINK_MS, SPRING_DELAY_MS } from "./task-drag.ts";
 import { canNestOnto, planParentChange } from "./parent-link-core.ts";
 import { taskAccess } from "./access.ts";
@@ -30,6 +30,38 @@ test("nestZoneAt with zone(i): the band applies to the row's zone part, asked on
   asked.length = 0;
   nestZoneAt(group, 20, 0.5, -1, zone);
   assert.deepEqual(asked, [0]);
+});
+
+test("zonePartAt + nestZoneAt: each nested sub-task row is a zone of its own, the space between parts reorders (VEC-451)", () => {
+  // Row 0: parent row [0, 40] + sub-task rows [44, 80] and [84, 120], one 120 px item.
+  const group = [{ start: 0, end: 120 }, { start: 122, end: 162 }];
+  const parts = [{ start: 0, end: 40 }, { start: 44, end: 80 }, { start: 84, end: 120 }];
+  assert.equal(zonePartAt(parts, 20), 0);
+  assert.equal(zonePartAt(parts, 62), 1);
+  assert.equal(zonePartAt(parts, 100), 2);
+  assert.equal(zonePartAt(parts, 42), -1); // between the parent row and its first sub-task
+  assert.equal(zonePartAt([], 10), -1);
+  // The provider's zone(i): the part holding pos, else the first part (which then misses).
+  let part;
+  const zone = (i) => (i === 0 ? (part = parts[Math.max(0, zonePartAt(parts, pos))]) : group[i]);
+  let pos = 62;
+  assert.equal(nestZoneAt(group, pos, 0.5, -1, zone), 0);
+  assert.equal(part, parts[1]); // onto the first sub-task row's middle
+  pos = 101;
+  assert.equal(nestZoneAt(group, pos, 0.5, -1, zone), 0);
+  assert.equal(part, parts[2]);
+  for (pos of [42, 46, 78, 86]) assert.equal(nestZoneAt(group, pos, 0.5, -1, zone), -1, `pos ${pos}`); // gaps and sub-task row edges
+  pos = 62;
+  assert.equal(nestZoneAt(group, pos, 0.5, 0, zone), -1); // the lifted parent carries its sub-tasks: no zone
+});
+
+test("nest zones: nested sub-task rows mark themselves by id and the provider resolves the part's row (VEC-451)", () => {
+  const ws = readFileSync(new URL("../components/task-workspace.tsx", import.meta.url), "utf8");
+  const prov = readFileSync(new URL("../components/ui/drag-provider.tsx", import.meta.url), "utf8");
+  assert.match(ws, /data-nest-zone=\{task\.id\}/);
+  assert.match(ws, /label: \(rowId\) => actions\.current\.rowLabel\(rowId\)/);
+  assert.match(prov, /id: z\.dataset\.nestZone \|\| own/);
+  assert.match(prov, /const id = index >= 0 \? part\?\.id : undefined/);
 });
 
 test("nestZoneAt: the middle half of a row is its nest zone, the edges are not", () => {
