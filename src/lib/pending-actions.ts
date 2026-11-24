@@ -43,6 +43,9 @@ function wireWindow() {
   window.addEventListener("online", () => pendingActions.retryAll());
 }
 
+/** Attaches the leave-page warning (and online retry) for work held outside the action queue, e.g. editor uploads. */
+export const ensureLeaveWarning = wireWindow;
+
 const noItems: readonly PendingItem[] = [];
 
 /**

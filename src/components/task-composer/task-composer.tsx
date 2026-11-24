@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, useTransition } from "react";
-import { RichEditor, uploadImage, type ImageUploader } from "@/components/rich-editor";
+import { RichEditor, type ImageUploader } from "@/components/rich-editor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -206,16 +206,21 @@ export function TaskComposer(p: TaskComposerProps) {
   const offered = offeredTypes(TASK_TYPES, p.type?.allowed);
   const statusOptions = p.status?.options ?? [];
 
-  /* uploads: count the ones in flight so sending waits for them */
-  const baseUpload: ImageUploader = p.upload ?? ((file) => uploadImage(p.orgSlug ?? "", file));
-  const upload: ImageUploader = async (file) => {
-    setUploading((n) => n + 1);
-    try {
-      return await baseUpload(file);
-    } finally {
-      setUploading((n) => n - 1);
-    }
-  };
+  /*
+   * uploads: a custom uploader (public form/project) is counted so sending waits for it. In-app uploads (VEC-455)
+   * don't block: the editor's images show at once and the caller saves them once they land (saveWhenUploaded).
+   */
+  const customUpload = p.upload;
+  const upload: ImageUploader | undefined = customUpload
+    ? async (file) => {
+        setUploading((n) => n + 1);
+        try {
+          return await customUpload(file);
+        } finally {
+          setUploading((n) => n - 1);
+        }
+      }
+    : undefined;
 
   const clearKey = (k: ComposerErrorKey) => setErrors((cur) => without(cur, k));
 

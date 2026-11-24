@@ -30,6 +30,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ImageLightbox, type LightboxImage } from "@/components/image-lightbox";
 import { EXPAND_IMAGE_EVENT, expandableImage, type ExpandImageDetail } from "@/components/image-node-view";
 import { isApplePlatform, linkClickAction, openLinkHint, openableHref } from "@/lib/link-open";
+import { createUploadQueue, type UploadQueue } from "@/lib/background-uploads-core";
+import { isPreviewUrl } from "@/lib/editor-uploads-core";
+import { editorUploadQueue, trackUploadQueue } from "@/components/editor-uploads";
 
 export async function uploadImage(orgSlug: string, file: File): Promise<string> {
   const body = new FormData();
@@ -80,35 +83,106 @@ function insertImageNode(tr: Transaction, node: PMNode, pos?: number) {
   return true;
 }
 
-function insertImages(editor: Editor, upload: ImageUploader, files: File[], pos?: number, onError?: (message: string) => void) {
+/**
+ * VEC-455: images show at once. Each file is inserted straight away from its local preview (marked `uploading`, so
+ * the node view veils it) and handed to an upload queue; `syncUploads` swaps the preview for the stored URL when the
+ * upload lands, or removes the image (the queue has toasted) when it fails. Several files go in one after another.
+ */
+function insertImages(editor: Editor, queue: UploadQueue, files: File[], pos?: number) {
   const images = files.filter((f) => f.type.startsWith("image/"));
   if (!images.length) return false;
-  for (const file of images) {
-    const id = toast.loading(`Uploading ${file.name || "image"}…`);
-    upload(file)
-      .then((src) => {
-        editor
-          .chain()
-          .focus()
-          .command(({ tr, state }) => insertImageNode(tr, state.schema.nodes.image.create({ src, alt: file.name }), pos))
-          .run();
-        // Chrome can keep a stale native caret when the cursor lands in a paragraph whose DOM node
-        // ProseMirror reused: the state says "after the image" but typing lands where the cursor was.
-        // Re-place the caret once Tiptap's own (deferred) focus has run.
-        requestAnimationFrame(() => {
-          if (editor.isDestroyed || !editor.view.hasFocus()) return;
-          editor.view.dom.ownerDocument.getSelection()?.removeAllRanges();
-          editor.view.focus();
-        });
-        toast.success("Image added", { id, duration: 1500 });
-      })
-      .catch((e: Error) => {
-        toast.error(e.message, { id });
-        onError?.(e.message);
-      });
-  }
+  images.forEach((file, i) => {
+    const src = queue.add(file);
+    editor
+      .chain()
+      .focus()
+      .command(({ tr, state }) => insertImageNode(tr, state.schema.nodes.image.create({ src, alt: file.name, uploading: true }), i === 0 ? pos : undefined))
+      .run();
+  });
+  // Chrome can keep a stale native caret when the cursor lands in a paragraph whose DOM node
+  // ProseMirror reused: the state says "after the image" but typing lands where the cursor was.
+  // Re-place the caret once Tiptap's own (deferred) focus has run.
+  requestAnimationFrame(() => {
+    if (editor.isDestroyed || !editor.view.hasFocus()) return;
+    editor.view.dom.ownerDocument.getSelection()?.removeAllRanges();
+    editor.view.focus();
+  });
   return true;
 }
+
+/** Loads `url` before an image switches to it, so the swap from the preview never flashes empty. */
+const preloaded = new Map<string, Promise<void>>();
+function preload(url: string) {
+  let p = preloaded.get(url);
+  if (!p) {
+    p = new Promise<void>((done) => {
+      const img = new window.Image();
+      img.onload = img.onerror = () => done();
+      img.src = url;
+    });
+    preloaded.set(url, p);
+  }
+  return p;
+}
+
+/**
+ * Brings the editor's uploading images in step with their queues: a finished upload's preview becomes the stored
+ * URL (once it has loaded), a failed or forgotten one is removed. Not part of undo history: undo takes back the
+ * insert, not the upload. Returns the messages of failures it removed, for `onUploadError`.
+ */
+function syncUploads(editor: Editor, queues: UploadQueue[], reported: Set<string>, onError?: (m: string) => void) {
+  if (editor.isDestroyed) return;
+  const find = (src: string) => {
+    for (const q of queues) {
+      const e = q.get(src);
+      if (e) return e;
+    }
+    return null;
+  };
+  const swaps: { pos: number; url: string }[] = [];
+  const drops: { pos: number; size: number }[] = [];
+  const waiting: string[] = [];
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name !== "image") return;
+    const src = String(node.attrs.src ?? "");
+    if (!node.attrs.uploading && !isPreviewUrl(src)) return false;
+    const entry = find(src);
+    if (!entry) {
+      // A preview no queue knows (a custom uploader's own preview after the swap): leave it, unless it was ours.
+      if (node.attrs.uploading) drops.push({ pos, size: node.nodeSize });
+      return false;
+    }
+    if (entry.state === "done" && entry.url) {
+      if (entry.url === src) return false;
+      waiting.push(entry.url);
+      if (preloaded.has(entry.url) && settledUrls.has(entry.url)) swaps.push({ pos, url: entry.url });
+    } else if (entry.state === "failed") {
+      drops.push({ pos, size: node.nodeSize });
+      if (!reported.has(src)) {
+        reported.add(src);
+        onError?.(entry.error ?? "The image didn't upload.");
+      }
+    }
+    return false;
+  });
+  for (const url of waiting)
+    if (!settledUrls.has(url))
+      void preload(url).then(() => {
+        settledUrls.add(url);
+        syncUploads(editor, queues, reported, onError);
+      });
+  if (!swaps.length && !drops.length) return;
+  const tr = editor.state.tr;
+  for (const { pos, url } of swaps) {
+    const node = tr.doc.nodeAt(pos);
+    if (node) tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: url, uploading: false });
+  }
+  // Last first, so earlier positions stay valid.
+  for (const { pos, size } of [...drops].sort((a, b) => b.pos - a.pos)) tr.delete(pos, pos + size);
+  tr.setMeta("addToHistory", false);
+  editor.view.dispatch(tr);
+}
+const settledUrls = new Set<string>();
 
 /**
  * AIM-6: links open from the editor. Browsers never follow a link inside contenteditable, and the Link
@@ -174,6 +248,15 @@ const linkOpener = Extension.create({
   },
 });
 
+function hasUploading(editor: Editor) {
+  let found = false;
+  editor.state.doc.descendants((n) => {
+    if (found) return false;
+    if (n.type.name === "image" && n.attrs.uploading) found = true;
+  });
+  return found;
+}
+
 /** Drops <img> from pasted HTML, for editors that don't take images. */
 const stripImages = (html: string) => html.replace(/<img\b[^>]*>/gi, "");
 
@@ -220,11 +303,33 @@ export function RichEditor({
     onChangeRef.current = onChange;
   });
   // Read at upload time, so the editor (created once) always uses the current props.
-  const uploadRef = useRef<{ upload: ImageUploader; images: boolean; onError?: (m: string) => void; onText?: (t: string) => void }>(null!);
+  const uploadRef = useRef<{ custom: ImageUploader | null; orgSlug: string; images: boolean; onError?: (m: string) => void; onText?: (t: string) => void }>(null!);
   useEffect(() => {
-    uploadRef.current = { upload: upload ?? ((file) => uploadImage(orgSlug, file)), images, onError: onUploadError, onText: onTextChange };
+    uploadRef.current = { custom: upload ?? null, orgSlug, images, onError: onUploadError, onText: onTextChange };
   });
-  const doUpload: ImageUploader = (file) => uploadRef.current.upload(file);
+  // VEC-455: a custom uploader (public forms) gets this editor's own queue around it, so its images show at once
+  // too; signed-in uploads share the org's tab-wide queue, which outlives this editor.
+  const [{ ownQueue, setOwnUploader }] = useState(() => {
+    let uploader: ImageUploader | null = null;
+    const ownQueue = createUploadQueue({
+      upload: (file) => uploader!(file),
+      preview: (file) => URL.createObjectURL(file),
+      revoke: (preview) => URL.revokeObjectURL(preview),
+      // No automatic network retries here: the custom uploaders word their own errors.
+      retries: 0,
+      onError: (entry, message) => toast.error(message, { id: `upload-failed-${entry.preview}` }),
+    });
+    return { ownQueue, setOwnUploader: (u: ImageUploader | null) => void (uploader = u) };
+  });
+  useEffect(() => setOwnUploader(upload ?? null));
+  useEffect(() => {
+    const off = trackUploadQueue(ownQueue);
+    return () => {
+      off();
+      ownQueue.reset();
+    };
+  }, [ownQueue]);
+  const queueFor = () => (uploadRef.current.custom ? ownQueue : editorUploadQueue(uploadRef.current.orgSlug));
   const expandRef = useRef(onExpandImage);
   useEffect(() => {
     expandRef.current = onExpandImage;
@@ -266,7 +371,7 @@ export function RichEditor({
         event.preventDefault();
         // Images off: swallow the file so nothing (not even a file name) is inserted.
         if (!uploadRef.current.images) return true;
-        return insertImages(editorRef.current!, doUpload, files, undefined, uploadRef.current.onError);
+        return insertImages(editorRef.current!, queueFor(), files);
       },
       handleDrop(view, event, _slice, moved) {
         if (moved) return false;
@@ -275,7 +380,7 @@ export function RichEditor({
         event.preventDefault();
         if (!uploadRef.current.images) return true;
         const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
-        return insertImages(editorRef.current!, doUpload, files, pos, uploadRef.current.onError);
+        return insertImages(editorRef.current!, queueFor(), files, pos);
       },
     },
     onUpdate: ({ editor }) => {
@@ -309,9 +414,28 @@ export function RichEditor({
     return () => root.removeEventListener(EXPAND_IMAGE_EVENT, onExpand);
   }, [editor]);
 
-  // Apply remote changes when the user isn't editing.
+  // VEC-455: swap previews for stored URLs as uploads land (and after any change, e.g. a redo bringing one back).
   useEffect(() => {
-    if (!editor || editor.isFocused) return;
+    if (!editor) return;
+    const reported = new Set<string>();
+    const sync = () => {
+      const queues = [ownQueue];
+      if (orgSlug) queues.push(editorUploadQueue(orgSlug));
+      syncUploads(editor, queues, reported, uploadRef.current?.onError);
+    };
+    const offOrg = orgSlug ? editorUploadQueue(orgSlug).subscribe(sync) : null;
+    const offOwn = ownQueue.subscribe(sync);
+    editor.on("update", sync);
+    return () => {
+      offOrg?.();
+      offOwn();
+      editor.off("update", sync);
+    };
+  }, [editor, ownQueue, orgSlug]);
+
+  // Apply remote changes when the user isn't editing (and no image is still uploading: that would drop it).
+  useEffect(() => {
+    if (!editor || editor.isFocused || hasUploading(editor)) return;
     if (editor.getHTML() !== value && !(editor.isEmpty && !value)) editor.commands.setContent(value, { emitUpdate: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncKey, editor]);
@@ -379,7 +503,7 @@ export function RichEditor({
                 multiple
                 hidden
                 onChange={(e) => {
-                  insertImages(editor, doUpload, Array.from(e.target.files ?? []), undefined, onUploadError);
+                  insertImages(editor, queueFor(), Array.from(e.target.files ?? []));
                   e.target.value = "";
                 }}
               />

@@ -11,6 +11,7 @@ Aimpoint shows the result of an action the moment someone takes it and does the 
 | Tab-wide queue, hooks, toasts, `beforeunload` | `src/lib/pending-actions.ts` |
 | Upload rules (pure, unit tested) | `src/lib/background-uploads-core.ts`, `background-uploads.test.mjs` |
 | Signed-in upload hook for `RichEditor` | `src/components/task-composer/background-uploads.ts` (`useBackgroundUploads`) |
+| Editor images (built into `RichEditor`) | `src/components/editor-uploads.ts`, `src/lib/editor-uploads-core.ts`, `editor-uploads.test.mjs` |
 
 ## Running an action in the background
 
@@ -75,6 +76,26 @@ async function send(html: string) {
 - `resolve` works on HTML and Markdown alike (plain string replacement of the preview URL).
 - The public form and public project uploaders still use `usePendingUploads` (endpoint-specific errors); they can move
   here by passing `{ upload }`.
+
+## Images in rich text (descriptions, plans, new tasks)
+
+`RichEditor` does this itself (VEC-455), so screens don't wire anything for editor images:
+
+- Paste, drop or the toolbar button inserts the image at once from a local `blob:` preview. The node carries an
+  editor-only `uploading` attribute (never in the saved HTML): `image-node-view.ts` marks it `data-uploading` and
+  globals.css veils it with a still "Uploading..." pill.
+- Signed-in uploads go through one tab-wide `createUploadQueue` per org (`components/editor-uploads.ts`,
+  `editorUploadQueue`), so an upload keeps going after the pane or dialog that started it closes. When it lands the
+  editor swaps `src` for the stored URL (preloaded first, not part of undo history), which fires `onChange` again. A
+  failed upload toasts and the image is removed; the text around it stays.
+- Custom uploaders (`upload` prop: the public form and public project) get an editor-local queue around them, so their
+  images show at once too; the composer still waits for those uploads before sending, as before.
+- Every save path runs `await resolveEditorUploads(html)` first (`task-pane.tsx` `flushDesc`, `task-plan.tsx`): it
+  waits for the uploads the text uses, swaps previews for stored URLs and drops images with none, so a `blob:` URL is
+  never sent. Pure helpers: `lib/editor-uploads-core.ts` (`editor-uploads.test.mjs`).
+- Creating a record doesn't wait: create it with `withoutPreviewImages(html)` and call
+  `saveWhenUploaded(id, html, save)`, which saves the full text on the action queue once the uploads land
+  (`new-task-dialog.tsx`). That second save shows in the task's history as a description edit.
 
 ## Leaving with unsent work
 

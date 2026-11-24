@@ -236,6 +236,16 @@
 .aimpoint-image-expand:focus-visible,
 .prose-aimpoint[contenteditable="true"] .aimpoint-image[data-selected] .aimpoint-image-expand { opacity: 1; }
 @media (hover: none) { .aimpoint-image-expand { opacity: 1; } }
+/* VEC-455: an image still uploading shows its local preview, lightly veiled, with a still "Uploading" pill
+   (no spinner: nothing moves on its own, DESIGN.md). */
+.aimpoint-image[data-uploading] > img { opacity: 0.55; transition: opacity 160ms ease; }
+.aimpoint-image[data-uploading]::after {
+  content: "Uploading…"; position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 9999px;
+  font-size: 11.5px; line-height: 18px; font-weight: 500; color: #fff; background: rgb(0 0 0 / 0.55);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.18); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+.aimpoint-image[data-uploading] .aimpoint-image-expand { display: none; }
 .ProseMirror { outline: none; min-height: 6rem; }
 .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);

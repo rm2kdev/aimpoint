@@ -21,6 +21,14 @@ const IMG_ATTRS = ["src", "alt", "title", "width", "height"] as const;
  */
 export function expandableImage() {
   return Image.extend({
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        // VEC-455: set while the image shows its local preview and uploads in the background. Editor state only:
+        // never rendered into the saved HTML and never parsed from it.
+        uploading: { default: false, rendered: false, parseHTML: () => false },
+      };
+    },
     addNodeView() {
       const extra = this.options.HTMLAttributes as Record<string, unknown>;
       return ({ node: initial, getPos }) => {
@@ -36,7 +44,19 @@ export function expandableImage() {
             else img.setAttribute(k, String(v));
           }
         };
+        const setUploading = () => {
+          if (node.attrs.uploading) {
+            dom.dataset.uploading = "";
+            dom.setAttribute("aria-busy", "true");
+            dom.title = "Uploading…";
+          } else {
+            delete dom.dataset.uploading;
+            dom.removeAttribute("aria-busy");
+            dom.removeAttribute("title");
+          }
+        };
         setAttrs();
+        setUploading();
 
         const button = document.createElement("button");
         button.type = "button";
@@ -62,6 +82,7 @@ export function expandableImage() {
             if (next.type !== node.type) return false;
             node = next;
             setAttrs();
+            setUploading();
             return true;
           },
           selectNode() {

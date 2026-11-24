@@ -19,6 +19,7 @@ import {
   useStatusOptions,
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
+import { resolveEditorUploads } from "@/components/editor-uploads";
 import { CommentBody, MentionComposer, type ComposerHandle } from "@/components/mentions";
 import { LocalCommentRow } from "@/components/local-comment";
 import { addOnce, commentStore, mergeFeed, useLocalComments, type LocalComment } from "@/lib/pending-comments";
@@ -212,9 +213,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const flushDesc = useCallback(async () => {
     clearTimeout(descTimer.current);
     if (pendingDesc.current === null || !task) return;
-    const html = pendingDesc.current;
+    const raw = pendingDesc.current;
     pendingDesc.current = null;
     setSaveState("saving");
+    // VEC-455: images still uploading are saved once they land (never as blob: previews).
+    const html = await resolveEditorUploads(raw);
     const r = await updateTask(org.slug, task.id, { description: html });
     if (!r.ok) {
       toast.error(r.error);

@@ -9,7 +9,8 @@ import { MemberAvatar, PriorityIcon, ProjectDot, StatusRing, UnassignedAvatar } 
 import { Picker, PRIORITY_OPTIONS, useAssigneeOptions, useProjectOptions, useStatusOptions } from "@/components/pickers";
 import { DueBadge, DuePicker } from "@/components/due-date";
 import { CalendarIcon, CornerLeftUpIcon, HourglassIcon, XIcon } from "lucide-react";
-import { createTask } from "@/app/actions/tasks";
+import { createTask, updateTask } from "@/app/actions/tasks";
+import { saveWhenUploaded, withoutPreviewImages } from "@/components/editor-uploads";
 import { PRIORITY_LABELS } from "@/lib/format";
 import { matchStatus, newTaskStatusIn, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
 import { TaskSearchPicker, toRef } from "@/components/dependencies";
@@ -107,9 +108,10 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
           submitDisabled={!projectId}
           type={{ value: type, onChange: setType }}
           onSubmit={async (v) => {
+            // VEC-455: create it now; images still uploading are added to the description once they land.
             const r = await createTask(org.slug, {
               title: v.title,
-              description: v.description,
+              description: withoutPreviewImages(v.description),
               projectId,
               statusId: status?.id,
               assigneeId,
@@ -122,6 +124,7 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
             if (!r.ok) return { ok: false, error: r.error ?? "That didn't go through. Try again." };
             const t = r.data!;
             emitLocalTask(t);
+            saveWhenUploaded(t.id, v.description, (description) => updateTask(org.slug, t.id, { description }), (saved) => saved && emitLocalTask(saved));
             onClose();
             toast.success(`Created ${t.key}`, {
               description: t.title,

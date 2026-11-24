@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { MemberAvatar } from "@/components/bits";
 import { RichEditor } from "@/components/rich-editor";
+import { resolveEditorUploads } from "@/components/editor-uploads";
 import { getTaskDetail, updateTask } from "@/app/actions/tasks";
 import { timeAgo } from "@/lib/format";
 import type { FeedItem, TaskDetail } from "@/lib/types";
@@ -62,9 +63,11 @@ export function PlanSection({
   const flush = useCallback(async () => {
     clearTimeout(timer.current);
     if (pending.current === null) return;
-    const html = pending.current;
+    const raw = pending.current;
     pending.current = null;
     setSaveState("saving");
+    // VEC-455: images still uploading are saved once they land (never as blob: previews).
+    const html = await resolveEditorUploads(raw);
     const r = await updateTask(org.slug, taskId, { triagePlan: hasVisibleText(html) ? html : null });
     if (!r.ok) {
       toast.error(r.error);
