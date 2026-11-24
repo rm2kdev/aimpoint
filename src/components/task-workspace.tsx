@@ -26,6 +26,8 @@ import { SortableList, useDragSelector, useDropTarget, useNestState, type DragIt
 import { useDragStore } from "@/components/ui/drag-provider";
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
+import { UnsentMarker } from "@/components/unsent-marker";
+import { isTempId, keyOf, patchFields, patchLabel, pendingCreates, TASK_EVENT, TASK_GONE_EVENT, TASK_PATCH_EVENT, taskOverlay, writeTask, type TaskPatchDetail } from "@/lib/task-writes";
 import { compareRank, rankBetween } from "@/lib/rank";
 import { NEST_DWELL_MS, NEST_ZONE_BAND, TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
 import { canNestOnto, type NestCheck, type NestTarget } from "@/lib/parent-link-core";
@@ -121,26 +123,35 @@ export function TaskWorkspace({
     const next = new Map<string, Task>();
     for (const t of initialTasks) {
       const seen = latest.current.get(t.id);
-      next.set(t.id, seen && seen.updatedAt > t.updatedAt ? seen : t);
+      next.set(t.id, taskOverlay.apply(seen && seen.updatedAt > t.updatedAt ? seen : t));
     }
     latest.current.forEach((t) => {
       if (!next.has(t.id) && matches(t)) next.set(t.id, t);
     });
-    next.forEach((t, id) => !matches(t) && next.delete(id));
+    next.forEach((t, id) => (!matches(t) || taskOverlay.isDeleting(id)) && next.delete(id));
     setTasks(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialTasks]);
 
   const upsert = useCallback(
-    (t: Task) =>
+    (incoming: Task) => {
+      const seen = latest.current.get(incoming.id);
+      // VEC-456: an older copy arriving late (an echo after the next write's answer) never rolls a row back, and
+      // writes still on their way stay laid over whatever the server sent.
+      const t = taskOverlay.apply(seen && seen.updatedAt > incoming.updatedAt ? seen : incoming);
+      latest.current.set(t.id, t);
+      // A new task's realtime echo landing before the create answered: it takes the temporary row's place.
+      // Claimed here, not in the state updater, which React may call twice.
+      const tempId = !seen && !isTempId(t.id) ? pendingCreates.claim(t) : null;
+      if (tempId) latest.current.delete(tempId);
       setTasks((prev) => {
-        const seen = latest.current.get(t.id);
-        if (!seen || seen.updatedAt <= t.updatedAt) latest.current.set(t.id, t);
         const next = new Map(prev);
-        if (matches(t)) next.set(t.id, t);
+        if (tempId) next.delete(tempId);
+        if (matches(t) && !taskOverlay.isDeleting(t.id)) next.set(t.id, t);
         else next.delete(t.id);
         return next;
-      }),
+      });
+    },
     [matches],
   );
 
@@ -168,6 +179,7 @@ export function TaskWorkspace({
       const t = tasks.get(e.taskId);
       if (t && t.key !== selectedKey) mark(t.id, e.actorId, e.item.mentions?.includes(me.id) ? "mentioned you" : "commented");
     } else if (e.type === "task.delete") {
+      taskOverlay.markGone(e.taskId);
       latest.current.delete(e.taskId);
       setTasks((prev) => {
         if (!prev.has(e.taskId)) return prev;
@@ -180,9 +192,40 @@ export function TaskWorkspace({
 
   useEffect(() => {
     const onLocal = (e: Event) => upsert((e as CustomEvent<Task>).detail);
-    window.addEventListener("aimpoint:task", onLocal);
-    return () => window.removeEventListener("aimpoint:task", onLocal);
-  }, [upsert]);
+    // VEC-456: optimistic field changes and rollbacks (lib/task-writes), merged into the copy this view holds.
+    const onPatch = (e: Event) => {
+      const { id, fields } = (e as CustomEvent<TaskPatchDetail>).detail;
+      setTasks((prev) => {
+        // Idempotent, so React calling this twice is harmless.
+        const base = latest.current.get(id) ?? prev.get(id);
+        if (!base) return prev;
+        const t = { ...base, ...fields } as Task;
+        latest.current.set(id, t);
+        const next = new Map(prev);
+        if (matches(t) && !taskOverlay.isDeleting(id)) next.set(id, t);
+        else next.delete(id);
+        return next;
+      });
+    };
+    const onGone = (e: Event) => {
+      const { id } = (e as CustomEvent<{ id: string }>).detail;
+      if (isTempId(id)) latest.current.delete(id);
+      setTasks((prev) => {
+        if (!prev.has(id)) return prev;
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+    };
+    window.addEventListener(TASK_EVENT, onLocal);
+    window.addEventListener(TASK_PATCH_EVENT, onPatch);
+    window.addEventListener(TASK_GONE_EVENT, onGone);
+    return () => {
+      window.removeEventListener(TASK_EVENT, onLocal);
+      window.removeEventListener(TASK_PATCH_EVENT, onPatch);
+      window.removeEventListener(TASK_GONE_EVENT, onGone);
+    };
+  }, [upsert, matches]);
 
   const seen = useCallback(
     (id: string) => {
@@ -362,19 +405,13 @@ export function TaskWorkspace({
   );
   // The pane re-renders on its own data, not whenever the list does (a live edit mid-drag, VEC-73).
   const closePane = useCallback(() => open(null), [open]);
-  /** Archive or restore with an optimistic move and an Undo toast. */
-  const setArchived = async (task: Task, archived: boolean, undo = true) => {
-    upsert({ ...task, archivedAt: archived ? new Date().toISOString() : null });
-    const r = await updateTask(org.slug, task.id, { archived });
-    if (!r.ok) {
-      upsert(task);
-      return void toast.error(r.error);
-    }
-    if (r.data) window.dispatchEvent(new CustomEvent<Task>("aimpoint:task", { detail: r.data }));
+  /** Archive or restore with an optimistic move and an Undo toast (VEC-456: queued, so Undo can follow at once). */
+  const setArchived = (task: Task, archived: boolean, undo = true) => {
+    writeTask({ task, label: archived ? `Archive ${task.key}` : `Restore ${task.key}`, fields: patchFields({ archived }), run: () => updateTask(org.slug, task.id, { archived }) });
     if (undo) {
       toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
         description: task.title,
-        action: { label: "Undo", onClick: () => setArchived(r.data ?? task, !archived, false) },
+        action: { label: "Undo", onClick: () => setArchived(latest.current.get(task.id) ?? task, !archived, false) },
       });
     }
   };
@@ -442,15 +479,16 @@ export function TaskWorkspace({
       !move.statusId && move.projectId && move.projectId !== task.projectId && from
         ? matchStatus(projectStatuses(statusesByProject, move.projectId), from)?.id
         : undefined;
-    upsert({ ...task, rank, statusId: move.statusId ?? mapped ?? task.statusId, projectId: move.projectId ?? task.projectId });
-    const r = await moveTaskAction(org.slug, task.key, { beforeKey: move.beforeKey, afterKey: move.afterKey, status: move.statusId, project: move.projectId });
-    if (!r.ok) {
-      upsert(task);
-      toast.error(r.error);
-      return null;
-    }
-    if (r.data) upsert(r.data);
-    return r.data ?? task;
+    // VEC-456: queued per task, so a second drag before the first answered goes after it (and by the key it has then).
+    const { done } = writeTask({
+      task,
+      label: `Move ${task.key}`,
+      fields: { rank, statusId: move.statusId ?? mapped ?? task.statusId, projectId: move.projectId ?? task.projectId },
+      run: () =>
+        moveTaskAction(org.slug, keyOf(task.id, task.key), { beforeKey: move.beforeKey, afterKey: move.afterKey, status: move.statusId, project: move.projectId }),
+    });
+    const r = await done;
+    return r.ok ? (r.data ?? task) : null;
   };
 
   const manual = view.sort === "manual";
@@ -513,14 +551,9 @@ export function TaskWorkspace({
     }
   };
 
-  /** Optimistic edit from the row (status ring, right-click menu); rolls back with a toast if refused. */
-  const patchTask = async (task: Task, patch: TaskPatch) => {
-    upsert({ ...task, ...(patch as Partial<Task>) });
-    const r = await updateTask(org.slug, task.id, patch);
-    if (!r.ok) {
-      upsert(task);
-      toast.error(r.error);
-    } else if (r.data) upsert(r.data);
+  /** Optimistic edit from the row (status ring, right-click menu); rolls back with a toast if refused (VEC-456: queued). */
+  const patchTask = (task: Task, patch: TaskPatch) => {
+    writeTask({ task, label: `${patchLabel(patch)} on ${task.key}`, fields: patchFields(patch), run: () => updateTask(org.slug, task.id, patch) });
   };
 
   /** Row menu "Move to top/bottom" of its status group. */
@@ -559,11 +592,10 @@ export function TaskWorkspace({
     const check = nestCheck(item, rowId);
     if (!t || !target || !check) return;
     if (!check.ok) return void toast.error(check.error);
-    // Local echo: it shows under its new parent at once (opened, so the row doesn't vanish into a folded group).
-    upsert({ ...t, parentId: check.parentId, parentKey: check.parentKey });
+    // It shows under its new parent at once (opened, so the row doesn't vanish into a folded group); useSetParent
+    // applies it optimistically and rolls it back if refused (VEC-456).
     if (grouping) expandedStore.set(check.parentId, true);
-    const saved = await setParent(t, target, { drop: true });
-    if (!saved) upsert(t);
+    await setParent(t, target, { drop: true, parentKey: check.parentKey, parentId: check.parentId });
   };
 
   // Rows are memoised (VEC-73): give them callbacks with one identity for the view's lifetime, which call
@@ -996,7 +1028,9 @@ const TaskRow = memo(function TaskRow({
   const nest = useNestState(task.id);
   const refCb = useCallback((el: HTMLDivElement | null) => rowRef(task.id, el), [rowRef, task.id]);
   const statusOptions = useStatusOptions(task.projectId);
-  const access = taskAccess(task, me.id, isAdmin);
+  // VEC-456: a new task the server hasn't answered for yet: shown, not editable or openable until it has its key.
+  const temp = isTempId(task.id);
+  const access = temp ? "comment" : taskAccess(task, me.id, isAdmin);
   const canEdit = access === "full";
   const status = statusById.get(task.statusId);
   const assignee = task.assigneeId ? memberById.get(task.assigneeId) : undefined;
@@ -1018,7 +1052,9 @@ const TaskRow = memo(function TaskRow({
 
   return (
     <div
-      {...rowProps}
+      {...(temp ? undefined : rowProps)}
+      aria-busy={temp || undefined}
+      data-temp={temp ? "" : undefined}
       ref={refCb}
       onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
       onPointerLeave={() => clearTimeout(hoverTimer.current)}
@@ -1077,6 +1113,7 @@ const TaskRow = memo(function TaskRow({
         scroll={false}
         replace
         onClick={(e) => {
+          if (temp) return e.preventDefault();
           // The click that ends a refused drag gesture doesn't open the task.
           if (hinted.current) {
             hinted.current = false;
@@ -1162,7 +1199,10 @@ const TaskRow = memo(function TaskRow({
         <span className="w-[22px]">
           {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={20} /> : null}
         </span>
-        <span className="tabular w-[64px] shrink-0 text-right font-mono text-[12px] whitespace-nowrap text-faint max-sm:hidden">{task.key}</span>
+        <UnsentMarker taskId={task.id} />
+        <span className="tabular w-[64px] shrink-0 text-right font-mono text-[12px] whitespace-nowrap text-faint max-sm:hidden" title={temp ? "Saving…" : undefined}>
+          {temp ? <span className="animate-pulse motion-reduce:animate-none">{task.key}</span> : task.key}
+        </span>
         {canEdit && <ArchiveButton task={task} onArchive={onArchive} />}
       </div>
       {menu}

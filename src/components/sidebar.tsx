@@ -44,6 +44,7 @@ import { useDragStore } from "@/components/ui/drag-provider";
 import { toast } from "sonner";
 import { logoutAction } from "@/app/actions/auth";
 import { moveTaskAction } from "@/app/actions/tasks";
+import { writeTask } from "@/lib/task-writes";
 import { startInstall, useInstallState } from "@/components/install-prompt";
 import { useOpenWhatsNew } from "@/components/whats-new-dialog";
 import { whatsNewBadge, whatsNewBadgeLabel } from "@/lib/whats-new-core";
@@ -174,19 +175,20 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
       },
       /** Released on the row without waiting: top of the same status in that project, one write. */
       quickDrop: async (p, task) => {
-        const echo = (t: Task) => window.dispatchEvent(new CustomEvent<Task>("aimpoint:task", { detail: t }));
         const same = task.projectId === p.id;
-        // Optimistically keep the stage in the new project, as the server does (VEC-115/117).
+        // Optimistically keep the stage in the new project, as the server does (VEC-115/117); queued per task and
+        // rolled back with a toast if refused (VEC-456).
         const from = statusById.get(task.statusId);
         const mapped = !same && from ? matchStatus(statusesByProject.get(p.id) ?? [], from)?.id : undefined;
-        echo({ ...task, projectId: p.id, statusId: mapped ?? task.statusId });
-        const r = await moveTaskAction(org.slug, task.key, { project: same ? undefined : p.id, toTop: true });
-        if (!r.ok) {
-          echo(task);
-          return void toast.error(r.error);
-        }
+        const { done } = writeTask<Task>({
+          task,
+          label: `Move ${task.key}`,
+          fields: { projectId: p.id, statusId: mapped ?? task.statusId },
+          run: () => moveTaskAction(org.slug, task.key, { project: same ? undefined : p.id, toTop: true }),
+        });
+        const r = await done;
+        if (!r.ok) return;
         const moved = r.data ?? task;
-        if (r.data) echo(r.data);
         const q = new URLSearchParams(location.search);
         if (q.get("task") === task.key && moved.key !== task.key) {
           q.set("task", moved.key);
@@ -230,10 +232,8 @@ function SidebarProjects({ onNavigate }: { onNavigate?: () => void }) {
       getLabel={projectName}
       aria-label="Projects"
       onReorder={(ids) => {
-        // Applied at once by the provider; it rolls back itself if the server refuses.
-        void reorderProjects(ids).then((r) => {
-          if (!r.ok) toast.error(r.error || "Couldn't save the project order.");
-        });
+        // Applied at once by the provider, which queues it and rolls back (with the error toast) if the server refuses.
+        void reorderProjects(ids);
       }}
       renderItem={renderItem}
     />

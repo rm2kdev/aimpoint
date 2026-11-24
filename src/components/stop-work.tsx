@@ -17,8 +17,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { timeAgo } from "@/lib/format";
-import { isClosedCategory, type Member, type Task } from "@/lib/types";
+import { isClosedCategory, type Member, type ResumeOutcome, type Task } from "@/lib/types";
 import { resumeTaskWork, stopTaskWork } from "@/app/actions/tasks";
+import { emitTask, writeTask } from "@/lib/task-writes";
 
 /**
  * Stop / Resume a bot's work from the task pane (VEC-217, server side in lib/stop-work.ts, VEC-215). Stop is offered
@@ -33,7 +34,7 @@ function mayStop(task: StopFields, bot: Member | undefined, me: string, isAdmin:
 }
 
 export function useStopWork(task: StopFields | null, onTask?: (t: Task) => void) {
-  const { org, me, isAdmin, memberById, statusById, flowByProject } = useOrgBase();
+  const { org, me, isAdmin, memberById, statusById, statusesByProject, flowByProject } = useOrgBase();
   const [busy, setBusy] = useState(false);
   const cat = task ? statusById.get(task.statusId)?.category : undefined;
   // The bot whose work Stop would end: the assignee when it's on the ring, else the first working bot (a triager).
@@ -47,26 +48,48 @@ export function useStopWork(task: StopFields | null, onTask?: (t: Task) => void)
   const canResume =
     !!task?.stopped && !task.archivedAt && (mayStop(task, stoppedBot, me.id, isAdmin) || (assigneeBot?.kind === "bot" && mayStop(task, assigneeBot, me.id, isAdmin)));
 
+  // VEC-456: both show at once (the strip goes, the Stopped banner shows) and go to the server in the background,
+  // queued with the task's other writes; a refusal puts it back with the error toast.
   const stop = async () => {
-    if (!task || busy) return false;
-    setBusy(true);
-    const r = await stopTaskWork(org.slug, task.id);
-    setBusy(false);
-    if (!r.ok) {
-      toast.error(r.error);
-      return false;
-    }
-    if (r.data) onTask?.(r.data);
-    toast.success(`Stopped ${working?.name ?? "the bot"} on ${task.key}`, { description: "It's paused. Make your changes, then Resume to hand it back." });
+    if (!task || busy || !workingId) return false;
+    const statuses = statusesByProject.get(task.projectId) ?? [];
+    const todo = statuses.find((s) => s.category === "unstarted");
+    const moveBack = !triaging && cat === "started" && todo ? { statusId: todo.id } : {};
+    const name = working?.name ?? "the bot";
+    const shown = { ...task, stopped: task.stopped ?? null };
+    writeTask<Task>({
+      task: shown,
+      label: `Stop ${name} on ${task.key}`,
+      fields: {
+        stopped: { by: me.id, at: new Date().toISOString(), botId: workingId, kind: triaging ? "triage" : "assigned" },
+        workingBotIds: task.workingBotIds.filter((id) => id !== workingId),
+        ...moveBack,
+      },
+      run: () => stopTaskWork(org.slug, task.id),
+      onSaved: (t) => t && onTask?.(t),
+    });
+    toast.success(`Stopped ${name} on ${task.key}`, { description: "It's paused. Make your changes, then Resume to hand it back." });
     return true;
   };
   const resume = async () => {
     if (!task || busy) return;
     setBusy(true);
-    const r = await resumeTaskWork(org.slug, task.id);
+    const shown = { ...task, stopped: task.stopped ?? null };
+    const { done } = writeTask<ResumeOutcome>({
+      task: shown,
+      label: `Resume ${task.key}`,
+      fields: { stopped: null },
+      run: () => resumeTaskWork(org.slug, task.id),
+      echo: false,
+      onSaved: (r) => {
+        if (!r) return;
+        emitTask(r.task);
+        onTask?.(r.task);
+      },
+    });
     setBusy(false);
-    if (!r.ok) return void toast.error(r.error);
-    if (r.data) onTask?.(r.data.task);
+    const r = await done;
+    if (!r.ok) return;
     const to = r.data?.task.assigneeId ? memberById.get(r.data.task.assigneeId) : stoppedBot;
     // VEC-352: its bot is disabled, so the stop is cleared but nothing goes out until it's enabled.
     if (r.data?.note) return void toast(`Resumed ${task.key}`, { description: r.data.note });

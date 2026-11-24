@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
 import { notificationHeadline } from "@/lib/notification-text";
 import { markNotificationsRead } from "@/app/actions/notifications";
+import { runPending } from "@/lib/pending-actions";
 import { Sidebar } from "@/components/sidebar";
 import { CommandMenu } from "@/components/command-menu";
 import { BotStatusTray } from "@/components/bot-status-tray";
@@ -117,7 +118,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </div>
       <NotificationToasts />
       <CommandMenu open={search} onOpenChange={setSearch} />
-      <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} />
+      <NewTaskDialog defaults={creating} onClose={() => setCreating(null)} onReopen={setCreating} />
       <WhatsNewDialog
         milestone={whatsNew.milestone}
         view={whatsNew.view}
@@ -151,8 +152,14 @@ function NotificationToasts() {
       action: {
         label: "Open",
         onClick: () => {
-          setUnread((c) => c - 1);
-          void markNotificationsRead(org.slug, [n.id]);
+          // VEC-456: read at once, sent on the background queue (retried if the connection drops).
+          runPending({
+            key: "notifications",
+            label: "Mark read",
+            apply: () => setUnread((c) => c - 1),
+            rollback: () => setUnread((c) => c + 1),
+            run: () => markNotificationsRead(org.slug, [n.id]),
+          });
           router.push(taskPath(org.slug, n.taskKey, "inbox"));
         },
       },

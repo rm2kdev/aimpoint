@@ -43,6 +43,12 @@ function wireWindow() {
   window.addEventListener("online", () => pendingActions.retryAll());
 }
 
+/** Enqueues on the tab's queue outside a component (shared helpers such as `lib/task-writes.ts`). */
+export function runPending<T>(spec: ActionSpec<T>) {
+  wireWindow();
+  return pendingActions.enqueue(spec);
+}
+
 /** Attaches the leave-page warning (and online retry) for work held outside the action queue, e.g. editor uploads. */
 export const ensureLeaveWarning = wireWindow;
 

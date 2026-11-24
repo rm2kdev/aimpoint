@@ -14,6 +14,7 @@ import { statusTrack } from "@/lib/status-track";
 import { StatusTrackBar } from "@/components/status-track-bar";
 import { isClosedCategory, type Member, type Task } from "@/lib/types";
 import { advanceTaskStep, moveStalledTaskOn, setTaskFlowPaused } from "@/app/actions/tasks";
+import { writeTask } from "@/lib/task-writes";
 
 /**
  * Where a task is in its project's flow (VEC-178, docs/flows.md section 7), for the task pane's stepper and the
@@ -95,19 +96,24 @@ type FlowTaskFields = Pick<Task, "id" | "key" | "projectId" | "statusId" | "assi
  */
 export function useFlowPause(task: FlowTaskFields | null, onTask?: (t: Task) => void) {
   const { org, me, isAdmin, flowByProject, statusById } = useOrgBase();
-  const [busy, setBusy] = useState(false);
+  // VEC-456: optimistic, so there is no waiting state (kept in the return shape for callers).
+  const busy = false;
   const flow = task ? flowByProject.get(task.projectId) : undefined;
   const status = task ? statusById.get(task.statusId) : undefined;
   const paused = !!task?.flow?.paused;
   const can =
     !!task && !!flow && !task.archivedAt && (paused || !isClosedCategory(status?.category)) && canPauseFlow({ me: me.id, isAdmin, createdBy: task.createdBy, assigneeId: task.assigneeId });
-  const toggle = async () => {
+  // VEC-456: shown at once, saved in the background with the task's other writes; a refusal puts it back.
+  const toggle = () => {
     if (!task || busy) return;
-    setBusy(true);
-    const r = await setTaskFlowPaused(org.slug, task.id, !paused);
-    setBusy(false);
-    if (!r.ok) return void toast.error(r.error);
-    if (r.data) onTask?.(r.data);
+    const shown = { ...task, flow: task.flow ?? null };
+    writeTask<Task>({
+      task: shown,
+      label: paused ? `Resume the flow on ${task.key}` : `Pause the flow on ${task.key}`,
+      fields: { flow: { stepId: task.flow?.stepId ?? null, enteredAt: task.flow?.enteredAt ?? new Date().toISOString(), ...task.flow, paused: !paused } },
+      run: () => setTaskFlowPaused(org.slug, task.id, !paused),
+      onSaved: (t) => t && onTask?.(t),
+    });
     toast.success(paused ? `Resumed the flow on ${task.key}` : `Paused the flow on ${task.key}`, {
       description: paused ? "It follows its flow again from the step of its status." : "Status and assignee changes won't hand it on until you resume it.",
     });
@@ -125,7 +131,8 @@ export function useFlowPause(task: FlowTaskFields | null, onTask?: (t: Task) => 
 export function useStalledMoveOn(task: (FlowTaskFields & Pick<Task, "stalled">) | null, onTask?: (t: Task) => void) {
   const { org, me, isAdmin, statusById, memberById } = useOrgBase();
   const pos = useFlowPosition(task ?? { projectId: "", statusId: "", flow: null });
-  const [busy, setBusy] = useState(false);
+  // VEC-456: optimistic, so there is no waiting state (kept in the return shape for callers).
+  const busy = false;
   const status = task ? statusById.get(task.statusId) : undefined;
   const move =
     task && !task.archivedAt && status && pos?.kind === "at" ? stalledMoveOn(pos.flow, pos.current, status, { me: me.id, isAdmin, createdBy: task.createdBy }, task.stalled?.reason) : null;
@@ -143,13 +150,16 @@ export function useStalledMoveOn(task: (FlowTaskFields & Pick<Task, "stalled">) 
   const why = replaces
     ? `${bot ?? "Its bot"} finished its work, but the task is still at the ${move.step.name} step: the flow never handed it on to ${to}${n ? `, and ${keys} ${n === 1 ? "is" : "are"} waiting on it` : ""}. Move it on, or @mention ${bot ?? "the bot"} if the work isn't done.`
     : `It's still at the ${move.step.name} step: the flow never handed it on to ${to}.`;
-  const run = async () => {
+  // VEC-456: it shows in the next step's status at once; the server hands it on (owner, wake-ups) in the background.
+  const run = () => {
     if (busy) return;
-    setBusy(true);
-    const r = await moveStalledTaskOn(org.slug, task.id, move.step.id);
-    setBusy(false);
-    if (!r.ok) return void toast.error(r.error);
-    if (r.data) onTask?.(r.data);
+    writeTask<Task>({
+      task,
+      label: `Move ${task.key} to ${next.name}`,
+      fields: { statusId: next.status.id },
+      run: () => moveStalledTaskOn(org.slug, task.id, move.step.id),
+      onSaved: (t) => t && onTask?.(t),
+    });
     toast.success(`Moved ${task.key} to ${next.name}`, {
       description: next.status.category === "done" ? `Closed it (${next.status.name}).` : `${next.status.name}${nextOwner ? `, ${/^Stays|^Unassigned|^Any|^Nobody/.test(nextOwner) ? nextOwner.charAt(0).toLowerCase() + nextOwner.slice(1) : `handed to ${nextOwner}`}` : ""}.`,
     });
@@ -164,17 +174,27 @@ function StepActionRow({ task, action, onTask }: { task: FlowTaskFields; action:
   const { org, memberById } = useOrgBase();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
+  // VEC-456: optimistic, so there is no waiting state (kept in the return shape for callers).
+  const busy = false;
   const next = action.next;
   const nextOwner = (next.owner.kind === "bot" || next.owner.kind === "person") && next.owner.id ? memberById.get(next.owner.id)?.name : undefined;
   const where = next.status.category === "done" ? `closes the task (${next.status.name})` : `moves it to ${next.name}${nextOwner ? ` for ${nextOwner}` : ""}`;
-  const run = async () => {
+  // VEC-456: it shows in the next step's status at once; the note and the hand-on go to the server in the background.
+  // A refusal puts the status back and toasts; the note is lost only if the person discards it.
+  const run = () => {
     if (busy) return;
-    setBusy(true);
-    const r = await advanceTaskStep(org.slug, task.id, action.step.id, note.trim() || null);
-    setBusy(false);
-    if (!r.ok) return void toast.error(r.error);
-    if (r.data) onTask?.(r.data);
+    const comment = note.trim() || null;
+    writeTask<Task>({
+      task,
+      label: `${action.label} on ${task.key}`,
+      fields: { statusId: next.status.id },
+      run: () => advanceTaskStep(org.slug, task.id, action.step.id, comment),
+      onSaved: (t) => t && onTask?.(t),
+      onRefused: () => {
+        setNote(comment ?? "");
+        setOpen(true);
+      },
+    });
     setOpen(false);
     setNote("");
     const done = next.status.category === "done" ? `Closed it (${next.status.name})` : `Moved it to ${next.name}${nextOwner ? ` for ${nextOwner}` : ""}`;

@@ -104,6 +104,31 @@ hold it while any upload is in flight, and `useUnsentWork(active)` holds it for 
 listener is attached only while it is held, so leaving a page with nothing pending never asks (and keeps the
 back/forward cache).
 
+## Task writes (VEC-456)
+
+Edits to a task go through `writeTask` in `src/lib/task-writes.ts` (rules in `task-writes-core.ts`, tested in
+`task-writes.test.mjs`) rather than calling `run()` directly, because a task is shown in several places at once (list
+rows, the pane, sub-task lists) and arrives from the server in several ways (the action's answer, the realtime echo,
+a list refresh):
+
+```tsx
+writeTask({ task, label: "Status change", fields: { statusId }, run: () => updateTask(slug, task.id, { statusId }) });
+```
+
+- The fields go out as a local `aimpoint:task-patch` event that every view merges into its copy; the saved task goes
+  out as `aimpoint:task` (`emitTask`). Views lay `taskOverlay.apply(task)` over every copy they take from the server,
+  so the echo of an earlier write can't flash an old value over a later one still on its way.
+- A refusal puts back the values this write replaced (`revert`), keeping fields later writes still hold.
+- `deleteTaskOptimistic` hides the task everywhere at once (`taskOverlay.isDeleting`) and brings it back on a refusal.
+  Deleted tasks stay tombstoned (`markGone`), since a list refresh that started before the delete can still carry them.
+- `createTaskOptimistic` shows a temporary row (`tmp_` id, `isTempId`, not editable or openable). The list swaps it
+  for the saved task when the action answers or when the realtime echo lands first (`pendingCreates.claim`: same
+  creator, project and title, oldest first), so it never shows twice.
+- `UnsentMarker` (`components/unsent-marker.tsx`) shows "Not sent · Retry / Discard" on a row or pane whose writes
+  the network gave up on, and an optional quiet "Saving…" when a save takes more than 600 ms.
+- Updates inside a React transition (e.g. `TaskComposer`'s submit) wait for the whole transition; do the optimistic
+  part after an `await` (a microtask) so it shows at once.
+
 ## What stays synchronous
 
 Settings, billing, sign-in and invite forms keep waiting for the server: there the confirmation is the point.

@@ -9,6 +9,7 @@ import type { RealtimeEvent } from "@/lib/realtime/events";
 import { getCounts } from "@/app/actions/tasks";
 import { getUnreadCount } from "@/app/actions/notifications";
 import { reorderProjectsAction } from "@/app/actions/project-order";
+import { runPending } from "@/lib/pending-actions";
 import { dismissChangelog as dismissChangelogAction } from "@/app/actions/changelog";
 import type { ChangelogMilestone } from "@/lib/changelog-core";
 import { sortByProjectOrder, type ProjectOrder } from "@/lib/project-order";
@@ -212,14 +213,21 @@ export function OrgProvider({
     async (projectIds: string[]): Promise<Result<ProjectOrder>> => {
       const before = liveOrderRef.current;
       const pending: ProjectOrder = { ids: projectIds, at: Number.MAX_SAFE_INTEGER };
-      liveOrderRef.current = pending;
-      setLiveOrder(pending);
-      const r = await reorderProjectsAction(org.slug, projectIds).catch(
-        (): Result<ProjectOrder> => ({ ok: false, error: "Couldn't save the project order. Try again." }),
-      );
-      // A later reorder in this tab replaced ours meanwhile: leave it to settle.
-      setLiveOrder((cur) => (cur !== pending ? cur : r.ok && r.data ? r.data : before));
-      return r;
+      // VEC-456: on the background queue: a dropped connection retries, then offers Retry while the new order stays.
+      // A refusal (or a discard) puts the old order back, unless a later reorder in this tab replaced ours meanwhile.
+      const { done } = runPending<ProjectOrder>({
+        key: "project-order",
+        label: "Project order",
+        apply: () => {
+          liveOrderRef.current = pending;
+          setLiveOrder(pending);
+        },
+        rollback: () => setLiveOrder((cur) => (cur !== pending ? cur : before)),
+        run: () => reorderProjectsAction(org.slug, projectIds),
+        onSuccess: (saved) => setLiveOrder((cur) => (cur !== pending ? cur : (saved ?? cur))),
+      });
+      const r = await done;
+      return r.ok ? { ok: true, data: r.data } : { ok: false, error: r.error };
     },
     [org.slug],
   );

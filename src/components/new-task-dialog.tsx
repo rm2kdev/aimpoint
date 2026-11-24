@@ -10,6 +10,8 @@ import { Picker, PRIORITY_OPTIONS, useAssigneeOptions, useProjectOptions, useSta
 import { DueBadge, DuePicker } from "@/components/due-date";
 import { CalendarIcon, CornerLeftUpIcon, HourglassIcon, XIcon } from "lucide-react";
 import { createTask, updateTask } from "@/app/actions/tasks";
+import { createTaskOptimistic, emitTask, pendingCreates } from "@/lib/task-writes";
+import { normalizeTitle } from "@/lib/task-intake-core";
 import { saveWhenUploaded, withoutPreviewImages } from "@/components/editor-uploads";
 import { PRIORITY_LABELS } from "@/lib/format";
 import { matchStatus, newTaskStatusIn, type Priority, type Status, type StatusCategory, type Task, type TaskRef, type TaskType } from "@/lib/types";
@@ -33,11 +35,14 @@ export interface NewTaskDefaults {
 
 /** Local echo so the creator's list updates even before the real-time event lands. */
 export function emitLocalTask(task: Task) {
-  window.dispatchEvent(new CustomEvent<Task>("aimpoint:task", { detail: task }));
+  emitTask(task);
 }
 
-export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults | null; onClose: () => void }) {
-  const { org, projects, statusById, statusesByProject, memberById, projectById, defaults: orgDefaults } = useOrg();
+/** Sorts above every real rank (base-62 keys start at "0"), so a new task shows at the top as it will once saved. */
+const TEMP_RANK = "!";
+
+export function NewTaskDialog({ defaults, onClose, onReopen }: { defaults: NewTaskDefaults | null; onClose: () => void; onReopen?: (d: NewTaskDefaults) => void }) {
+  const { org, me, projects, statusById, statusesByProject, memberById, projectById, defaults: orgDefaults } = useOrg();
   const router = useRouter();
   const open = defaults !== null;
 
@@ -108,9 +113,13 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
           submitDisabled={!projectId}
           type={{ value: type, onChange: setType }}
           onSubmit={async (v) => {
-            // VEC-455: create it now; images still uploading are added to the description once they land.
-            const r = await createTask(org.slug, {
+            // VEC-456: the dialog closes and the task shows in the list at once as a temporary row; createTask runs on
+            // the background queue and the row gets its key when the server answers (or its realtime echo lands).
+            const named = normalizeTitle(v.title);
+            if (!named.ok) return { ok: false, error: named.error };
+            const input = {
               title: v.title,
+              // VEC-455: create it now; images still uploading are added to the description once they land.
               description: withoutPreviewImages(v.description),
               projectId,
               statusId: status?.id,
@@ -120,16 +129,58 @@ export function NewTaskDialog({ defaults, onClose }: { defaults: NewTaskDefaults
               dueDate,
               dependsOn: deps.map((d) => d.id),
               ...(parent ? { parentId: parent.id } : {}),
+            };
+            const now = new Date().toISOString();
+            const temp: Task = {
+              id: pendingCreates.newId(),
+              projectId,
+              key: `${project?.key ?? ""}-…`,
+              number: 0,
+              title: named.title,
+              type,
+              statusId: status?.id ?? "",
+              assigneeId,
+              priority,
+              dueDate,
+              archivedAt: null,
+              archivedBy: null,
+              dependsOn: input.dependsOn,
+              waitingOn: [],
+              workingBotIds: [],
+              stalled: null,
+              rank: TEMP_RANK,
+              flow: null,
+              source: null,
+              stopped: null,
+              parentId: parent?.id ?? null,
+              parentKey: parent?.key ?? null,
+              createdByKind: "user",
+              children: null,
+              createdBy: me.id,
+              createdAt: now,
+              updatedAt: now,
+            };
+            const reopenWith = { ...(defaults ?? {}), projectId, statusId: status?.id, assigneeId, type, dependsOn: deps, parent: parent ?? undefined };
+            // Out of the composer's transition (updates after an await aren't part of it): inside it, the dialog closing and
+            // the temporary row waited for the transition and showed only when something else re-rendered (~0.7 s on a
+            // slow network). A microtask, not a timer: background tabs clamp timers to a second.
+            await Promise.resolve();
+            createTaskOptimistic(temp, () => createTask(org.slug, input), {
+              onSaved: (t) => {
+                saveWhenUploaded(t.id, v.description, (description) => updateTask(org.slug, t.id, { description }), (saved) => saved && emitLocalTask(saved));
+                toast.success(`Created ${t.key}`, {
+                  description: t.title,
+                  action: { label: "Open", onClick: () => router.push(`${window.location.pathname}?task=${t.key}`, { scroll: false }) },
+                });
+              },
+              // The refusal itself is toasted by the queue; this one keeps the title and offers the dialog back.
+              onRefused: () =>
+                toast(`"${named.title}" wasn't created`, {
+                  description: "Its project, status and people are kept if you open it again.",
+                  action: { label: "Reopen", onClick: () => onReopen?.(reopenWith) },
+                }),
             });
-            if (!r.ok) return { ok: false, error: r.error ?? "That didn't go through. Try again." };
-            const t = r.data!;
-            emitLocalTask(t);
-            saveWhenUploaded(t.id, v.description, (description) => updateTask(org.slug, t.id, { description }), (saved) => saved && emitLocalTask(saved));
             onClose();
-            toast.success(`Created ${t.key}`, {
-              description: t.title,
-              action: { label: "Open", onClick: () => router.push(`${window.location.pathname}?task=${t.key}`, { scroll: false }) },
-            });
           }}
           properties={({ type: typePicker }) => (
             <>

@@ -62,6 +62,8 @@ import { TASK_TITLE_MAX } from "@/lib/task-intake-core";
 import { PartOfLink, ProgressChip } from "@/components/subtasks";
 import { AddExistingSubtaskDialog, ParentBlockedNote, parentBlockedReason, ParentPickerDialog, useSetParent } from "@/components/subtask-actions";
 import { parentProgressText } from "@/lib/parent-progress-core";
+import { deleteTaskOptimistic, patchFields, patchLabel, TASK_EVENT, TASK_PATCH_EVENT, taskOverlay, writeTask, type TaskPatchDetail } from "@/lib/task-writes";
+import { UnsentMarker } from "@/components/unsent-marker";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
@@ -148,7 +150,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
         return { ...t, dependents, dependencies, subtasks };
       });
     } else if (e.type === "task.upsert" && e.task.id === task.id) {
-      setTask((t) => (t ? { ...t, ...e.task } : t));
+      // VEC-456: writes of ours still on their way stay laid over the echo.
+      setTask((t) => (t ? { ...t, ...taskOverlay.apply(e.task) } : t));
       // Someone else changed what this waits on: fetch the refs for the new list.
       if (e.task.dependsOn.join() !== task.dependencies.map((d) => d.id).join()) {
         getTaskDetail(org.slug, e.task.key).then((r) => {
@@ -173,38 +176,43 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     }
   });
 
-  const patch = async (p: TaskPatch) => {
+  // VEC-456: this pane's own writes and everyone else's optimistic ones (list rows, menus) reach it as local events
+  // (lib/task-writes): fields at once, the saved task when the server answers.
+  const paneTaskId = task?.id;
+  useEffect(() => {
+    if (!paneTaskId) return;
+    const onPatch = (e: Event) => {
+      const { id, fields } = (e as CustomEvent<TaskPatchDetail>).detail;
+      if (id === paneTaskId) setTask((t) => (t && t.id === id ? { ...t, ...fields } : t));
+    };
+    const onSaved = (e: Event) => {
+      const saved = (e as CustomEvent<Task>).detail;
+      if (saved.id === paneTaskId) setTask((t) => (t && t.id === saved.id ? { ...t, ...taskOverlay.apply(saved) } : t));
+    };
+    window.addEventListener(TASK_PATCH_EVENT, onPatch);
+    window.addEventListener(TASK_EVENT, onSaved);
+    return () => {
+      window.removeEventListener(TASK_PATCH_EVENT, onPatch);
+      window.removeEventListener(TASK_EVENT, onSaved);
+    };
+  }, [paneTaskId]);
+
+  /** A field edit: shown at once, saved in the background in order, rolled back with a toast if refused. */
+  const patch = (p: TaskPatch) => {
     if (!task) return;
-    const before = task;
-    setTask({ ...task, ...(p as Partial<TaskDetail>) });
-    const r = await updateTask(org.slug, task.id, p);
-    if (!r.ok) {
-      setTask(before);
-      toast.error(r.error);
-      return;
-    }
-    if (r.data) {
-      onTask(r.data);
-      setTask((t) => (t ? { ...t, ...r.data } : t));
-    }
+    writeTask({ task, label: patchLabel(p), fields: patchFields(p), run: () => updateTask(org.slug, task.id, p) });
   };
 
   /** Replace the dependency list (optimistic). */
-  const setDependencies = async (refs: TaskRef[]) => {
+  const setDependencies = (refs: TaskRef[]) => {
     if (!task) return;
-    const before = task;
     const dependsOn = refs.map((d) => d.id);
-    setTask({ ...task, dependencies: refs, dependsOn });
-    const r = await updateTask(org.slug, task.id, { dependsOn });
-    if (!r.ok) {
-      setTask(before);
-      toast.error(r.error);
-      return;
-    }
-    if (r.data) {
-      onTask(r.data);
-      setTask((t) => (t ? { ...t, ...r.data } : t));
-    }
+    writeTask({
+      task,
+      label: "Dependency change",
+      fields: { dependencies: refs, dependsOn },
+      run: () => updateTask(org.slug, task.id, { dependsOn }),
+    });
   };
 
   /* description autosave */
@@ -256,9 +264,9 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     toast.success(kind === "description" ? "Restored the earlier description" : "Restored the earlier plan");
   };
 
-  const setArchived = async (archived: boolean) => {
+  const setArchived = (archived: boolean) => {
     if (!task) return;
-    await patch({ archived });
+    patch({ archived });
     toast.success(`${archived ? "Archived" : "Restored"} ${task.key}`, {
       description: archived ? "Find it under Archive in the sidebar." : task.title,
     });
@@ -329,6 +337,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   return shell(
     <>
       <PaneHeader taskKey={task.key} onClose={onClose}>
+        <UnsentMarker taskId={task.id} saving className="mr-1" />
         <DropdownMenu>
           <DropdownMenuTrigger aria-label="Task actions" className="grid size-7 place-items-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
             <MoreHorizontalIcon className="size-4" />
@@ -722,10 +731,11 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             <AlertDialogCancel>Keep task</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              onClick={async () => {
-                const r = await deleteTask(org.slug, task.id);
-                if (!r.ok) return void toast.error(r.error);
-                toast.success(`Deleted ${task.key}`);
+              onClick={() => {
+                // VEC-456: gone at once; a refusal brings it back to the list with the error toast.
+                const key = task.key;
+                deleteTaskOptimistic(task, () => deleteTask(org.slug, task.id));
+                toast.success(`Deleted ${key}`);
                 onClose();
               }}
             >

@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AtSignIcon, CheckCheckIcon, CircleCheckIcon, EyeIcon, HourglassIcon, InboxIcon, OctagonAlertIcon, UnplugIcon, UserPlusIcon } from "lucide-react";
-import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
 import { MobileNavButton } from "@/components/app-shell";
@@ -13,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { timeAgo } from "@/lib/format";
 import { notificationHeadline } from "@/lib/notification-text";
 import { markNotificationsRead } from "@/app/actions/notifications";
+import { runPending } from "@/lib/pending-actions";
 import type { Notification } from "@/lib/types";
 
 const KIND_ICON = {
@@ -68,14 +68,25 @@ export function Inbox({ initial }: { initial: Notification[] }) {
     [pathname, router],
   );
 
-  const markRead = async (ids: string[] | "all") => {
+  const markRead = (ids: string[] | "all") => {
     const unreadIds = items.filter((x) => !x.read && (ids === "all" || ids.includes(x.id))).map((x) => x.id);
     if (!unreadIds.length) return;
-    unreadIds.forEach((id) => readIds.current.add(id));
-    setItems((list) => list.map((x) => (unreadIds.includes(x.id) ? { ...x, read: true } : x)));
-    setUnread((n) => n - unreadIds.length);
-    const r = await markNotificationsRead(org.slug, ids === "all" ? "all" : unreadIds);
-    if (!r.ok) toast.error(r.error);
+    // VEC-456: on the background queue, so a dropped connection retries and then offers Retry; a refusal marks them unread again.
+    runPending({
+      key: "notifications",
+      label: unreadIds.length === 1 ? "Mark read" : "Mark all read",
+      apply: () => {
+        unreadIds.forEach((id) => readIds.current.add(id));
+        setItems((list) => list.map((x) => (unreadIds.includes(x.id) ? { ...x, read: true } : x)));
+        setUnread((n) => n - unreadIds.length);
+      },
+      rollback: () => {
+        unreadIds.forEach((id) => readIds.current.delete(id));
+        setItems((list) => list.map((x) => (unreadIds.includes(x.id) ? { ...x, read: false } : x)));
+        setUnread((n) => n + unreadIds.length);
+      },
+      run: () => markNotificationsRead(org.slug, ids === "all" ? "all" : unreadIds),
+    });
   };
 
   useEffect(() => {

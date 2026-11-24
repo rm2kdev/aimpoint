@@ -7,8 +7,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { useOrgBase } from "@/components/org-provider";
 import { TaskStatusRing } from "@/components/task-status-ring";
 import { useTaskSearch } from "@/components/dependencies";
-import { emitLocalTask } from "@/components/new-task-dialog";
 import { updateTask } from "@/app/actions/tasks";
+import { writeTask } from "@/lib/task-writes";
 import { taskAccess } from "@/lib/access";
 import type { Task } from "@/lib/types";
 
@@ -36,17 +36,27 @@ export function ParentBlockedNote({ reason }: { reason: string | null }) {
 /**
  * Sets or clears a task's parent, toasts the result, and echoes it to open lists. Resolves to the saved task, or null.
  * `drop`: it was dragged onto the parent's row in a list (VEC-449), so the toast says "Moved X under Y".
+ * VEC-456: optimistic on the task-write queue: the task shows under its new parent at once (`parentId`/`parentKey`
+ * when the caller already knows where a sub-task target flattens to), a refusal puts it back with the error toast.
  */
 export function useSetParent() {
   const { org } = useOrgBase();
-  return async (task: Pick<Task, "id" | "key" | "parentKey">, parent: Pick<Task, "id" | "key"> | null, opts?: { drop?: boolean }): Promise<Task | null> => {
-    const r = await updateTask(org.slug, task.id, { parentId: parent?.id ?? null });
-    if (!r.ok) {
-      toast.error(r.error ?? "That didn't go through. Try again.");
-      return null;
-    }
+  return async (
+    task: Pick<Task, "id" | "key" | "parentKey"> & Partial<Pick<Task, "parentId">>,
+    parent: Pick<Task, "id" | "key"> | null,
+    opts?: { drop?: boolean; parentId?: string; parentKey?: string | null },
+  ): Promise<Task | null> => {
+    const parentId = parent ? (opts?.parentId ?? parent.id) : null;
+    const parentKey = parent ? (opts?.parentKey ?? parent.key) : null;
+    const { done } = writeTask<Task>({
+      task: { parentId: task.parentId ?? null, ...task },
+      label: parent ? `Move ${task.key} under ${parentKey}` : `Remove ${task.key} from its parent`,
+      fields: { parentId, parentKey },
+      run: () => updateTask(org.slug, task.id, { parentId: parent?.id ?? null }),
+    });
+    const r = await done;
+    if (!r.ok) return null;
     const saved = r.data!;
-    emitLocalTask(saved);
     const made = (key: string) => (opts?.drop ? `Moved ${task.key} under ${key}` : `Made ${task.key} a sub-task of ${key}`);
     if (!parent) toast.success(`Removed ${task.key} from ${task.parentKey ?? "its parent task"}`);
     else if (saved.parentKey && saved.parentKey !== parent.key)
