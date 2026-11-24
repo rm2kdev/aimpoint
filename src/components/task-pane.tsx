@@ -19,7 +19,9 @@ import {
   useStatusOptions,
 } from "@/components/pickers";
 import { RichEditor } from "@/components/rich-editor";
-import { CommentBody, MentionComposer } from "@/components/mentions";
+import { CommentBody, MentionComposer, type ComposerHandle } from "@/components/mentions";
+import { LocalCommentRow } from "@/components/local-comment";
+import { addOnce, commentStore, mergeFeed, useLocalComments, type LocalComment } from "@/lib/pending-comments";
 import { useThreadGallery, type OpenGallery } from "@/components/thread-gallery";
 import { galleryDescription } from "@/lib/comment-images";
 import { DueBadge, DuePicker } from "@/components/due-date";
@@ -50,7 +52,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { addComment, deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
+import { deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
 import { disabledBotNote, heldMentionsToast, typedDisabledMentions } from "@/lib/bot-picker";
 import { orgPath } from "@/lib/paths";
@@ -68,6 +70,13 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   const [task, setTask] = useState<TaskDetail | null>(null);
   const pathname = usePathname();
   const [feed, setFeed] = useState<FeedItem[]>([]);
+  // VEC-454: comments shown before the server stored them (tab-wide, so switching tasks keeps them).
+  const localComments = useLocalComments(task?.id);
+  const composer = useRef<ComposerHandle>(null);
+  const shownTaskId = useRef<string | null>(null);
+  useEffect(() => {
+    shownTaskId.current = task?.id ?? null;
+  });
   const [error, setError] = useState<string>();
   const [deleted, setDeleted] = useState(false);
   const [descSync, setDescSync] = useState(0);
@@ -672,20 +681,26 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
 
           <PlanSection key={task.id} task={task} canEdit={canEdit} syncKey={planSync} onSaved={onPlanSaved} />
 
-          <Feed feed={feed} source={task.source ?? null} onExpandImage={gallery.open} hasPlan={!!task.triagePlan} canRestore={canEdit} onRestore={restoreText} />
+          <Feed feed={feed} locals={localComments} source={task.source ?? null} onExpandImage={gallery.open} hasPlan={!!task.triagePlan} canRestore={canEdit} onRestore={restoreText} />
           <MentionComposer
-            onSend={async (body) => {
-              const r = await addComment(org.slug, task.id, body);
-              if (!r.ok) {
-                toast.error(r.error);
-                return false;
-              }
-              const { heldMentions, ...item } = r.data!;
-              setFeed((f) => (f.some((x) => x.id === item.id) ? f : [...f, item]));
-              // VEC-353: picked mentions of a disabled bot come back as heldMentions; a name typed by hand is plain text, so find those here.
-              const held = heldMentionsToast(heldMentions ?? [], typedDisabledMentions(body, members.filter((m) => m.kind === "bot")));
-              if (held) toast(held.title, { description: held.description });
-              return true;
+            handle={composer}
+            onSend={(body) => {
+              // VEC-454: shown at once, sent in the background (after its images upload); see lib/pending-comments.
+              const taskId = task.id;
+              commentStore.post({
+                slug: org.slug,
+                taskId,
+                actorId: me.id,
+                body,
+                onPosted: ({ heldMentions, ...item }) => {
+                  if (shownTaskId.current === taskId) setFeed((f) => addOnce(f, item));
+                  // VEC-353: picked mentions of a disabled bot come back as heldMentions; a name typed by hand is plain text, so find those here.
+                  const held = heldMentionsToast(heldMentions ?? [], typedDisabledMentions(item.body ?? body, members.filter((m) => m.kind === "bot")));
+                  if (held) toast(held.title, { description: held.description });
+                },
+                // A refusal rolled it back (the error is toasted); the text goes back in the box so it isn't lost.
+                onRefused: (text) => shownTaskId.current === taskId && composer.current?.restore(text),
+              });
             }}
           />
           {gallery.lightbox}
@@ -936,6 +951,7 @@ function TitleField({ value, onSave, readOnly }: { value: string; onSave: (v: st
 
 function Feed({
   feed,
+  locals,
   source,
   onExpandImage,
   hasPlan,
@@ -943,6 +959,8 @@ function Feed({
   onRestore,
 }: {
   feed: FeedItem[];
+  /** VEC-454: this task's unsent comments, merged after the feed (hidden once the stored copy is in it). */
+  locals: LocalComment[];
   source: TaskSource | null;
   onExpandImage: OpenGallery;
   hasPlan: boolean;
@@ -955,7 +973,8 @@ function Feed({
     const t = setInterval(() => tick((n) => n + 1), 60_000);
     return () => clearInterval(t);
   }, []);
-  if (!feed.length) return null;
+  const rows = mergeFeed(feed, locals);
+  if (!rows.length) return null;
   const lastPlanId = feed.findLast((f) => f.kind === "plan")?.id;
   const name = (id: string | null | undefined) => (id ? memberById.get(id)?.name ?? "a former member" : "nobody");
 
@@ -1120,7 +1139,9 @@ function Feed({
     <section className="mt-6 border-t border-border pt-5" aria-label="Activity">
       <h3 className="mb-3 text-[12.5px] font-semibold">Activity</h3>
       <ol className="space-y-3">
-        {feed.map((f) => {
+        {rows.map((row) => {
+          if (row.kind === "local") return <LocalCommentRow key={row.local.localId} local={row.local} />;
+          const f = row.item;
           const actor = memberById.get(f.actorId);
           if (f.kind === "description" || f.kind === "plan")
             return (

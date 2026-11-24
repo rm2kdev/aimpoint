@@ -86,3 +86,17 @@ back/forward cache).
 ## What stays synchronous
 
 Settings, billing, sign-in and invite forms keep waiting for the server: there the confirmation is the point.
+
+## Comments (VEC-454)
+
+The comment box is the first surface on this plumbing. `lib/pending-comments.ts` keeps a tab-wide store of comments
+that are shown but not stored yet (so switching tasks keeps them) and one upload queue for composer images:
+
+- `MentionComposer` inserts `![name](blob:…)` at once (`addCommentImage`) with a thumbnail strip under the text, and
+  `onSend(body)` clears the box straight away. Comment is never disabled.
+- `commentStore.post(...)` shows the comment (`LocalCommentRow`: dimmed "Sending…" / "Uploading image…", then
+  "Not sent" with Retry / Discard), waits for its images (`resolve`), then calls `addComment` on queue key
+  `comment:<taskId>` (comments stay in order without holding up other edits to the task).
+- The feed renders `mergeFeed(feed, locals)`: a local comment drops out as soon as the stored one is in the feed,
+  matched by the reply's id or, when the realtime echo wins the race, by author + sent body (one echo per local).
+- A refusal rolls back, toasts, and puts the text back in the box (`ComposerHandle.restore`).

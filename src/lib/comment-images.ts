@@ -31,15 +31,16 @@ function escapedAt(s: string, i: number): boolean {
 /**
  * Splits a comment body into text and image parts, in order. Text parts still hold mention tokens (the caller
  * renders those). One line break right around an image is dropped, since the thumbnail is its own block.
+ * `local(url)` also accepts this browser's own previews of images still uploading (an unsent comment, VEC-454).
  */
-export function splitCommentBody(body: string, orgId: string): CommentPart[] {
+export function splitCommentBody(body: string, orgId: string, local?: (url: string) => boolean): CommentPart[] {
   const out: CommentPart[] = [];
   let at = 0;
   let index = 0;
   let pending = "";
   for (const m of (body ?? "").matchAll(IMAGE)) {
     const start = m.index!;
-    if (escapedAt(body, start) || !isOrgUploadUrl(m[2], orgId)) continue;
+    if (escapedAt(body, start) || !(isOrgUploadUrl(m[2], orgId) || (local?.(m[2]) ?? false))) continue;
     pending += body.slice(at, start);
     const text = pending.replace(/\n$/, "");
     if (text) out.push({ kind: "text", text });

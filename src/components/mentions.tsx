@@ -1,16 +1,15 @@
 "use client";
 
-import { Fragment, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ImagePlusIcon, Maximize2Icon } from "lucide-react";
-import { toast } from "sonner";
+import { ImagePlusIcon, Maximize2Icon, RotateCwIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg } from "@/components/org-provider";
 import { BotAvatar, Kbd, UserAvatar } from "@/components/bits";
 import { botPickerEntries, disabledBotNote, DISABLED_BOT_HINT, isBotDisabled, stepPickable } from "@/lib/bot-picker";
 import { Button } from "@/components/ui/button";
-import { uploadImage } from "@/components/rich-editor";
 import { imageToken, insertBlock, splitCommentBody } from "@/lib/comment-images";
+import { addCommentImage, commentUploads, useCommentUploads } from "@/lib/pending-comments";
 import { LinkedText } from "@/components/linked-text";
 import type { Member } from "@/lib/types";
 
@@ -41,9 +40,10 @@ interface Token {
  * any other URL, <img> tag or escaped `\![...]` stays text). `onExpandImage(n, opener)` opens the n-th image of
  * this comment in the thread gallery.
  */
-export function CommentBody({ body, onExpandImage }: { body: string; onExpandImage?: (index: number, opener: HTMLElement) => void }) {
+export function CommentBody({ body, onExpandImage, localImage }: { body: string; onExpandImage?: (index: number, opener: HTMLElement) => void; localImage?: (url: string) => boolean }) {
   const { memberById, me, org } = useOrg();
-  const blocks = useMemo(() => splitCommentBody(body, org.id), [body, org.id]);
+  // `localImage`: an unsent comment's own image previews (VEC-454) render as images too.
+  const blocks = useMemo(() => splitCommentBody(body, org.id, localImage), [body, org.id, localImage]);
   return (
     <>
       {blocks.map((b, j) =>
@@ -112,15 +112,23 @@ function MentionChip({ member, isMe }: { member: Member; isMe: boolean }) {
 
 /* ---------- Composer with @ autocomplete ---------- */
 
-export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<boolean> }) {
-  const { members, me, org } = useOrg();
+/** Puts a comment's text back in the composer (a refused comment, VEC-454): `<@id>` tokens become picked @Names again. */
+export interface ComposerHandle {
+  restore(body: string): void;
+}
+
+/**
+ * The comment box. Sending is instant (VEC-454): `onSend(body)` gets the encoded text (mention tokens, image tokens
+ * that may still point at local previews) and the composer clears at once; the caller shows the comment and sends it
+ * in the background. Images show as soon as they're attached and upload behind the scenes.
+ */
+export function MentionComposer({ onSend, handle }: { onSend: (body: string) => void; handle?: React.Ref<ComposerHandle> }) {
+  const { members, memberById, me, org } = useOrg();
   const [text, setText] = useState("");
   const [picked, setPicked] = useState<Member[]>([]);
   const [token, setToken] = useState<Token | null>(null);
   const query = token?.query ?? null;
   const [active, setActive] = useState(0);
-  const [sending, setSending] = useState(false);
-  const [uploading, setUploading] = useState(0);
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -255,46 +263,65 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
       .reduce((acc, m) => acc.split(`@${m.name}`).join(`<@${m.id}>`), s);
 
   /**
-   * Uploads images (paste, drop or the attach button) with the description editor's upload and toasts, and puts
-   * a `![name](url)` token on its own line at the caret once each one is stored (VEC-335).
+   * Images (paste, drop or the attach button) go in at once as a `![name](preview)` token on its own line at the caret
+   * (VEC-335) and upload in the background (VEC-454); the preview is swapped for the stored URL when the comment is
+   * sent, so Comment never waits for an upload.
    */
   const attach = (files: File[]) => {
     const imgs = files.filter((f) => f.type.startsWith("image/"));
     if (!imgs.length) return false;
+    const el = ref.current;
+    let value = el?.value ?? text;
+    // A blurred textarea keeps its selection, so this is where the caret was (end of the text by default).
+    let from = el?.selectionStart ?? value.length;
+    let to = el?.selectionEnd ?? value.length;
     for (const file of imgs) {
-      const id = toast.loading(`Uploading ${file.name || "image"}…`);
-      setUploading((n) => n + 1);
-      uploadImage(org.slug, file)
-        .then((url) => {
-          const el = ref.current;
-          const value = el?.value ?? "";
-          // A blurred textarea keeps its selection, so this is where the caret was (end of the text by default).
-          const from = el?.selectionStart ?? value.length;
-          const to = el?.selectionEnd ?? value.length;
-          const next = insertBlock(value, from, to, imageToken(file.name, url));
-          setText(next.text);
-          setTimeout(() => {
-            el?.focus();
-            el?.setSelectionRange(next.caret, next.caret);
-            autosize();
-          }, 0);
-          toast.success("Image added", { id, duration: 1500 });
-        })
-        .catch((e: Error) => toast.error(e.message, { id }))
-        .finally(() => setUploading((n) => n - 1));
+      const next = insertBlock(value, from, to, imageToken(file.name, addCommentImage(org.slug, file)));
+      value = next.text;
+      from = to = next.caret;
     }
+    setText(value);
+    setTimeout(() => {
+      el?.focus();
+      el?.setSelectionRange(from, from);
+      autosize();
+    }, 0);
     return true;
   };
 
-  const send = async () => {
-    if (!text.trim() || sending || uploading) return;
-    setSending(true);
-    if (await onSend(encode(text))) {
-      setText("");
-      setPicked([]);
+  const send = () => {
+    if (!text.trim()) return;
+    onSend(encode(text));
+    setText("");
+    setPicked([]);
+    setToken(null);
+    setTimeout(autosize, 0);
+  };
+
+  useImperativeHandle(handle, () => ({
+    restore(body: string) {
+      const back: Member[] = [];
+      const plain = body.replace(TOKEN, (all, id: string) => {
+        const m = memberById.get(id);
+        if (!m) return all;
+        if (!back.includes(m)) back.push(m);
+        return `@${m.name}`;
+      });
+      // Don't overwrite something typed since: put the refused text first.
+      setText((t) => (t.trim() ? `${plain}\n${t}` : plain));
+      setPicked((p) => [...p, ...back.filter((m) => !p.includes(m))]);
       setTimeout(autosize, 0);
-    }
-    setSending(false);
+    },
+  }));
+
+  // This draft's images (by preview URL in the text) with their upload state, shown under the text.
+  const uploads = useCommentUploads();
+  const drafts = useMemo(() => uploads.filter((u) => text.includes(u.preview)), [uploads, text]);
+  const removeImage = (preview: string) => {
+    // Drops the image's `![name](preview)` token (and the line break after it) from the text.
+    setText((t) => t.split("\n").filter((line) => !(line.startsWith("![") && line.endsWith(`](${preview})`))).join("\n"));
+    commentUploads.forget(preview);
+    setTimeout(autosize, 0);
   };
 
   const people = options.filter((o) => o.kind === "user");
@@ -440,10 +467,46 @@ export function MentionComposer({ onSend }: { onSend: (body: string) => Promise<
             }}
           />
         </div>
-        <div className={cn("flex items-center justify-end gap-2 px-2 pb-2", !text.trim() && !uploading && "hidden")}>
+        {drafts.length > 0 && (
+          <ul className="flex flex-wrap gap-2 px-3 pb-1" aria-label="Attached images">
+            {drafts.map((u) => (
+              <li key={u.preview} className="relative" data-composer-image={u.state}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- a local preview of the attached file */}
+                <img
+                  src={u.preview}
+                  alt={u.name}
+                  title={u.state === "uploading" ? `${u.name}: uploading…` : u.state === "failed" ? `${u.name}: ${u.error ?? "didn't upload"}` : u.name}
+                  className={cn("size-14 rounded-md border border-border object-cover", u.state === "uploading" && "opacity-60", u.state === "failed" && "border-destructive opacity-60")}
+                />
+                {u.state === "uploading" && <span className="absolute inset-x-1 bottom-1 h-0.5 animate-pulse rounded-full bg-brand" aria-label="Uploading" />}
+                {u.state === "failed" && (
+                  <button
+                    type="button"
+                    aria-label={`Retry uploading ${u.name}`}
+                    title="Retry upload"
+                    onClick={() => void commentUploads.retry(u.preview)}
+                    className="absolute inset-0 m-auto grid size-7 place-items-center rounded-full bg-background/90 text-destructive shadow-sm"
+                  >
+                    <RotateCwIcon className="size-3.5" aria-hidden />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${u.name}`}
+                  title="Remove image"
+                  onClick={() => removeImage(u.preview)}
+                  className="absolute -top-1.5 -right-1.5 grid size-5 place-items-center rounded-full border border-border bg-background text-muted-foreground shadow-sm hover:text-foreground"
+                >
+                  <XIcon className="size-3" aria-hidden />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className={cn("flex items-center justify-end gap-2 px-2 pb-2", !text.trim() && "hidden")}>
           <Kbd>⌘↵</Kbd>
-          <Button size="sm" onClick={send} disabled={sending || uploading > 0}>
-            {sending ? "Sending…" : uploading ? "Uploading…" : "Comment"}
+          <Button size="sm" onClick={send}>
+            Comment
           </Button>
         </div>
       </div>
