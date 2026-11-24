@@ -143,7 +143,7 @@ export function StalledBadge({ stalled, className }: { stalled: Stalled; classNa
         className={cn("inline-flex h-5 items-center gap-1 rounded-[5px] bg-chip px-1.5 text-[12px] whitespace-nowrap text-muted-foreground", className)}
       >
         <UserRoundIcon className="size-3.5" />
-        Needs owner
+        <span data-chip-word="">Needs owner</span>
       </span>
     );
   }
@@ -155,7 +155,7 @@ export function StalledBadge({ stalled, className }: { stalled: Stalled; classNa
       className={cn("inline-flex h-5 items-center gap-1 rounded-[5px] bg-destructive/10 px-1.5 text-[12px] font-medium whitespace-nowrap text-destructive", className)}
     >
       <CircleAlertIcon className="size-3.5" />
-      Stalled
+      <span data-chip-word="">Stalled</span>
     </span>
   );
 }

@@ -27,7 +27,7 @@ import { useDragStore } from "@/components/ui/drag-provider";
 import { timeAgo } from "@/lib/format";
 import { moveTaskAction, updateTask, type TaskPatch } from "@/app/actions/tasks";
 import { UnsentMarker } from "@/components/unsent-marker";
-import { isTempId, keyOf, patchFields, patchLabel, pendingCreates, TASK_EVENT, TASK_GONE_EVENT, TASK_PATCH_EVENT, taskOverlay, writeTask, type TaskPatchDetail } from "@/lib/task-writes";
+import { isTempId, keyOf, patchFields, patchLabel, pendingCreates, TASK_EVENT, TASK_GONE_EVENT, TASK_PATCH_EVENT, taskOverlay, useUnsentState, writeTask, type TaskPatchDetail } from "@/lib/task-writes";
 import { compareRank, rankBetween } from "@/lib/rank";
 import { NEST_DWELL_MS, NEST_ZONE_BAND, TASK_DRAG_GROUP as TASK_GROUP } from "@/lib/task-drag";
 import { canNestOnto, type NestCheck, type NestTarget } from "@/lib/parent-link-core";
@@ -1041,6 +1041,16 @@ const TaskRow = memo(function TaskRow({
   const partOf = partOfHref && task.parentKey ? task.parentKey : undefined;
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hinted = useRef(false);
+  // VEC-459: in a narrow list (the task pane open: under 36rem, or 44rem for a row with an urgent chip) the meta
+  // column gives way so the title keeps ~6rem. Status, project and type go first; on a row carrying an urgent chip
+  // (Not sent, Stalled, Stopped) the softer chips (waiting, flow step, due, parked, time) give way to it too, and Not
+  // sent stands in for Stalled/Stopped. Under 20rem (the pane open at 1024) the softer chips and the priority icon
+  // always go, urgent chips and the marker keep only their icons (named in aria-label/title), and an urgent row gives
+  // up its key. Wide lists and the phone row are unchanged.
+  const unsent = useUnsentState(task.id) === "failed";
+  const urgent = unsent || (!closed && !task.archivedAt && (!!task.stalled || !!task.stopped));
+  const tight = urgent ? "@max-[44rem]/row:hidden" : "@max-[36rem]/row:hidden";
+  const soft = urgent ? tight : "@max-[20rem]/row:hidden";
   // The row's menus and tooltip mount on first use, not with the row (VEC-81).
   const { rowProps, menu } = useTaskContextMenu({
     task,
@@ -1065,7 +1075,7 @@ const TaskRow = memo(function TaskRow({
       // nested sub-task row is a zone of its own, named by its id (VEC-451): a drop there goes under its parent.
       data-nest-zone={task.id}
       className={cn(
-        "group relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
+        "group @container/row relative grid h-10 grid-cols-[22px_minmax(0,1fr)_auto] items-center gap-3 rounded-[9px] px-3 transition-colors duration-300",
         // VEC-412: a row with a progress chip or Part of link keeps at least 11rem for the title cell (the chip and
         // link go compact under 15rem, see subtasks.tsx); the meta column gives the space back, the live note first,
         // and a narrow row (under 45rem, e.g. with the task pane open) drops the form source chip.
@@ -1157,50 +1167,50 @@ const TaskRow = memo(function TaskRow({
       {partOf && <PartOfLink parentKey={partOf} href={partOfHref!} />}
       </div>
       {/* VEC-412: only the live note gives way when the row is tight; badges and the key keep their size. */}
-      <div className="flex min-w-0 items-center gap-3 [&>:not([data-fresh-note])]:shrink-0">
+      <div className="flex min-w-0 items-center gap-3 [&>:not([data-fresh-note])]:shrink-0 @max-[20rem]/row:[&_[data-chip-word]]:hidden">
         {fresh && <FreshNote fresh={fresh} />}
         {!fresh && task.archivedAt ? (
-          <span className="text-[12px] text-faint max-md:hidden" title={new Date(task.archivedAt).toLocaleString()}>
+          <span className={cn("text-[12px] text-faint max-md:hidden", soft)} title={new Date(task.archivedAt).toLocaleString()}>
             Archived {timeAgo(task.archivedAt)}
           </span>
         ) : !fresh && (sort === "created" || sort === "created-asc") ? (
-          <span className="text-[12px] text-faint max-md:hidden" title={`Created ${new Date(task.createdAt).toLocaleString()}`}>
+          <span className={cn("text-[12px] text-faint max-md:hidden", soft)} title={`Created ${new Date(task.createdAt).toLocaleString()}`}>
             {timeAgo(task.createdAt)}
           </span>
         ) : !fresh && sort === "updated" ? (
-          <span className="text-[12px] text-faint max-md:hidden" title={`Updated ${new Date(task.updatedAt).toLocaleString()}`}>
+          <span className={cn("text-[12px] text-faint max-md:hidden", soft)} title={`Updated ${new Date(task.updatedAt).toLocaleString()}`}>
             {timeAgo(task.updatedAt)}
           </span>
         ) : null}
-        {!closed && !task.archivedAt && task.stopped && <StoppedChip task={task} />}
-        {!closed && !task.archivedAt && task.stalled && <StalledBadge stalled={task.stalled} />}
-        {parked && !task.stopped && <ParkedChip bot={parked.bot} status={parked.status} className="max-sm:hidden" />}
-        {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className="max-sm:hidden" />}
-        {!closed && !task.archivedAt && !fresh && <FlowStepChip task={task} className="max-md:hidden" />}
-        {!fresh && <FormSourceChip source={task.source} className={cn("max-lg:hidden", (chip || partOf) && "@max-[45rem]/row:hidden")} />}
-        {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className="max-sm:hidden" />}
+        {!closed && !task.archivedAt && task.stopped && <StoppedChip task={task} className={unsent ? tight : undefined} />}
+        {!closed && !task.archivedAt && task.stalled && <StalledBadge stalled={task.stalled} className={unsent || task.stopped ? tight : undefined} />}
+        {parked && !task.stopped && <ParkedChip bot={parked.bot} status={parked.status} className={cn("max-sm:hidden", soft)} />}
+        {!closed && !task.archivedAt && waitingKeys && <WaitingBadge keys={waitingKeys} className={cn("max-sm:hidden", soft)} />}
+        {!closed && !task.archivedAt && !fresh && <FlowStepChip task={task} className={cn("max-md:hidden", soft)} />}
+        {!fresh && <FormSourceChip source={task.source} className={cn("max-lg:hidden", tight, (chip || partOf) && "@max-[45rem]/row:hidden")} />}
+        {task.dueDate && <DueBadge due={task.dueDate} closed={closed || !!task.archivedAt} className={cn("max-sm:hidden", soft)} />}
         {(
           <>
             {showStatus && status && !fresh && (
-              <span className="text-[12px] text-muted-foreground max-lg:hidden" title={`Status: ${status.name}`}>
+              <span className={cn("text-[12px] text-muted-foreground max-lg:hidden", tight)} title={`Status: ${status.name}`}>
                 {status.name}
               </span>
             )}
             {showProject && project && !fresh && (
-              <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground max-xl:hidden">
+              <span className={cn("flex items-center gap-1.5 text-[12px] text-muted-foreground max-xl:hidden", tight)}>
                 <ProjectDot color={project.color} />
                 {project.name}
               </span>
             )}
-            <TypeTag type={task.type} className={fresh ? "max-xl:hidden" : "max-md:hidden"} />
+            <TypeTag type={task.type} className={cn(fresh ? "max-xl:hidden" : "max-md:hidden", tight)} />
           </>
         )}
-        <PriorityIcon priority={task.priority} />
+        <PriorityIcon priority={task.priority} className="@max-[20rem]/row:hidden" />
         <span className="w-[22px]">
           {assignee ? <MemberAvatar member={assignee} id={assignee.id} size={20} /> : null}
         </span>
-        <UnsentMarker taskId={task.id} />
-        <span className="tabular w-[64px] shrink-0 text-right font-mono text-[12px] whitespace-nowrap text-faint max-sm:hidden" title={temp ? "Saving…" : undefined}>
+        <UnsentMarker taskId={task.id} compact />
+        <span className={cn("tabular w-[64px] shrink-0 text-right font-mono text-[12px] whitespace-nowrap text-faint max-sm:hidden", urgent && "@max-[20rem]/row:hidden")} title={temp ? "Saving…" : undefined}>
           {temp ? <span className="animate-pulse motion-reduce:animate-none">{task.key}</span> : task.key}
         </span>
         {canEdit && <ArchiveButton task={task} onArchive={onArchive} />}

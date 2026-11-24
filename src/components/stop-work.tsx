@@ -205,7 +205,7 @@ export function StoppedChip({ task, className }: { task: Pick<Task, "stopped">; 
       className={cn("inline-flex h-5 items-center gap-1 rounded-[5px] bg-chip px-1.5 text-[12px] whitespace-nowrap text-muted-foreground", className)}
     >
       <CirclePauseIcon className="size-3.5" />
-      Stopped
+      <span data-chip-word="">Stopped</span>
     </span>
   );
 }
