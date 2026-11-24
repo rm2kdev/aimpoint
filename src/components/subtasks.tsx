@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { CornerLeftUpIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PaneLink } from "@/lib/pane-url";
 import { progressTitle } from "@/lib/subtask-groups-core";
 import { storageKey } from "@/lib/stored-keys";
 import type { Task, TaskChildren } from "@/lib/types";
@@ -119,10 +119,8 @@ function ProgressPie({ value, complete }: { value: number; complete: boolean }) 
 /** "Part of VEC-x" on a sub-task shown on its own (its parent isn't in this list) or in the task pane. */
 export function PartOfLink({ parentKey, href, className }: { parentKey: string; href: string; className?: string }) {
   return (
-    <Link
+    <PaneLink
       href={href}
-      replace
-      scroll={false}
       title={`Sub-task of ${parentKey}`}
       data-part-of={parentKey}
       onClick={(e) => e.stopPropagation()}
@@ -133,6 +131,6 @@ export function PartOfLink({ parentKey, href, className }: { parentKey: string; 
     >
       <CornerLeftUpIcon className="size-3" />
       <span className="@max-[15rem]/row-main:hidden">Part of</span> <span className="tabular font-mono">{parentKey}</span>
-    </Link>
+    </PaneLink>
   );
 }

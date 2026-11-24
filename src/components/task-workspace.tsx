@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { ArchiveIcon, ArchiveRestoreIcon, ChevronDownIcon, ChevronRightIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -38,6 +38,8 @@ import { STAGE_LABELS, STAGE_RING_LIST, stageStatus } from "@/lib/stages";
 import { StoppedChip } from "@/components/stop-work";
 import { PublicBadge } from "@/components/settings/project-public";
 import { adoptLegacyKey, storageKey } from "@/lib/stored-keys";
+import { PaneLink, setPaneTask, usePaneTask } from "@/lib/pane-url";
+import { prefetchTaskDetail } from "@/lib/task-detail-client";
 import { layoutSubtasks, stableChildren } from "@/lib/subtask-groups-core";
 import { createExpandedStore, createKidsStore, PartOfLink, ProgressChip, type ExpandedStore, type KidsStore } from "@/components/subtasks";
 
@@ -84,10 +86,8 @@ export function TaskWorkspace({
 }) {
   const { org, me, isAdmin, projectById, statusById, statusesByProject, billing } = useOrg();
   const { newTask, setViewDefaults } = useShell();
-  const router = useRouter();
   const pathname = usePathname();
-  const params = useSearchParams();
-  const selectedKey = params.get("task");
+  const selectedKey = usePaneTask();
 
   const [tasks, setTasks] = useState<Map<string, Task>>(() => new Map(initialTasks.map((t) => [t.id, t])));
   // Newest version of every task this view has seen (incl. ones that left it). A server refresh can be
@@ -393,16 +393,8 @@ export function TaskWorkspace({
     });
     lastTop.current = next;
   }, [order, dragStore]);
-  const open = useCallback(
-    (key: string | null) => {
-      const q = new URLSearchParams(params.toString());
-      if (key) q.set("task", key);
-      else q.delete("task");
-      const s = q.toString();
-      router.replace(s ? `${pathname}?${s}` : pathname, { scroll: false });
-    },
-    [params, pathname, router],
-  );
+  // VEC-458: the pane opens and closes through the address bar alone (lib/pane-url), never a router navigation.
+  const open = useCallback((key: string | null) => setPaneTask(key), []);
   // The pane re-renders on its own data, not whenever the list does (a live edit mid-drag, VEC-73).
   const closePane = useCallback(() => open(null), [open]);
   /** Archive or restore with an optimistic move and an Undo toast (VEC-456: queued, so Undo can follow at once). */
@@ -453,6 +445,27 @@ export function TaskWorkspace({
     const t = flat.find((x) => x.key === selectedKey);
     if (t) seen(t.id);
   }, [selectedKey, flat, seen]);
+
+  // VEC-458: the pane paints from the list's copy at once (TaskPane `seed`), and the j/k neighbours are warmed.
+  const byKey = useRef(new Map<string, Task>());
+  useEffect(() => {
+    byKey.current = new Map([...tasks.values()].map((t) => [t.key, t]));
+  }, [tasks]);
+  const seedFor = useCallback((key: string) => byKey.current.get(key), []);
+  const flatRef = useRef(flat);
+  useEffect(() => {
+    flatRef.current = flat;
+  }, [flat]);
+  useEffect(() => {
+    if (!selectedKey) return;
+    const timer = setTimeout(() => {
+      const list = flatRef.current;
+      const i = list.findIndex((x) => x.key === selectedKey);
+      if (i < 0) return;
+      for (const n of [list[i + 1], list[i - 1]]) if (n && !isTempId(n.id)) prefetchTaskDetail(org.slug, n.key);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [selectedKey, org.slug]);
 
   /**
    * Manual order (VEC-57): move `task` between its new neighbours (`beforeKey` = the task it goes above,
@@ -850,7 +863,7 @@ export function TaskWorkspace({
         </div>
       </section>
 
-      {selectedKey && <MemoTaskPane key={selectedKey} taskKey={selectedKey} onClose={closePane} onTask={upsert} />}
+      {selectedKey && <MemoTaskPane key={selectedKey} taskKey={selectedKey} onClose={closePane} onTask={upsert} seed={seedFor} />}
     </div>
   );
 }
@@ -1017,7 +1030,7 @@ const TaskRow = memo(function TaskRow({
   partOfHref,
   nested,
 }: TaskRowProps) {
-  const { statusById, memberById, projectById, me, isAdmin } = useOrgBase();
+  const { org, statusById, memberById, projectById, me, isAdmin } = useOrgBase();
   const fresh = useSyncExternalStore(actions.fresh.subscribe, () => actions.fresh.get().get(task.id), () => undefined);
   const onSeen = () => actions.seen(task.id);
   const onArchive = (archived: boolean) => actions.archive(task, archived);
@@ -1040,6 +1053,8 @@ const TaskRow = memo(function TaskRow({
   const chip = subtasks && task.children && task.children.total > 0 ? task.children : undefined;
   const partOf = partOfHref && task.parentKey ? task.parentKey : undefined;
   const hoverTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  // VEC-458: a short hover warms the pane's data, so the click usually shows the whole task at once.
+  const warmTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const hinted = useRef(false);
   // VEC-459: in a narrow list (the task pane open: under 36rem, or 44rem for a row with an urgent chip) the meta
   // column gives way so the title keeps ~6rem. Status, project and type go first; on a row carrying an urgent chip
@@ -1066,8 +1081,14 @@ const TaskRow = memo(function TaskRow({
       aria-busy={temp || undefined}
       data-temp={temp ? "" : undefined}
       ref={refCb}
-      onPointerEnter={() => fresh && (hoverTimer.current = setTimeout(onSeen, 700))}
-      onPointerLeave={() => clearTimeout(hoverTimer.current)}
+      onPointerEnter={() => {
+        if (fresh) hoverTimer.current = setTimeout(onSeen, 700);
+        if (!temp && !selected) warmTimer.current = setTimeout(() => prefetchTaskDetail(org.slug, task.key), 120);
+      }}
+      onPointerLeave={() => {
+        clearTimeout(hoverTimer.current);
+        clearTimeout(warmTimer.current);
+      }}
       // The teammate highlight is keyed on data-live so the drag card can drop it (VEC-105).
       data-live={fresh ? "" : undefined}
       data-nest={nest ?? undefined}
@@ -1118,10 +1139,8 @@ const TaskRow = memo(function TaskRow({
           <ChevronRightIcon className={cn("size-3.5 transition-transform duration-150 motion-reduce:transition-none", subtasks === "open" && "rotate-90")} />
         </button>
       )}
-      <Link
+      <PaneLink
         href={href}
-        scroll={false}
-        replace
         onClick={(e) => {
           if (temp) return e.preventDefault();
           // The click that ends a refused drag gesture doesn't open the task.
@@ -1162,7 +1181,7 @@ const TaskRow = memo(function TaskRow({
         )}
       >
         {task.title}
-      </Link>
+      </PaneLink>
       {chip && <ProgressChip summary={chip} />}
       {partOf && <PartOfLink parentKey={partOf} href={partOfHref!} />}
       </div>

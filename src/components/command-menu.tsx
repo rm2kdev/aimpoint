@@ -21,6 +21,7 @@ import { searchTasks } from "@/app/actions/tasks";
 import type { Task } from "@/lib/types";
 import { accountPath, analyticsPath, billingPath, newTasksPath, orgPath, projectPath, projectSettingsPath, rolesPath, taskPath, withTask } from "@/lib/paths";
 import { useOpenWhatsNew } from "@/components/whats-new-dialog";
+import { sameTaskPage, setPaneTask } from "@/lib/pane-url";
 
 export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { org, projects, isAdmin, billing } = useOrg();
@@ -51,6 +52,9 @@ export function CommandMenu({ open, onOpenChange }: { open: boolean; onOpenChang
 
   const go = (href: string) => {
     onOpenChange(false);
+    // VEC-458: a task on this page opens in its pane straight away, without a router navigation.
+    const key = sameTaskPage(href);
+    if (key) return setPaneTask(key, { push: true });
     router.push(href);
   };
   const base = orgPath(org.slug);

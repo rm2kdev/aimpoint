@@ -53,7 +53,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { deleteTask, getTaskDetail, updateTask, type TaskPatch } from "@/app/actions/tasks";
+import { deleteTask, updateTask, type TaskPatch } from "@/app/actions/tasks";
+import { fetchTaskDetail, forgetTaskDetail, keptTaskDetail, rememberTaskDetail, seedDetail } from "@/lib/task-detail-client";
 import { PRIORITY_LABELS, timeAgo, TYPE_NAMES } from "@/lib/format";
 import { disabledBotNote, heldMentionsToast, typedDisabledMentions } from "@/lib/bot-picker";
 import { orgPath } from "@/lib/paths";
@@ -64,15 +65,28 @@ import { AddExistingSubtaskDialog, ParentBlockedNote, parentBlockedReason, Paren
 import { parentProgressText } from "@/lib/parent-progress-core";
 import { deleteTaskOptimistic, patchFields, patchLabel, TASK_EVENT, TASK_PATCH_EVENT, taskOverlay, writeTask, type TaskPatchDetail } from "@/lib/task-writes";
 import { UnsentMarker } from "@/components/unsent-marker";
+import { PaneLink } from "@/lib/pane-url";
 
 const propBtn =
   "-ml-2 flex h-7 min-w-0 items-center gap-2 rounded-md px-2 text-[13px] transition-colors hover:bg-accent data-[state=open]:bg-accent disabled:cursor-default disabled:hover:bg-transparent";
 
-export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClose: () => void; onTask: (t: Task) => void }) {
+/**
+ * `seed` (VEC-458) returns the list's copy of a task by key: the pane shows its header and properties from it at once
+ * (or a recent full copy, lib/task-detail-client) while the description, relations and comments load.
+ */
+export function TaskPane({ taskKey, onClose, onTask, seed }: { taskKey: string; onClose: () => void; onTask: (t: Task) => void; seed?: (key: string) => Task | undefined }) {
   const { org, me, isAdmin, statusById, memberById, members, projectById } = useOrg();
-  const [task, setTask] = useState<TaskDetail | null>(null);
+  const [first] = useState(() => {
+    const listed = seed?.(taskKey);
+    const kept = keptTaskDetail(org.slug, taskKey, listed);
+    if (kept) return { task: taskOverlay.apply(kept.task), feed: kept.feed, full: true };
+    return { task: listed ? taskOverlay.apply(seedDetail(listed)) : null, feed: [] as FeedItem[], full: false };
+  });
+  const [task, setTask] = useState<TaskDetail | null>(first.task);
+  // False while only the list's copy is shown: sections that need the full task wait for it.
+  const [full, setFull] = useState(first.full);
   const pathname = usePathname();
-  const [feed, setFeed] = useState<FeedItem[]>([]);
+  const [feed, setFeed] = useState<FeedItem[]>(first.feed);
   // VEC-454: comments shown before the server stored them (tab-wide, so switching tasks keeps them).
   const localComments = useLocalComments(task?.id);
   const composer = useRef<ComposerHandle>(null);
@@ -91,6 +105,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   // VEC-335: one lightbox over the thread's images (description, then comments oldest first).
   // VEC-370: the description part reads the editor's latest html (a local edit isn't echoed back to `task` by the broadcast).
   const editedDesc = useRef<string | null>(null);
+  // VEC-458: set by a real description edit, so a load that lands after it doesn't replace the text.
+  const descTyped = useRef(false);
   const gallery = useThreadGallery(() => galleryDescription(task?.description ?? "", editedDesc.current), feed);
   // The flow actions (VEC-183) answer with the moved task: update the list and this pane before the broadcast lands.
   const onFlowTask = (t: Task) => {
@@ -117,18 +133,28 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   };
 
   const load = useCallback(async () => {
-    const r = await getTaskDetail(org.slug, taskKey);
+    const r = await fetchTaskDetail(org.slug, taskKey);
     if (!r.ok) return setError(r.error);
-    setTask(r.data!.task);
+    const fresh = taskOverlay.apply(r.data!.task);
+    // A description typed while this loaded (over a kept copy) stays; everything else takes the fresh copy.
+    const typing = descTyped.current;
+    setTask((t) => (typing && t ? { ...fresh, description: t.description } : fresh));
     setFeed(r.data!.feed);
-    editedDesc.current = null;
-    setDescSync((n) => n + 1);
+    setFull(true);
+    if (!typing) {
+      editedDesc.current = null;
+      setDescSync((n) => n + 1);
+    }
     setPlanSync((n) => n + 1);
   }, [org.slug, taskKey]);
 
   useEffect(() => {
     load();
   }, [load]);
+  // Keep the shared copy in step while open (live edits included), so reopening it paints what was last seen.
+  useEffect(() => {
+    if (full && task && !deleted) rememberTaskDetail(org.slug, task.key, { task: { ...task, description: editedDesc.current ?? task.description }, feed });
+  }, [full, task, feed, deleted, org.slug]);
 
   useOrgEvents((e) => {
     if (!task) return;
@@ -153,13 +179,13 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
       // VEC-456: writes of ours still on their way stay laid over the echo.
       setTask((t) => (t ? { ...t, ...taskOverlay.apply(e.task) } : t));
       // Someone else changed what this waits on: fetch the refs for the new list.
-      if (e.task.dependsOn.join() !== task.dependencies.map((d) => d.id).join()) {
-        getTaskDetail(org.slug, e.task.key).then((r) => {
+      if (full && e.task.dependsOn.join() !== task.dependencies.map((d) => d.id).join()) {
+        fetchTaskDetail(org.slug, e.task.key).then((r) => {
           if (r.ok) setTask((t) => (t ? { ...t, dependencies: r.data!.task.dependencies, dependents: r.data!.task.dependents } : t));
         });
       }
-      if (e.descriptionChanged && e.actorId !== me.id) {
-        getTaskDetail(org.slug, e.task.key).then((r) => {
+      if (full && e.descriptionChanged && e.actorId !== me.id) {
+        fetchTaskDetail(org.slug, e.task.key).then((r) => {
           if (r.ok) {
             const d = r.data!.task;
             setTask((t) => (t ? { ...t, description: d.description, triagePlan: d.triagePlan, triagePlanBy: d.triagePlanBy, triagePlanAt: d.triagePlanAt } : t));
@@ -172,6 +198,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     } else if (e.type === "feed.add" && e.taskId === task.id) {
       setFeed((f) => (f.some((x) => x.id === e.item.id) ? f : [...f, e.item]));
     } else if (e.type === "task.delete" && e.taskId === task.id) {
+      forgetTaskDetail(org.slug, task.key);
       setDeleted(true);
     }
   });
@@ -252,7 +279,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
     const r = await updateTask(org.slug, task.id, kind === "description" ? { description: html } : { triagePlan: html });
     if (!r.ok) return void toast.error(r.error);
     if (r.data) onTask(r.data);
-    const d = await getTaskDetail(org.slug, task.key);
+    const d = await fetchTaskDetail(org.slug, task.key);
     if (d.ok) {
       const t2 = d.data!.task;
       setTask((t) => (t ? { ...t, ...r.data, description: t2.description, triagePlan: t2.triagePlan, triagePlanBy: t2.triagePlanBy, triagePlanAt: t2.triagePlanAt } : t));
@@ -329,7 +356,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
   // A form-submitted task's creator is the form (VEC-208): only admins can edit it, so the notes name nobody else.
   const owner = task.source ? null : (creator?.name ?? "the creator");
   const closed = status?.category === "done" || status?.category === "cancelled";
-  const waiting = task.dependencies.filter((d) => !isClosedCategory(statusById.get(d.statusId)?.category));
+  // Only known once the full task is in (VEC-458: the list's copy has no relations).
+  const waiting = full ? task.dependencies.filter((d) => !isClosedCategory(statusById.get(d.statusId)?.category)) : [];
   const parentBlocked = parentBlockedReason(task);
   // One level only: a sub-task can't have sub-tasks, so only a top-level task offers "Add sub-task".
   const canAddSubtask = canEdit && !task.parentId && !task.archivedAt;
@@ -506,7 +534,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               </span>
             </p>
           )}
-          {canRetry && !closed && !task.archivedAt && !waiting.length && !(task.stalled && isStalledReason(task.stalled.reason)) && assignee?.kind === "bot" && !assignee.disabled && (
+          {full && canRetry && !closed && !task.archivedAt && !waiting.length && !(task.stalled && isStalledReason(task.stalled.reason)) && assignee?.kind === "bot" && !assignee.disabled && (
             <QuietHint botName={assignee.name} working={task.workingBotIds.includes(assignee.id)} since={lastPostBy(feed, assignee.id) ?? task.updatedAt} busy={retrying} onRetry={onRetry} />
           )}
           {waiting.length > 0 && !closed && !task.archivedAt && (
@@ -644,6 +672,14 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
             </dd>
           </dl>
 
+          {!full ? (
+            <div className="mt-6 space-y-3 border-t border-border pt-5" aria-busy aria-label="Loading the description and comments">
+              <div className="h-4 w-1/2 animate-pulse rounded bg-muted" />
+              <div className="h-24 animate-pulse rounded bg-muted" />
+              <div className="h-4 w-1/3 animate-pulse rounded bg-muted" />
+            </div>
+          ) : (
+          <>
           <Subtasks
             task={task}
             canAdd={canAddSubtask}
@@ -681,6 +717,7 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
                 }
                 pendingDesc.current = html;
                 editedDesc.current = html;
+                descTyped.current = true;
                 setSaveState("idle");
                 clearTimeout(descTimer.current);
                 descTimer.current = setTimeout(flushDesc, 700);
@@ -715,6 +752,8 @@ export function TaskPane({ taskKey, onClose, onTask }: { taskKey: string; onClos
               });
             }}
           />
+          </>
+          )}
           {gallery.lightbox}
         </div>
       </div>
@@ -873,15 +912,13 @@ function RefRow({ refTask, onRemove }: { refTask: TaskRef; onRemove?: () => void
   return (
     <li className="group/ref -mx-2 flex h-8 items-center gap-2.5 rounded-md px-2 text-[13px] hover:bg-accent">
       <TaskStatusRing task={refTask} size={14} />
-      <Link
+      <PaneLink
         href={`${pathname}?task=${encodeURIComponent(refTask.key)}`}
-        replace
-        scroll={false}
         className={cn("min-w-0 flex-1 truncate", done && "text-faint line-through decoration-faint/50")}
         title={`${refTask.key} · ${status?.name ?? ""}`}
       >
         {refTask.title}
-      </Link>
+      </PaneLink>
       {refTask.archived && <span className="shrink-0 rounded-[4px] bg-chip px-1.5 text-[11px] text-muted-foreground">Archived</span>}
       <span className="shrink-0 text-[12px] text-faint max-sm:hidden">{status?.name}</span>
       {assignee && <MemberAvatar member={assignee} id={assignee.id} size={16} />}

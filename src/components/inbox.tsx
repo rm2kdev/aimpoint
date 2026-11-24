@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AtSignIcon, CheckCheckIcon, CircleCheckIcon, EyeIcon, HourglassIcon, InboxIcon, OctagonAlertIcon, UnplugIcon, UserPlusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useOrg, useOrgEvents } from "@/components/org-provider";
@@ -13,6 +12,7 @@ import { timeAgo } from "@/lib/format";
 import { notificationHeadline } from "@/lib/notification-text";
 import { markNotificationsRead } from "@/app/actions/notifications";
 import { runPending } from "@/lib/pending-actions";
+import { setPaneTask, usePaneTask } from "@/lib/pane-url";
 import type { Notification } from "@/lib/types";
 
 const KIND_ICON = {
@@ -27,10 +27,7 @@ const KIND_ICON = {
 
 export function Inbox({ initial }: { initial: Notification[] }) {
   const { org, memberById, setUnread, me } = useOrg();
-  const router = useRouter();
-  const pathname = usePathname();
-  const params = useSearchParams();
-  const selectedKey = params.get("task");
+  const selectedKey = usePaneTask();
   const [items, setItems] = useState(initial);
   // Read here (or in another tab) since the server rendered `initial`. Opening a task refreshes the page,
   // and that render can predate the read: never let it bring the unread dot back.
@@ -63,10 +60,8 @@ export function Inbox({ initial }: { initial: Notification[] }) {
     }
   });
 
-  const open = useCallback(
-    (key: string | null) => router.replace(key ? `${pathname}?task=${encodeURIComponent(key)}` : pathname, { scroll: false }),
-    [pathname, router],
-  );
+  // VEC-458: no router navigation, so the pane doesn't wait on the network or on actions in flight.
+  const open = useCallback((key: string | null) => setPaneTask(key), []);
 
   const markRead = (ids: string[] | "all") => {
     const unreadIds = items.filter((x) => !x.read && (ids === "all" || ids.includes(x.id))).map((x) => x.id);
