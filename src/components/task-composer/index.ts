@@ -10,4 +10,5 @@ export {
   type ComposerStatusOption,
 } from "./task-composer";
 export { usePendingUploads } from "./pending-uploads";
+export { useBackgroundUploads, isUploadsFailed, UploadsFailedError, type UploadEntry } from "./background-uploads";
 export { charactersLeftText, fieldKey, requiredText, serverFieldErrors, PUBLIC_TYPE_COPY, typeCopy, type ComposerErrorKey, type ComposerErrors, type ComposerFieldRef } from "./task-composer-core";
