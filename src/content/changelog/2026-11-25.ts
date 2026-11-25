@@ -1,6 +1,6 @@
 // Third "What's new" milestone (VEC-452): actions happen at once and the server work runs in the background
-// (VEC-453 to VEC-459). The demo gif was recorded side by side on a throwaway demo org under a throttled connection:
-// the build before VEC-453 (8ad4df2) on the left, this release on the right.
+// (VEC-453 to VEC-459). The demo gifs were recorded on a throwaway demo org under a throttled connection (offline for
+// the last one), comparing the build before VEC-453 (8ad4df2) with this release.
 import type { ChangelogMilestone } from "@/lib/changelog-core";
 
 const milestone: ChangelogMilestone = {
@@ -25,6 +25,10 @@ const milestone: ChangelogMilestone = {
         "Changing a status, priority, assignee or title, creating or deleting a task, and pasting images into a " +
         "description or plan all show at once. Opening a task, or moving between tasks with **J** and **K**, no " +
         "longer waits on the network either.",
+      image: {
+        src: "/changelog/2026-11-25/instant-edits.gif",
+        alt: "Before and now on a slow connection: before, clicking a task takes about 18 seconds to open it and the New task dialog says Creating while it waits; now the task opens at once, its priority changes to High straight away and the new task appears in the list as soon as it's created",
+      },
     },
     {
       title: "Nothing gets lost",
@@ -32,6 +36,10 @@ const milestone: ChangelogMilestone = {
         "If something can't reach the server, Aimpoint keeps trying. If it still can't, it's marked **Not sent** with " +
         "**Retry** and **Discard**, and it sends by itself when you're back online. Leaving the page warns you while " +
         "anything is still unsent.",
+      image: {
+        src: "/changelog/2026-11-25/nothing-lost.gif",
+        alt: "A comment posted while offline shows at once as Sending, then Not sent with Retry and Discard and a notice; once the connection is back it sends by itself and shows as a normal comment",
+      },
     },
   ],
 };
