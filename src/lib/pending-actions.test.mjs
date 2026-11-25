@@ -311,3 +311,23 @@ test("beforeunload listener is attached only while something is pending, and ask
   unbind();
   assert.equal(fire(), false, "unbind removes the listener");
 });
+
+test("onUnfailed: a failed item that's retried (e.g. on reconnect) or discarded clears its failure notice", async () => {
+  const events = [];
+  const { q } = queue({ retries: 0, onFailed: (item) => events.push(["failed", item.id]), onUnfailed: (item) => events.push(["unfailed", item.id]) });
+  let online = false;
+  const a = q.enqueue({ run: async () => (online ? { ok: true, data: 1 } : Promise.reject(offline())) });
+  const b = q.enqueue({ run: async () => Promise.reject(offline()) });
+  await flush();
+  assert.deepEqual(events, [["failed", a.id], ["failed", b.id]]);
+  online = true;
+  q.retryAll();
+  await flush();
+  assert.deepEqual(events.slice(2, 4), [["unfailed", a.id], ["unfailed", b.id]]);
+  assert.deepEqual(await a.done, { ok: true, data: 1 });
+  assert.deepEqual(events[4], ["failed", b.id], "failing again notifies again");
+  q.discard(b.id);
+  assert.deepEqual(events[5], ["unfailed", b.id]);
+  assert.equal(q.retry(a.id), false);
+  assert.equal(events.length, 6, "nothing for an item that isn't failed");
+});

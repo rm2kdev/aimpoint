@@ -30,6 +30,8 @@ export const pendingActions: ActionQueue = createActionQueue({
       id: `pending-failed-${item.id}`,
       action: { label: "Retry", onClick: () => pendingActions.retry(item.id) },
     }),
+  // Sent again (e.g. on reconnect) or discarded: the "not sent" toast would be stale (a new failure toasts again).
+  onUnfailed: (item) => toast.dismiss(`pending-failed-${item.id}`),
 });
 
 let wired = false;

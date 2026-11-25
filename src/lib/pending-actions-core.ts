@@ -62,6 +62,8 @@ export interface QueueOptions {
   onRefused?: (item: PendingItem, error: string) => void;
   /** An item turned `failed`. */
   onFailed?: (item: PendingItem, error: string) => void;
+  /** A failed item was retried (by hand or on reconnect) or discarded: the React side drops its failure toast. */
+  onUnfailed?: (item: PendingItem) => void;
   newId?: () => string;
 }
 
@@ -204,6 +206,7 @@ export function createActionQueue(opts: QueueOptions = {}) {
     const e = entries.get(id);
     if (!e?.decide || e.item.state !== "failed") return false;
     update(e, { state: "pending", error: null }); // shows as sending again at once, not after a microtask
+    safe(() => opts.onUnfailed?.(e.item));
     e.decide("retry");
     return true;
   }
@@ -212,6 +215,7 @@ export function createActionQueue(opts: QueueOptions = {}) {
   function discard(id: string) {
     const e = entries.get(id);
     if (!e?.decide || e.item.state !== "failed") return false;
+    safe(() => opts.onUnfailed?.(e.item));
     e.decide("discard");
     return true;
   }
