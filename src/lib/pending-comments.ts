@@ -29,7 +29,25 @@ export const commentUploads = createUploadQueue({
   onError: (entry, message) => toast.error(`${entry.name || "Image"} didn't upload. ${message}`, { id: `upload-failed-${entry.preview}` }),
 });
 
-export const commentStore = createCommentStore<CommentResult>({ queue: pendingActions, uploads: commentUploads, addComment });
+/** Fetches stored images into the browser cache (they're served immutable), giving up after 15 s. */
+function warmImages(urls: string[]): Promise<void> {
+  return Promise.all(
+    urls.map(
+      (url) =>
+        new Promise<void>((done) => {
+          const img = new Image();
+          const timer = setTimeout(done, 15_000);
+          img.onload = img.onerror = () => {
+            clearTimeout(timer);
+            done();
+          };
+          img.src = url;
+        }),
+    ),
+  ).then(() => {});
+}
+
+export const commentStore = createCommentStore<CommentResult>({ queue: pendingActions, uploads: commentUploads, addComment, warm: warmImages });
 
 let wired = false;
 function wire() {

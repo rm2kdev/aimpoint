@@ -145,4 +145,8 @@ that are shown but not stored yet (so switching tasks keeps them) and one upload
   `comment:<taskId>` (comments stay in order without holding up other edits to the task).
 - The feed renders `mergeFeed(feed, locals)`: a local comment drops out as soon as the stored one is in the feed,
   matched by the reply's id or, when the realtime echo wins the race, by author + sent body (one echo per local).
+- A comment with images is `warming` from the moment its stored URLs are known: the store fetches them into the
+  browser cache (`warm`, served immutable, 15 s cap) while `addComment` runs, and until they're in, the local row
+  (with its previews) stands in at the stored copy's place. Without this the image blanked out for a round trip
+  when the stored copy took over on a slow connection.
 - A refusal rolls back, toasts, and puts the text back in the box (`ComposerHandle.restore`).

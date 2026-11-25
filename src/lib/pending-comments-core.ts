@@ -7,7 +7,8 @@
  * Merge rules (`mergeFeed`): the server feed is the truth. A local comment disappears as soon as the server's copy is
  * in the feed, whichever arrives first: the action reply (matched by id) or the realtime `feed.add` echo (matched by
  * author + sent body, each server comment standing in for at most one local one, oldest first). So it never shows
- * twice and never blinks out.
+ * twice and never blinks out. A comment with images keeps its local row (with the previews) in the server copy's place
+ * until the stored images have loaded (`warming`), so the image doesn't blank out while it downloads (VEC-452).
  */
 import type { ActionQueue, ActionResult } from "./pending-actions-core";
 import type { UploadQueue } from "./background-uploads-core";
@@ -37,6 +38,8 @@ export interface LocalComment {
   /** Local previews this comment's body uses (shown as images until it's sent). */
   previews: string[];
   createdAt: string;
+  /** Its stored images are still loading: the local row stands in for the server copy until they're in the cache. */
+  warming?: boolean;
 }
 
 /** A local comment rendered in the feed. */
@@ -77,11 +80,22 @@ export function matchLocals<F extends FeedLike>(feed: readonly F[], locals: read
   return out;
 }
 
-/** The feed with this task's unsent comments after it (newest last), minus any the server copy already stands for. */
+/**
+ * The feed with this task's unsent comments after it (newest last), minus any the server copy already stands for. A
+ * local comment whose stored images are still loading takes its server copy's place instead.
+ */
 export function mergeFeed<F extends FeedLike>(feed: readonly F[], locals: readonly LocalComment[]): FeedRow<F>[] {
   const matched = matchLocals(feed, locals);
+  const standIn = new Map<string, LocalComment>();
+  for (const l of locals) {
+    const f = matched.get(l.localId);
+    if (f && l.warming) standIn.set(f.id, l);
+  }
   return [
-    ...feed.map((item) => ({ kind: "server" as const, item })),
+    ...feed.map((item): FeedRow<F> => {
+      const local = standIn.get(item.id);
+      return local ? { kind: "local", local } : { kind: "server", item };
+    }),
     ...locals.filter((l) => !matched.has(l.localId)).map((local) => ({ kind: "local" as const, local })),
   ];
 }
@@ -111,7 +125,12 @@ export interface CommentStoreDeps<R extends { id: string }> {
   newId?: () => string;
   /** Runs `fn` once the stored comment surely reached the feed (prunes a posted local copy). Default 30 s timer. */
   later?: (fn: () => void) => void;
+  /** Loads the stored image URLs into the browser cache; resolves when done or given up (never rejects). Default: at once. */
+  warm?: (urls: string[]) => Promise<void>;
 }
+
+/** Image URLs in a comment body (`![name](url)` tokens). */
+const imageUrls = (body: string) => [...body.matchAll(/!\[[^\]]*\]\(([^\s()<>]+)\)/g)].map((m) => m[1]);
 
 export type CommentStore = ReturnType<typeof createCommentStore>;
 
@@ -121,6 +140,7 @@ export function createCommentStore<R extends { id: string }>(deps: CommentStoreD
   const newId = deps.newId ?? (() => `local_${Date.now().toString(36)}_${(seq++).toString(36)}`);
   const now = deps.now ?? (() => new Date());
   const later = deps.later ?? ((fn: () => void) => void setTimeout(fn, 30_000));
+  const warm = deps.warm ?? (async () => {});
   let locals: readonly LocalComment[] = [];
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((l) => l());
@@ -148,6 +168,10 @@ export function createCommentStore<R extends { id: string }>(deps: CommentStoreD
       createdAt: now().toISOString(),
     };
     let refused = false;
+    // The stored images are fetched while addComment runs; the previews are freed once both are done.
+    let warmed = previews.length === 0;
+    let posted = false;
+    let warming: Promise<void> | null = null;
     const { id } = deps.queue.enqueue<R>({
       key: `comment:${input.taskId}`,
       label: "Comment",
@@ -163,6 +187,18 @@ export function createCommentStore<R extends { id: string }>(deps: CommentStoreD
         for (const p of previews) if (deps.uploads.get(p)?.state === "failed") await deps.uploads.retry(p);
         const sent = await deps.uploads.resolve(input.body);
         if (find(local.localId)?.sent !== sent) patch(local.localId, { sent });
+        if (!warmed && !warming) {
+          const stored = imageUrls(sent).filter((u) => !previews.includes(u));
+          patch(local.localId, { warming: true });
+          warming = warm(stored)
+            .catch(() => {})
+            .then(() => {
+              warmed = true;
+              warming = null;
+              patch(local.localId, { warming: false });
+              if (posted) forgetPreviews(find(local.localId) ?? local);
+            });
+        }
         const r = await deps.addComment(input.slug, input.taskId, sent);
         // Known before the queue rolls back, so the rollback keeps the previews for the restored draft.
         if (!r.ok) refused = true;
@@ -177,7 +213,9 @@ export function createCommentStore<R extends { id: string }>(deps: CommentStoreD
           input.onPosted?.(data, { ...l, realId: data.id });
           later(() => remove(local.localId));
         } else remove(local.localId);
-        forgetPreviews(l);
+        posted = true;
+        // Still loading the stored images: the local row (and its previews) stays in place until they're cached.
+        if (warmed || !data) forgetPreviews(l);
       },
       onRefused: (error) => input.onRefused?.(input.body, error),
     });

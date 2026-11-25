@@ -87,7 +87,7 @@ test("addOnce: the reply and the echo add the comment once, in either order", ()
 
 /* ---------- the store over the real queue + upload queue ---------- */
 
-function setup({ addComment, upload } = {}) {
+function setup({ addComment, upload, warm } = {}) {
   const queue = createActionQueue({ sleep: async () => {} });
   let n = 0;
   const uploads = createUploadQueue({ upload: upload ?? (async () => "/api/uploads/x.png"), preview: () => `blob:p${n++}`, revoke: () => {}, sleep: async () => {} });
@@ -102,6 +102,7 @@ function setup({ addComment, upload } = {}) {
     },
     now: () => new Date(T),
     later: (fn) => pruned.push(fn),
+    warm,
   });
   return { queue, uploads, store, calls, pruned };
 }
@@ -214,4 +215,38 @@ test("store: comments on one task are sent in order", async () => {
   first.resolve({ ok: true, data: comment("c1", "one") });
   await flush();
   assert.deepEqual(calls, ["one", "two"]);
+});
+
+test("store: a comment with images keeps its local row in the stored copy's place until the stored images load", async () => {
+  const w = deferred();
+  const warmed = [];
+  const stored = "/api/uploads/" + "c".repeat(24) + "-abc.png";
+  const { store, uploads } = setup({ upload: async () => stored, warm: (urls) => (warmed.push(urls), w.promise) });
+  const preview = uploads.add({ name: "shot.png" });
+  const posted = [];
+  store.post({ slug: "o", taskId: "t1", actorId: ME, body: `look\n![shot.png](${preview})`, onPosted: (r) => posted.push(r) });
+  await flush();
+  assert.deepEqual(warmed, [[stored]], "fetches the stored URL, not the preview");
+  assert.equal(posted.length, 1);
+  const [l] = store.forTask("t1");
+  assert.equal(l.warming, true);
+  const rows = mergeFeed([posted[0]], store.forTask("t1"));
+  assert.equal(rows.length, 1, "never twice");
+  assert.equal(rows[0].kind, "local", "the local row (with its preview) stands in while the image loads");
+  assert.ok(uploads.get(preview), "preview kept while it's on screen");
+  w.resolve();
+  await flush();
+  assert.equal(store.forTask("t1")[0].warming, false);
+  const after = mergeFeed([posted[0]], store.forTask("t1"));
+  assert.deepEqual(after.map((r) => r.kind), ["server"]);
+  assert.equal(uploads.get(preview), null, "preview freed once the stored image is cached");
+});
+
+test("mergeFeed: a warming local stands in at the server copy's position, other items untouched", () => {
+  const a = comment("c1", "first");
+  const b = comment("c2", "look");
+  const local = { localId: "local_1", taskId: "t1", actorId: ME, body: "look", sent: "look", realId: "c2", actionId: null, previews: [], createdAt: new Date(T).toISOString(), warming: true };
+  const rows = mergeFeed([a, b, comment("c3", "later")], [local]);
+  assert.deepEqual(rows.map((r) => (r.kind === "server" ? r.item.id : r.local.localId)), ["c1", "local_1", "c3"]);
+  assert.deepEqual(mergeFeed([a, b], [{ ...local, warming: false }]).map((r) => r.kind), ["server", "server"]);
 });
